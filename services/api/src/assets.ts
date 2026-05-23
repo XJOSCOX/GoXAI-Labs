@@ -98,7 +98,6 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
   const command = new PutObjectCommand({
     Bucket: config.value.bucket,
     Key: objectKey,
-    ContentLength: Number(parsed.value.fileSize),
     ContentType: parsed.value.mimeType
   });
   const uploadUrl = await getSignedUrl(client, command, { expiresIn: 60 * 10 });

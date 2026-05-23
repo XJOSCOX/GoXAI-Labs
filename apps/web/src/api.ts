@@ -362,14 +362,22 @@ export async function createAssetUploadUrl(session: Session, input: AssetUploadR
 }
 
 export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["upload"]) {
-  const response = await fetch(upload.uploadUrl, {
-    method: upload.method,
-    headers: upload.headers,
-    body: file
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(upload.uploadUrl, {
+      method: upload.method,
+      headers: upload.headers,
+      body: file
+    });
+  } catch (error) {
+    throw new Error(
+      "R2 upload could not reach Cloudflare. Check the bucket CORS policy for http://localhost:5173 and confirm R2_ENDPOINT uses the r2.cloudflarestorage.com endpoint."
+    );
+  }
 
   if (!response.ok) {
-    throw new Error("R2 upload failed. Check the bucket CORS settings and R2 credentials.");
+    throw new Error(`R2 upload failed with status ${response.status}. Check the bucket CORS settings and R2 credentials.`);
   }
 }
 
