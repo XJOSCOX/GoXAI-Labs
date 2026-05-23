@@ -30,7 +30,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   }
 
   const prisma = getPrismaClient();
-  const memberships = await prisma.membership.findMany({
+  let memberships = await prisma.membership.findMany({
     where: {
       userId: user.id,
       status: "ACTIVE"
@@ -43,6 +43,39 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       createdAt: "asc"
     }
   });
+
+  const ownerMembershipsToRepair = memberships.filter(
+    (membership) => membership.organization.ownerId === user.id && membership.role !== MembershipRole.OWNER
+  );
+
+  if (ownerMembershipsToRepair.length > 0) {
+    await prisma.membership.updateMany({
+      where: {
+        id: {
+          in: ownerMembershipsToRepair.map((membership) => membership.id)
+        }
+      },
+      data: {
+        role: MembershipRole.OWNER,
+        status: "ACTIVE"
+      }
+    });
+
+    memberships = await prisma.membership.findMany({
+      where: {
+        userId: user.id,
+        status: "ACTIVE"
+      },
+      include: {
+        organization: true,
+        workspace: true
+      },
+      orderBy: {
+        createdAt: "asc"
+      }
+    });
+  }
+
   const organizationIds = memberships.map((membership) => membership.organizationId);
   const [membershipCounts, ownerCounts, projectCounts, datasetCounts] = await Promise.all([
     prisma.membership.groupBy({
@@ -575,6 +608,13 @@ router.post("/:organizationId/members", async (request: AuthenticatedRequest, re
     return;
   }
 
+  if (targetUser.id === user.id) {
+    response.status(409).json({
+      error: "You are already part of this organization. Use ownership transfer or account settings instead of adding yourself."
+    });
+    return;
+  }
+
   const workspace = await prisma.workspace.findFirst({
     where: {
       organizationId
@@ -686,15 +726,15 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
     return;
   }
 
-  if ((membership.role === MembershipRole.OWNER || parsed.value.role === MembershipRole.OWNER) && !canGrantOwnerRole(manager)) {
-    response.status(403).json({ error: "Only an owner can grant or remove the owner role." });
+  if (membership.userId === user.id) {
+    response.status(409).json({
+      error: "You cannot edit your own organization membership. Ask another owner to make role changes or transfer ownership."
+    });
     return;
   }
 
-  if (membership.userId === user.id && membership.role === MembershipRole.OWNER && parsed.value.role !== MembershipRole.OWNER) {
-    response.status(409).json({
-      error: "Organization owners cannot downgrade themselves. Add or choose another owner to transfer ownership."
-    });
+  if ((membership.role === MembershipRole.OWNER || parsed.value.role === MembershipRole.OWNER) && !canGrantOwnerRole(manager)) {
+    response.status(403).json({ error: "Only an owner can grant or remove the owner role." });
     return;
   }
 
@@ -1227,13 +1267,40 @@ function serializeMembership(membership: MembershipWithUser) {
 async function requireActiveMembership(userId: string, organizationId: string) {
   const prisma = getPrismaClient();
 
-  return prisma.membership.findFirst({
+  const membership = await prisma.membership.findFirst({
     where: {
       userId,
       organizationId,
       status: "ACTIVE"
     }
   });
+
+  if (!membership) {
+    return null;
+  }
+
+  const organization = await prisma.organization.findUnique({
+    where: {
+      id: organizationId
+    },
+    select: {
+      ownerId: true
+    }
+  });
+
+  if (organization?.ownerId === userId && membership.role !== MembershipRole.OWNER) {
+    return prisma.membership.update({
+      where: {
+        id: membership.id
+      },
+      data: {
+        role: MembershipRole.OWNER,
+        status: "ACTIVE"
+      }
+    });
+  }
+
+  return membership;
 }
 
 function normalizeName(value: unknown) {

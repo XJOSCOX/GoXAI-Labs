@@ -424,6 +424,8 @@ function OrganizationManagementPanel({
   const [memberSaving, setMemberSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const primaryWorkspace = organization.workspaces[0] ?? null;
+  const { dbUser } = useAuth();
+  const currentUserId = dbUser?.id ?? null;
 
   async function handleUpdate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -467,11 +469,18 @@ function OrganizationManagementPanel({
       return;
     }
 
+    const email = getFormValue(event, "email");
+
+    if (dbUser?.email && email.toLowerCase() === dbUser.email.toLowerCase()) {
+      setPageError("You are already part of this organization. Your own role must be changed by another owner.");
+      return;
+    }
+
     setMemberSaving(true);
 
     try {
       await addOrganizationMember(session, organization.id, {
-        email: getFormValue(event, "email"),
+        email,
         role: getFormValue(event, "role")
       });
       form.reset();
@@ -579,6 +588,7 @@ function OrganizationManagementPanel({
 
         <MembersTable
           members={organization.memberships}
+          currentUserId={currentUserId}
           onChanged={onChanged}
           organizationId={organization.id}
           session={session}
@@ -707,12 +717,14 @@ function RolePrivilegesPanel() {
 }
 
 function MembersTable({
+  currentUserId,
   members,
   onChanged,
   organizationId,
   session,
   setPageError
 }: {
+  currentUserId: string | null;
   members: MembershipSummary[];
   onChanged: () => Promise<void>;
   organizationId: string;
@@ -730,6 +742,7 @@ function MembersTable({
       {members.map((member) => (
         <MemberRow
           key={member.id}
+          currentUserId={currentUserId}
           member={member}
           onChanged={onChanged}
           organizationId={organizationId}
@@ -742,12 +755,14 @@ function MembersTable({
 }
 
 function MemberRow({
+  currentUserId,
   member,
   onChanged,
   organizationId,
   session,
   setPageError
 }: {
+  currentUserId: string | null;
   member: MembershipSummary;
   onChanged: () => Promise<void>;
   organizationId: string;
@@ -756,8 +771,14 @@ function MemberRow({
 }) {
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState(member.role);
+  const isCurrentUser = currentUserId === member.user.id;
 
   async function saveRole() {
+    if (isCurrentUser) {
+      setPageError("You cannot edit your own organization membership. Ask another owner to make role changes.");
+      return;
+    }
+
     if (!session) {
       setPageError("Authentication required.");
       return;
@@ -776,6 +797,11 @@ function MemberRow({
   }
 
   async function removeMember() {
+    if (isCurrentUser) {
+      setPageError("You cannot remove yourself from member management.");
+      return;
+    }
+
     if (!session) {
       setPageError("Authentication required.");
       return;
@@ -800,7 +826,7 @@ function MemberRow({
         <small>{member.user.email}</small>
       </span>
       <span>
-        <select value={role} onChange={(event) => setRole(event.target.value)}>
+        <select value={role} onChange={(event) => setRole(event.target.value)} disabled={isCurrentUser}>
           {memberRoles.map((item) => (
             <option key={item} value={item}>
               {formatEnum(item)}
@@ -812,12 +838,18 @@ function MemberRow({
         <span className="status-pill compact">{formatEnum(member.status)}</span>
       </span>
       <span className="row-actions">
-        <button className="secondary-button compact-button" type="button" onClick={saveRole} disabled={saving}>
-          Save
-        </button>
-        <button className="ghost-button compact-button danger-button" type="button" onClick={removeMember} disabled={saving}>
-          Remove
-        </button>
+        {isCurrentUser ? (
+          <span className="status-pill compact">Current user</span>
+        ) : (
+          <>
+            <button className="secondary-button compact-button" type="button" onClick={saveRole} disabled={saving}>
+              Save
+            </button>
+            <button className="ghost-button compact-button danger-button" type="button" onClick={removeMember} disabled={saving}>
+              Remove
+            </button>
+          </>
+        )}
       </span>
     </article>
   );
