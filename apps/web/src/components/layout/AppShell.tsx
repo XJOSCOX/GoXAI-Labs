@@ -46,7 +46,11 @@ export function AppShell() {
           <div className="sidebar-profile-info">
             <strong>
               {name}
-              {dbUser?.isVerified && <CheckCircle2 size={14} aria-label="Verified user" />}
+              {dbUser?.isVerified && (
+                <span className="verified-badge" title="Verified user" aria-label="Verified user">
+                  <CheckCircle2 size={13} />
+                </span>
+              )}
             </strong>
             <span>{email}</span>
             <small>{formatEnum(role)}</small>
