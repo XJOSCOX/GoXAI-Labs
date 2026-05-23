@@ -2,7 +2,7 @@ import cors from "cors";
 import express from "express";
 import { getPrismaClient, getSupabaseConfig } from "@goxai/database";
 import { assetsRouter } from "./assets.js";
-import { getBearerToken, syncUserFromAccessToken } from "./auth.js";
+import { getBearerToken, requireAuthenticatedUser, syncUserFromAccessToken, type AuthenticatedRequest } from "./auth.js";
 import { datasetsRouter } from "./datasets.js";
 import { apiRequestLogger, logApiException } from "./logging.js";
 import { logsRouter } from "./logs.js";
@@ -121,6 +121,42 @@ app.post("/api/auth/sync", async (request, response) => {
       error: error instanceof Error ? error.message : "Unable to verify Supabase token."
     });
   }
+});
+
+app.patch("/api/auth/profile", requireAuthenticatedUser, async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const jobTitle = typeof request.body?.jobTitle === "string" ? request.body.jobTitle.trim() : "";
+  const prisma = getPrismaClient();
+  const updated = await prisma.user.update({
+    where: {
+      id: user.id
+    },
+    data: {
+      jobTitle: jobTitle || null
+    }
+  });
+
+  response.status(200).json({
+    user: {
+      id: updated.id,
+      supabaseAuthId: updated.supabaseAuthId,
+      email: updated.email,
+      firstName: updated.firstName,
+      lastName: updated.lastName,
+      jobTitle: updated.jobTitle,
+      avatarUrl: updated.avatarUrl,
+      globalRole: updated.globalRole,
+      status: updated.status,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt
+    }
+  });
 });
 
 app.use("/api/organizations", organizationsRouter);

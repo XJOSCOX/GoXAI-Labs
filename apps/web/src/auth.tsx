@@ -30,12 +30,8 @@ export interface RegisterInput {
   password: string;
   firstName: string;
   lastName: string;
-  jobTitle?: string;
   organizationName?: string;
   organizationEmail?: string;
-  organizationDescription?: string;
-  organizationType?: string;
-  planTier?: string;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -162,14 +158,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register: async ({
         email,
         firstName,
-        jobTitle,
         lastName,
-        organizationDescription,
         organizationEmail,
         organizationName,
-        organizationType,
         password,
-        planTier,
         signupType
       }) => {
         if (!supabase) {
@@ -186,14 +178,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             options: {
               data: {
                 first_name: firstName,
-                job_title: jobTitle,
                 last_name: lastName,
                 name: `${firstName} ${lastName}`.trim(),
-                organization_description: organizationDescription,
                 organization_email: organizationEmail,
                 organization_name: organizationName,
-                organization_type: organizationType,
-                plan_tier: planTier,
                 signup_type: signupType,
                 workspace_name: "Main workspace"
               }

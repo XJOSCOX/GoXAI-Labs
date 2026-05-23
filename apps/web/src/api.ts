@@ -31,6 +31,7 @@ export interface OrganizationSummary {
   slug: string;
   email: string | null;
   description: string | null;
+  onboardingComplete: boolean;
   type: string;
   planTier: string;
   role: string;
@@ -93,6 +94,7 @@ export interface UpdateOrganizationInput {
   description?: string;
   type?: string;
   planTier?: string;
+  completeOnboarding?: boolean;
 }
 
 export interface AddMemberInput {
@@ -353,6 +355,19 @@ export async function resolveLoginEmail(identifier: string) {
   }
 
   return ((await response.json()) as { email: string }).email;
+}
+
+export async function updateUserProfile(session: Session, input: { jobTitle?: string }) {
+  const response = await authenticatedFetch(session, "/api/auth/profile", {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update profile."));
+  }
+
+  return ((await response.json()) as { user: ApiUser }).user;
 }
 
 export async function listOrganizations(session: Session) {

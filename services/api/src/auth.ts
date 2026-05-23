@@ -213,7 +213,8 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
           signupType: "organization",
           founderTitle: jobTitle,
           organizationEmail,
-          createdFrom: "signup"
+          createdFrom: "signup",
+          completed: false
         }
       }
     });

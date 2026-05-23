@@ -25,7 +25,7 @@ import {
   UserRoundPlus
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   createAsset,
   createAssetUploadUrl,
@@ -55,6 +55,7 @@ import {
   updateOrganization,
   updateOrganizationMember,
   updateProject,
+  updateUserProfile,
   uploadFileToSignedUrl,
   type AssetSummary,
   type DatasetSummary,
@@ -103,6 +104,7 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="organization" element={<OrganizationSetupPage />} />
           <Route path="organization/:organizationId" element={<OrganizationSetupPage />} />
+          <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
@@ -243,16 +245,12 @@ function RegisterPage() {
         password: getFormValue(event, "password"),
         firstName,
         lastName,
-        jobTitle: getFormValue(event, "jobTitle"),
         organizationName,
-        organizationEmail,
-        organizationDescription: getFormValue(event, "organizationDescription"),
-        organizationType: getFormValue(event, "organizationType"),
-        planTier: getFormValue(event, "plan")
+        organizationEmail
       });
 
       if (result === "signed-in") {
-        navigate(signupType === "organization" ? "/organization" : "/");
+        navigate(signupType === "organization" ? "/onboarding" : "/");
       } else {
         setMessage("Check your email to confirm the account before signing in.");
       }
@@ -298,10 +296,6 @@ function RegisterPage() {
           <input name="fullName" autoComplete="name" placeholder="Esaie Joseph" required />
         </label>
         <label className="wide">
-          Your role or title
-          <input name="jobTitle" placeholder="CEO, Director, Data lead, Annotator..." />
-        </label>
-        <label className="wide">
           User email
           <input name="email" type="email" autoComplete="email" required />
         </label>
@@ -315,35 +309,6 @@ function RegisterPage() {
               Organization email
               <input name="organizationEmail" type="email" placeholder="ops@example.com" required />
             </label>
-            <label className="wide">
-              Organization type
-              <select name="organizationType" defaultValue="COMPANY">
-                <option value="COMPANY">Company</option>
-                <option value="ENTERPRISE">Enterprise</option>
-                <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
-                <option value="PERSONAL">Personal</option>
-              </select>
-            </label>
-            <label className="wide">
-              Organization description
-              <textarea
-                name="organizationDescription"
-                placeholder="What does the organization do, and what kind of AI/data work will it run?"
-              />
-            </label>
-            <fieldset className="plan-picker wide">
-              <legend>Plan</legend>
-              <div className="plan-option-row">
-                {planOptions.map((plan) => (
-                  <label className="plan-option" key={plan.value}>
-                    <input name="plan" type="radio" value={plan.value} defaultChecked={plan.value === "FREE"} />
-                    <strong>{plan.label}</strong>
-                    <span>{plan.price}</span>
-                    <small>{plan.detail}</small>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
           </>
         )}
         <label className="wide">
@@ -366,12 +331,20 @@ function RegisterPage() {
 
 function AppShell() {
   const { dbUser, logout, session } = useAuth();
-  const { organizations } = useOrganizations(session);
+  const location = useLocation();
+  const { loading: organizationsLoading, organizations } = useOrganizations(session);
   const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email || "Signed in user";
   const email = dbUser?.email ?? "No email";
   const role = dbUser?.globalRole ?? "USER";
   const ownsOrganization = organizations.some((organization) => organization.role === "OWNER");
   const accountKind = organizations.length === 0 ? "Simple user" : ownsOrganization ? "Organization owner" : "Organization user";
+  const onboardingOrganization = organizations.find(
+    (organization) => organization.role === "OWNER" && !organization.onboardingComplete
+  );
+
+  if (!organizationsLoading && onboardingOrganization && location.pathname !== "/onboarding") {
+    return <Navigate to="/onboarding" replace />;
+  }
 
   return (
     <main className="app-shell">
@@ -451,6 +424,115 @@ function ThemeToggle() {
         <span className="theme-switch-thumb">{isDark ? <Moon size={13} /> : <Sun size={13} />}</span>
       </span>
     </button>
+  );
+}
+
+function OnboardingPage() {
+  const { session } = useAuth();
+  const { loading, organizations } = useOrganizations(session);
+  const navigate = useNavigate();
+  const [saving, setSaving] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const organization = organizations.find((item) => item.role === "OWNER" && !item.onboardingComplete);
+
+  if (loading) {
+    return (
+      <section className="page-stack">
+        <section className="panel empty-state compact-empty">
+          <Building2 size={28} />
+          <strong>Preparing onboarding</strong>
+          <span>Loading your organization setup.</span>
+        </section>
+      </section>
+    );
+  }
+
+  if (!organization) {
+    return <Navigate to="/" replace />;
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPageError(null);
+
+    if (!session || !organization) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateUserProfile(session, {
+        jobTitle: getFormValue(event, "jobTitle")
+      });
+      await updateOrganization(session, organization.id, {
+        description: getFormValue(event, "description"),
+        type: getFormValue(event, "type"),
+        planTier: getFormValue(event, "plan"),
+        completeOnboarding: true
+      });
+      window.location.assign(`/organization/${organization.id}`);
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to complete onboarding.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="page-stack onboarding-page">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Onboarding</p>
+          <h1>Finish {organization.name}</h1>
+        </div>
+      </div>
+      {pageError && <p className="form-error">{pageError}</p>}
+      <form className="panel setup-form onboarding-form" onSubmit={handleSubmit}>
+        <div className="wide">
+          <p className="eyebrow">Required setup</p>
+          <h2>Tell us how this organization should be configured.</h2>
+        </div>
+        <label>
+          Your role or title
+          <input name="jobTitle" placeholder="CEO, Director, Data lead..." required />
+        </label>
+        <label>
+          Organization type
+          <select name="type" defaultValue={organization.type || "COMPANY"}>
+            <option value="COMPANY">Company</option>
+            <option value="ENTERPRISE">Enterprise</option>
+            <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+            <option value="PERSONAL">Personal</option>
+          </select>
+        </label>
+        <label className="wide">
+          Organization description
+          <textarea
+            name="description"
+            placeholder="What does the organization do, and what kind of AI/data work will it run?"
+            required
+          />
+        </label>
+        <fieldset className="plan-picker wide">
+          <legend>Plan</legend>
+          <div className="plan-option-row">
+            {planOptions.map((plan) => (
+              <label className="plan-option" key={plan.value}>
+                <input name="plan" type="radio" value={plan.value} defaultChecked={plan.value === organization.planTier} />
+                <strong>{plan.label}</strong>
+                <span>{plan.price}</span>
+                <small>{plan.detail}</small>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <button className="primary-button wide" type="submit" disabled={saving}>
+          <CheckCircle2 size={18} />
+          {saving ? "Saving setup" : "Complete onboarding"}
+        </button>
+      </form>
+    </section>
   );
 }
 

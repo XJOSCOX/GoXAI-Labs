@@ -111,7 +111,11 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         description: parsed.value.description,
         type: parsed.value.organizationType,
         planTier: parsed.value.planTier,
-        ownerId: user.id
+        ownerId: user.id,
+        onboardingJson: {
+          createdFrom: "app",
+          completed: true
+        }
       }
     });
 
@@ -253,11 +257,23 @@ router.patch("/:organizationId", async (request: AuthenticatedRequest, response)
   }
 
   const organization = await prisma.$transaction(async (tx) => {
+    const { completeOnboarding, ...organizationData } = parsed.value;
     const updated = await tx.organization.update({
       where: {
         id: organizationId
       },
-      data: parsed.value,
+      data: {
+        ...organizationData,
+        ...(completeOnboarding
+          ? {
+              onboardingJson: {
+                completed: true,
+                completedAt: new Date().toISOString(),
+                completedById: user.id
+              }
+            }
+          : {})
+      },
       include: organizationDetailIncludes
     });
 
@@ -722,6 +738,7 @@ type UpdateOrganizationBody =
       description?: unknown;
       type?: unknown;
       planTier?: unknown;
+      completeOnboarding?: unknown;
     }
   | undefined;
 
@@ -794,6 +811,7 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
         description?: string | null;
         type?: OrganizationType;
         planTier?: PlanTier;
+        completeOnboarding?: boolean;
       };
     }
   | { ok: false; error: string } {
@@ -802,6 +820,7 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
   const description = normalizeNullableLongText(body?.description);
   const type = parseOptionalEnumValue(OrganizationType, body?.type);
   const planTier = parseOptionalEnumValue(PlanTier, body?.planTier);
+  const completeOnboarding = body?.completeOnboarding === true;
 
   if (name && name.length > 120) {
     return { ok: false, error: "Organization name must be 120 characters or fewer." };
@@ -830,7 +849,8 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
       ...(email !== undefined ? { email } : {}),
       ...(description !== undefined ? { description } : {}),
       ...(type ? { type } : {}),
-      ...(planTier ? { planTier } : {})
+      ...(planTier ? { planTier } : {}),
+      ...(completeOnboarding ? { completeOnboarding } : {})
     }
   };
 }
@@ -885,12 +905,25 @@ function serializeOrganization(organization: Organization) {
     slug: organization.slug,
     email: organization.email,
     description: organization.description,
+    onboardingComplete: isOnboardingComplete(organization.onboardingJson),
     type: organization.type,
     planTier: organization.planTier,
     ownerId: organization.ownerId,
     createdAt: organization.createdAt,
     updatedAt: organization.updatedAt
   };
+}
+
+function isOnboardingComplete(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return true;
+  }
+
+  if (!("createdFrom" in value) || (value as { createdFrom?: unknown }).createdFrom !== "signup") {
+    return true;
+  }
+
+  return (value as { completed?: unknown }).completed === true;
 }
 
 function serializeWorkspace(workspace: Workspace) {
