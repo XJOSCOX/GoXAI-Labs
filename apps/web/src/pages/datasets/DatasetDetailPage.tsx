@@ -474,6 +474,12 @@ export function DatasetDetailPage() {
                     <dt>Status</dt>
                     <dd>{formatEnum(dataset.status)}</dd>
                   </div>
+                  <div>
+                    <dt>Tasks</dt>
+                    <dd>
+                      {tasks.length} / {assets.length}
+                    </dd>
+                  </div>
                 </dl>
               </section>
               <DatasetTasksPanel
