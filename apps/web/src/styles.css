@@ -767,6 +767,24 @@ textarea:focus {
   gap: 10px;
 }
 
+.topbar-title {
+  min-width: 0;
+}
+
+.topbar-title .eyebrow {
+  margin-bottom: 2px;
+}
+
+.topbar-title h1 {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -793,7 +811,7 @@ textarea:focus {
   padding: 20px 24px 28px;
 }
 
-.page-heading {
+.page-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1710,7 +1728,7 @@ textarea:focus {
     grid-column: 1;
   }
 
-  .page-heading,
+  .page-actions,
   .asset-toolbar,
   .asset-preview-head,
   .task-panel-head,
@@ -1721,6 +1739,10 @@ textarea:focus {
 
   .topbar-actions {
     flex-wrap: wrap;
+  }
+
+  .topbar-title h1 {
+    white-space: normal;
   }
 
   h1 {

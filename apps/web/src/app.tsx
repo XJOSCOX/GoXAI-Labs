@@ -375,6 +375,7 @@ function AppShell() {
   const { dbUser, logout, session } = useAuth();
   const location = useLocation();
   const { loading: organizationsLoading, organizations } = useOrganizations(session);
+  const topbarTitle = getTopbarTitle(location.pathname);
   const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email || "Signed in user";
   const email = dbUser?.email ?? "No email";
   const role = dbUser?.globalRole ?? "USER";
@@ -438,7 +439,10 @@ function AppShell() {
       </aside>
       <section className="workspace">
         <header className="topbar">
-          <div />
+          <div className="topbar-title">
+            <p className="eyebrow">{topbarTitle.eyebrow}</p>
+            <h1>{topbarTitle.title}</h1>
+          </div>
           <div className="topbar-actions">
             <ThemeToggle />
             <span className="status-pill">
@@ -451,6 +455,42 @@ function AppShell() {
       </section>
     </main>
   );
+}
+
+function getTopbarTitle(pathname: string) {
+  if (pathname === "/") {
+    return { eyebrow: "Dashboard", title: "Operations overview" };
+  }
+
+  if (pathname === "/organization") {
+    return { eyebrow: "Organization", title: "Organizations" };
+  }
+
+  if (pathname.startsWith("/organization/")) {
+    return { eyebrow: "Organization", title: "Organization details" };
+  }
+
+  if (pathname === "/projects") {
+    return { eyebrow: "Projects", title: "Projects list" };
+  }
+
+  if (pathname.startsWith("/projects/")) {
+    return { eyebrow: "Projects", title: "Project detail" };
+  }
+
+  if (pathname === "/datasets") {
+    return { eyebrow: "Datasets", title: "Datasets list" };
+  }
+
+  if (pathname.startsWith("/datasets/")) {
+    return { eyebrow: "Datasets", title: "Dataset detail" };
+  }
+
+  if (pathname === "/tasks") {
+    return { eyebrow: "Tasks", title: "Labeling tasks" };
+  }
+
+  return { eyebrow: "Workspace", title: "GoXAi Lab" };
 }
 
 function ThemeToggle() {
@@ -605,12 +645,6 @@ function DashboardPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Dashboard</p>
-          <h1>Operations overview</h1>
-        </div>
-      </div>
       <div className="stat-grid">
         <article className="stat-card">
           <Building2 size={20} />
@@ -673,23 +707,23 @@ function OrganizationSetupPage() {
 
   return (
     <section className="page-stack organization-page">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Organization</p>
-          <h1>{organizationId ? organization?.name ?? "Organization details" : "Organizations"}</h1>
-          {organizationId && (
+      {(organizationId || organizations.length > 0) && (
+        <div className="page-actions">
+          {organizationId ? (
             <Link className="back-link" to="/organization">
               All organizations
             </Link>
+          ) : (
+            <span />
+          )}
+          {organizations.length > 0 && (
+            <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+              <Building2 size={18} />
+              New organization
+            </button>
           )}
         </div>
-        {organizations.length > 0 && (
-          <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
-            <Building2 size={18} />
-            New organization
-          </button>
-        )}
-      </div>
+      )}
       {error && <p className="form-error">{error}</p>}
       {loading ? (
         <section className="panel empty-state compact-empty">
@@ -1428,11 +1462,8 @@ function ProjectsPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Projects</p>
-          <h1>Projects list</h1>
-        </div>
+      <div className="page-actions">
+        <span />
         <button
           className="primary-button"
           type="button"
@@ -1666,13 +1697,10 @@ function ProjectDetailPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <Link className="back-link" to="/projects">
-            Projects
-          </Link>
-          <h1>{project?.name ?? "Project detail"}</h1>
-        </div>
+      <div className="page-actions">
+        <Link className="back-link" to="/projects">
+          Projects
+        </Link>
         {project && (
           <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
             <Database size={18} />
@@ -1752,11 +1780,8 @@ function DatasetsPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Datasets</p>
-          <h1>Datasets list</h1>
-        </div>
+      <div className="page-actions">
+        <span />
         <button
           className="primary-button"
           type="button"
@@ -1788,12 +1813,6 @@ function TasksPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Tasks</p>
-          <h1>Labeling tasks</h1>
-        </div>
-      </div>
       {error && <p className="form-error">{error}</p>}
       <TasksTable loading={loading} onChanged={reload} session={session} setPageError={setError} tasks={tasks} />
     </section>
@@ -2326,13 +2345,10 @@ function DatasetDetailPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <Link className="back-link" to="/datasets">
-            Datasets
-          </Link>
-          <h1>{dataset?.name ?? "Dataset detail"}</h1>
-        </div>
+      <div className="page-actions">
+        <Link className="back-link" to="/datasets">
+          Datasets
+        </Link>
       </div>
       {(datasetError ?? assetsError ?? tasksError) && (
         <p className="form-error">{datasetError ?? assetsError ?? tasksError}</p>
