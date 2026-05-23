@@ -48,6 +48,8 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       id: membership.organization.id,
       name: membership.organization.name,
       slug: membership.organization.slug,
+      email: membership.organization.email,
+      description: membership.organization.description,
       type: membership.organization.type,
       planTier: membership.organization.planTier,
       role: membership.role,
@@ -80,6 +82,23 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   }
 
   const prisma = getPrismaClient();
+
+  if (parsed.value.organizationEmail) {
+    const existingOrganizationEmail = await prisma.organization.findUnique({
+      where: {
+        email: parsed.value.organizationEmail
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (existingOrganizationEmail) {
+      response.status(409).json({ error: "That organization email is already in use." });
+      return;
+    }
+  }
+
   const organizationSlug = await getUniqueOrganizationSlug(parsed.value.organizationName);
   const workspaceSlug = slugify(parsed.value.workspaceName);
 
@@ -88,6 +107,8 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
       data: {
         name: parsed.value.organizationName,
         slug: organizationSlug,
+        email: parsed.value.organizationEmail,
+        description: parsed.value.description,
         type: parsed.value.organizationType,
         planTier: parsed.value.planTier,
         ownerId: user.id
@@ -98,6 +119,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
       data: {
         name: parsed.value.workspaceName,
         slug: workspaceSlug,
+        description: parsed.value.description,
         organizationId: organization.id
       }
     });
@@ -212,6 +234,22 @@ router.patch("/:organizationId", async (request: AuthenticatedRequest, response)
   if (!membership || !canUpdateOrganization(membership)) {
     response.status(403).json({ error: "You need owner or admin access to edit this organization." });
     return;
+  }
+
+  if (parsed.value.email) {
+    const existingOrganizationEmail = await prisma.organization.findUnique({
+      where: {
+        email: parsed.value.email
+      },
+      select: {
+        id: true
+      }
+    });
+
+    if (existingOrganizationEmail && existingOrganizationEmail.id !== organizationId) {
+      response.status(409).json({ error: "That organization email is already in use." });
+      return;
+    }
   }
 
   const organization = await prisma.$transaction(async (tx) => {
@@ -466,6 +504,13 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
     return;
   }
 
+  if (membership.userId === user.id && membership.role === MembershipRole.OWNER && parsed.value.role !== MembershipRole.OWNER) {
+    response.status(409).json({
+      error: "Organization owners cannot downgrade themselves. Add or choose another owner to transfer ownership."
+    });
+    return;
+  }
+
   if (membership.role === MembershipRole.OWNER && parsed.value.role !== MembershipRole.OWNER) {
     const ownerCount = await prisma.membership.count({
       where: {
@@ -481,14 +526,59 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
     }
   }
 
-  const updated = await prisma.membership.update({
-    where: {
-      id: membershipId
-    },
-    data: {
-      role: parsed.value.role
-    },
-    include: membershipIncludes
+  const updated = await prisma.$transaction(async (tx) => {
+    const organization = await tx.organization.findUnique({
+      where: {
+        id: organizationId
+      },
+      select: {
+        ownerId: true
+      }
+    });
+
+    if (
+      organization?.ownerId === membership.userId &&
+      membership.role === MembershipRole.OWNER &&
+      parsed.value.role !== MembershipRole.OWNER
+    ) {
+      const replacementOwner = await tx.membership.findFirst({
+        where: {
+          organizationId,
+          status: "ACTIVE",
+          role: MembershipRole.OWNER,
+          userId: {
+            not: membership.userId
+          }
+        },
+        orderBy: {
+          createdAt: "asc"
+        },
+        select: {
+          userId: true
+        }
+      });
+
+      if (replacementOwner) {
+        await tx.organization.update({
+          where: {
+            id: organizationId
+          },
+          data: {
+            ownerId: replacementOwner.userId
+          }
+        });
+      }
+    }
+
+    return tx.membership.update({
+      where: {
+        id: membershipId
+      },
+      data: {
+        role: parsed.value.role
+      },
+      include: membershipIncludes
+    });
   });
 
   response.status(200).json({
@@ -537,6 +627,13 @@ router.delete("/:organizationId/members/:membershipId", async (request: Authenti
     return;
   }
 
+  if (membership.userId === user.id && membership.role === MembershipRole.OWNER) {
+    response.status(409).json({
+      error: "Organization owners cannot remove themselves. Add or choose another owner to transfer ownership."
+    });
+    return;
+  }
+
   if (membership.role === MembershipRole.OWNER) {
     const ownerCount = await prisma.membership.count({
       where: {
@@ -552,13 +649,54 @@ router.delete("/:organizationId/members/:membershipId", async (request: Authenti
     }
   }
 
-  await prisma.membership.update({
-    where: {
-      id: membershipId
-    },
-    data: {
-      status: "REMOVED"
+  await prisma.$transaction(async (tx) => {
+    const organization = await tx.organization.findUnique({
+      where: {
+        id: organizationId
+      },
+      select: {
+        ownerId: true
+      }
+    });
+
+    if (organization?.ownerId === membership.userId && membership.role === MembershipRole.OWNER) {
+      const replacementOwner = await tx.membership.findFirst({
+        where: {
+          organizationId,
+          status: "ACTIVE",
+          role: MembershipRole.OWNER,
+          userId: {
+            not: membership.userId
+          }
+        },
+        orderBy: {
+          createdAt: "asc"
+        },
+        select: {
+          userId: true
+        }
+      });
+
+      if (replacementOwner) {
+        await tx.organization.update({
+          where: {
+            id: organizationId
+          },
+          data: {
+            ownerId: replacementOwner.userId
+          }
+        });
+      }
     }
+
+    await tx.membership.update({
+      where: {
+        id: membershipId
+      },
+      data: {
+        status: "REMOVED"
+      }
+    });
   });
 
   response.status(204).send();
@@ -570,6 +708,8 @@ type CreateOrganizationBody =
   | {
       organizationName?: unknown;
       workspaceName?: unknown;
+      organizationEmail?: unknown;
+      description?: unknown;
       organizationType?: unknown;
       planTier?: unknown;
     }
@@ -578,6 +718,8 @@ type CreateOrganizationBody =
 type UpdateOrganizationBody =
   | {
       name?: unknown;
+      email?: unknown;
+      description?: unknown;
       type?: unknown;
       planTier?: unknown;
     }
@@ -596,6 +738,8 @@ function parseCreateOrganizationBody(body: CreateOrganizationBody):
       value: {
         organizationName: string;
         workspaceName: string;
+        organizationEmail?: string;
+        description?: string;
         organizationType: OrganizationType;
         planTier: PlanTier;
       };
@@ -603,6 +747,8 @@ function parseCreateOrganizationBody(body: CreateOrganizationBody):
   | { ok: false; error: string } {
   const organizationName = normalizeName(body?.organizationName);
   const workspaceName = normalizeName(body?.workspaceName) ?? "Default workspace";
+  const organizationEmail = normalizeEmail(body?.organizationEmail);
+  const description = normalizeLongText(body?.description);
   const organizationType = parseEnumValue(OrganizationType, body?.organizationType, OrganizationType.COMPANY);
   const planTier = parseEnumValue(PlanTier, body?.planTier, PlanTier.FREE);
 
@@ -618,11 +764,21 @@ function parseCreateOrganizationBody(body: CreateOrganizationBody):
     return { ok: false, error: "Workspace name must be 120 characters or fewer." };
   }
 
+  if (organizationEmail && !isValidEmail(organizationEmail)) {
+    return { ok: false, error: "Enter a valid organization email." };
+  }
+
+  if (description && description.length > 800) {
+    return { ok: false, error: "Organization description must be 800 characters or fewer." };
+  }
+
   return {
     ok: true,
     value: {
       organizationName,
       workspaceName,
+      organizationEmail,
+      description,
       organizationType,
       planTier
     }
@@ -634,12 +790,16 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
       ok: true;
       value: {
         name?: string;
+        email?: string | null;
+        description?: string | null;
         type?: OrganizationType;
         planTier?: PlanTier;
       };
     }
   | { ok: false; error: string } {
   const name = normalizeName(body?.name);
+  const email = normalizeNullableEmail(body?.email);
+  const description = normalizeNullableLongText(body?.description);
   const type = parseOptionalEnumValue(OrganizationType, body?.type);
   const planTier = parseOptionalEnumValue(PlanTier, body?.planTier);
 
@@ -651,6 +811,14 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
     return { ok: false, error: "Choose a valid organization type." };
   }
 
+  if (email === false) {
+    return { ok: false, error: "Enter a valid organization email." };
+  }
+
+  if (description === false) {
+    return { ok: false, error: "Organization description must be 800 characters or fewer." };
+  }
+
   if (body?.planTier && !planTier) {
     return { ok: false, error: "Choose a valid plan tier." };
   }
@@ -659,6 +827,8 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
     ok: true,
     value: {
       ...(name ? { name } : {}),
+      ...(email !== undefined ? { email } : {}),
+      ...(description !== undefined ? { description } : {}),
       ...(type ? { type } : {}),
       ...(planTier ? { planTier } : {})
     }
@@ -713,6 +883,8 @@ function serializeOrganization(organization: Organization) {
     id: organization.id,
     name: organization.name,
     slug: organization.slug,
+    email: organization.email,
+    description: organization.description,
     type: organization.type,
     planTier: organization.planTier,
     ownerId: organization.ownerId,
@@ -845,6 +1017,50 @@ function normalizeId(value: unknown) {
 
 function normalizeEmail(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : undefined;
+}
+
+function normalizeNullableEmail(value: unknown) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const email = value.trim().toLowerCase();
+
+  if (!email) {
+    return null;
+  }
+
+  return isValidEmail(email) ? email : false;
+}
+
+function normalizeLongText(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeNullableLongText(value: unknown) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const text = value.trim();
+
+  if (!text) {
+    return null;
+  }
+
+  return text.length <= 800 ? text : false;
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function slugify(value: string) {

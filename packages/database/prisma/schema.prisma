@@ -263,6 +263,7 @@ model User {
   username        String?     @unique
   firstName       String?     @map("first_name")
   lastName        String?     @map("last_name")
+  jobTitle        String?     @map("job_title")
   avatarUrl       String?     @map("avatar_url")
   globalRole      GlobalRole  @default(USER) @map("global_role")
   status          UserStatus  @default(ACTIVE)
@@ -308,9 +309,12 @@ model Organization {
   id       String           @id @default(cuid())
   name     String
   slug     String           @unique
+  email    String?          @unique
+  description String?
   type     OrganizationType @default(PERSONAL)
   planTier PlanTier         @default(FREE) @map("plan_tier")
   ownerId  String           @map("owner_id")
+  onboardingJson Json?      @map("onboarding_json")
 
   owner               User                 @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   workspaces          Workspace[]
@@ -330,6 +334,7 @@ model Organization {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([ownerId])
+  @@index([email])
   @@index([type])
   @@index([planTier])
   @@map("organizations")

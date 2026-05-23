@@ -6,6 +6,7 @@ export interface ApiUser {
   email: string;
   firstName: string | null;
   lastName: string | null;
+  jobTitle: string | null;
   avatarUrl: string | null;
   globalRole: string;
   status: string;
@@ -28,6 +29,8 @@ export interface OrganizationSummary {
   id: string;
   name: string;
   slug: string;
+  email: string | null;
+  description: string | null;
   type: string;
   planTier: string;
   role: string;
@@ -78,12 +81,16 @@ export interface OrganizationDetail extends Omit<OrganizationSummary, "role" | "
 export interface CreateOrganizationInput {
   organizationName: string;
   workspaceName: string;
+  organizationEmail?: string;
+  description?: string;
   organizationType: string;
   planTier: string;
 }
 
 export interface UpdateOrganizationInput {
   name?: string;
+  email?: string;
+  description?: string;
   type?: string;
   planTier?: string;
 }
@@ -335,6 +342,17 @@ export async function syncAuthenticatedUser(session: Session) {
   }
 
   return ((await response.json()) as { user: ApiUser }).user;
+}
+
+export async function resolveLoginEmail(identifier: string) {
+  const params = new URLSearchParams({ identifier });
+  const response = await fetch(`${apiUrl}/api/auth/login-identifier?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to resolve login email."));
+  }
+
+  return ((await response.json()) as { email: string }).email;
 }
 
 export async function listOrganizations(session: Session) {

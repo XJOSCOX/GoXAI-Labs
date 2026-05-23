@@ -1,6 +1,6 @@
 import cors from "cors";
 import express from "express";
-import { getSupabaseConfig } from "@goxai/database";
+import { getPrismaClient, getSupabaseConfig } from "@goxai/database";
 import { assetsRouter } from "./assets.js";
 import { getBearerToken, syncUserFromAccessToken } from "./auth.js";
 import { datasetsRouter } from "./datasets.js";
@@ -61,6 +61,33 @@ app.get("/api/config", (_request, response) => {
   });
 });
 
+app.get("/api/auth/login-identifier", async (request, response) => {
+  const identifier = typeof request.query.identifier === "string" ? request.query.identifier.trim().toLowerCase() : "";
+
+  if (!identifier) {
+    response.status(400).json({ error: "Email is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const organization = await prisma.organization.findUnique({
+    where: {
+      email: identifier
+    },
+    select: {
+      owner: {
+        select: {
+          email: true
+        }
+      }
+    }
+  });
+
+  response.status(200).json({
+    email: organization?.owner.email ?? identifier
+  });
+});
+
 app.post("/api/auth/sync", async (request, response) => {
   const accessToken = getBearerToken(request.header("authorization"));
 
@@ -81,6 +108,7 @@ app.post("/api/auth/sync", async (request, response) => {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        jobTitle: user.jobTitle,
         avatarUrl: user.avatarUrl,
         globalRole: user.globalRole,
         status: user.status,

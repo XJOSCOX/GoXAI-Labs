@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { createSupabaseBrowserClient, syncAuthenticatedUser, type ApiUser } from "./api";
+import { createSupabaseBrowserClient, resolveLoginEmail, syncAuthenticatedUser, type ApiUser } from "./api";
 
 interface AuthContextValue {
   dbUser: ApiUser | null;
@@ -25,10 +25,17 @@ interface AuthContextValue {
 }
 
 export interface RegisterInput {
+  signupType: "user" | "organization";
   email: string;
   password: string;
   firstName: string;
   lastName: string;
+  jobTitle?: string;
+  organizationName?: string;
+  organizationEmail?: string;
+  organizationDescription?: string;
+  organizationType?: string;
+  planTier?: string;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -124,8 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setError(null);
 
         try {
+          const resolvedEmail = await resolveLoginEmail(email);
           const { data, error: signInError } = await supabase.auth.signInWithPassword({
-            email,
+            email: resolvedEmail,
             password
           });
 
@@ -151,7 +159,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(null);
         setDbUser(null);
       },
-      register: async ({ email, firstName, lastName, password }) => {
+      register: async ({
+        email,
+        firstName,
+        jobTitle,
+        lastName,
+        organizationDescription,
+        organizationEmail,
+        organizationName,
+        organizationType,
+        password,
+        planTier,
+        signupType
+      }) => {
         if (!supabase) {
           throw new Error("Authentication is not ready.");
         }
@@ -166,8 +186,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             options: {
               data: {
                 first_name: firstName,
+                job_title: jobTitle,
                 last_name: lastName,
-                name: `${firstName} ${lastName}`.trim()
+                name: `${firstName} ${lastName}`.trim(),
+                organization_description: organizationDescription,
+                organization_email: organizationEmail,
+                organization_name: organizationName,
+                organization_type: organizationType,
+                plan_tier: planTier,
+                signup_type: signupType,
+                workspace_name: "Main workspace"
               }
             }
           });

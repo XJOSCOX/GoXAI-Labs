@@ -185,7 +185,7 @@ function LoginPage() {
     <AuthFrame title="Login" subtitle="Access your labeling operations workspace.">
       <form className="auth-form" onSubmit={handleSubmit}>
         <label>
-          Email
+          Email or organization email
           <input name="email" type="email" autoComplete="email" required />
         </label>
         <label>
@@ -208,6 +208,7 @@ function LoginPage() {
 function RegisterPage() {
   const { error, loading, register, session } = useAuth();
   const navigate = useNavigate();
+  const [signupType, setSignupType] = useState<"user" | "organization">("user");
   const [message, setMessage] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -221,15 +222,37 @@ function RegisterPage() {
     setFormError(null);
 
     try {
+      const fullName = getFormValue(event, "fullName");
+      const { firstName, lastName } = splitFullName(fullName);
+      const organizationName = getFormValue(event, "organizationName");
+      const organizationEmail = getFormValue(event, "organizationEmail");
+
+      if (signupType === "organization" && !organizationName) {
+        setFormError("Organization name is required.");
+        return;
+      }
+
+      if (signupType === "organization" && !organizationEmail) {
+        setFormError("Organization email is required.");
+        return;
+      }
+
       const result = await register({
+        signupType,
         email: getFormValue(event, "email"),
         password: getFormValue(event, "password"),
-        firstName: getFormValue(event, "firstName"),
-        lastName: getFormValue(event, "lastName")
+        firstName,
+        lastName,
+        jobTitle: getFormValue(event, "jobTitle"),
+        organizationName,
+        organizationEmail,
+        organizationDescription: getFormValue(event, "organizationDescription"),
+        organizationType: getFormValue(event, "organizationType"),
+        planTier: getFormValue(event, "plan")
       });
 
       if (result === "signed-in") {
-        navigate("/organization");
+        navigate(signupType === "organization" ? "/organization" : "/");
       } else {
         setMessage("Check your email to confirm the account before signing in.");
       }
@@ -239,20 +262,90 @@ function RegisterPage() {
   }
 
   return (
-    <AuthFrame title="Register" subtitle="Create your GoXAI identity and sync it to the platform database.">
+    <AuthFrame title="Register" subtitle="Create your GoXAI identity and choose whether this is a personal or organization account.">
       <form className="auth-form two-column" onSubmit={handleSubmit}>
-        <label>
-          First name
-          <input name="firstName" autoComplete="given-name" required />
-        </label>
-        <label>
-          Last name
-          <input name="lastName" autoComplete="family-name" required />
+        <fieldset className="signup-type-picker wide">
+          <legend>Account type</legend>
+          <label>
+            <input
+              checked={signupType === "user"}
+              name="signupType"
+              onChange={() => setSignupType("user")}
+              type="radio"
+              value="user"
+            />
+            <span>
+              <strong>Simple user</strong>
+              <small>Personal account without an organization.</small>
+            </span>
+          </label>
+          <label>
+            <input
+              checked={signupType === "organization"}
+              name="signupType"
+              onChange={() => setSignupType("organization")}
+              type="radio"
+              value="organization"
+            />
+            <span>
+              <strong>Organization</strong>
+              <small>Create the organization and become its owner.</small>
+            </span>
+          </label>
+        </fieldset>
+        <label className="wide">
+          Full name
+          <input name="fullName" autoComplete="name" placeholder="Esaie Joseph" required />
         </label>
         <label className="wide">
-          Email
+          Your role or title
+          <input name="jobTitle" placeholder="CEO, Director, Data lead, Annotator..." />
+        </label>
+        <label className="wide">
+          User email
           <input name="email" type="email" autoComplete="email" required />
         </label>
+        {signupType === "organization" && (
+          <>
+            <label className="wide">
+              Organization name
+              <input name="organizationName" placeholder="GoXAI Labs" required />
+            </label>
+            <label className="wide">
+              Organization email
+              <input name="organizationEmail" type="email" placeholder="ops@example.com" required />
+            </label>
+            <label className="wide">
+              Organization type
+              <select name="organizationType" defaultValue="COMPANY">
+                <option value="COMPANY">Company</option>
+                <option value="ENTERPRISE">Enterprise</option>
+                <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+                <option value="PERSONAL">Personal</option>
+              </select>
+            </label>
+            <label className="wide">
+              Organization description
+              <textarea
+                name="organizationDescription"
+                placeholder="What does the organization do, and what kind of AI/data work will it run?"
+              />
+            </label>
+            <fieldset className="plan-picker wide">
+              <legend>Plan</legend>
+              <div className="plan-option-row">
+                {planOptions.map((plan) => (
+                  <label className="plan-option" key={plan.value}>
+                    <input name="plan" type="radio" value={plan.value} defaultChecked={plan.value === "FREE"} />
+                    <strong>{plan.label}</strong>
+                    <span>{plan.price}</span>
+                    <small>{plan.detail}</small>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </>
+        )}
         <label className="wide">
           Password
           <input name="password" type="password" autoComplete="new-password" minLength={8} required />
@@ -272,10 +365,13 @@ function RegisterPage() {
 }
 
 function AppShell() {
-  const { dbUser, logout } = useAuth();
+  const { dbUser, logout, session } = useAuth();
+  const { organizations } = useOrganizations(session);
   const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email || "Signed in user";
   const email = dbUser?.email ?? "No email";
   const role = dbUser?.globalRole ?? "USER";
+  const ownsOrganization = organizations.some((organization) => organization.role === "OWNER");
+  const accountKind = organizations.length === 0 ? "Simple user" : ownsOrganization ? "Organization owner" : "Organization user";
 
   return (
     <main className="app-shell">
@@ -291,6 +387,7 @@ function AppShell() {
             <strong>{name}</strong>
             <span>{email}</span>
             <small>{formatEnum(role)}</small>
+            <small>{accountKind}</small>
           </div>
         </section>
         <nav className="nav-list">
@@ -645,6 +742,8 @@ function OrganizationCreateForm({
       const result = await createOrganization(session, {
         organizationName: getFormValue(event, "name"),
         workspaceName: getFormValue(event, "workspace"),
+        organizationEmail: getFormValue(event, "email"),
+        description: getFormValue(event, "description"),
         organizationType: getFormValue(event, "type"),
         planTier: getFormValue(event, "plan")
       });
@@ -675,6 +774,10 @@ function OrganizationCreateForm({
         <input name="name" placeholder="GoXAI Labs" required />
       </label>
       <label>
+        Organization email
+        <input name="email" placeholder="ops@example.com" type="email" />
+      </label>
+      <label>
         Workspace name
         <input name="workspace" placeholder="Default workspace" required />
       </label>
@@ -700,6 +803,10 @@ function OrganizationCreateForm({
           ))}
         </div>
       </fieldset>
+      <label className="wide">
+        Description
+        <textarea name="description" placeholder="What does this organization do?" />
+      </label>
       {savedMessage && <p className="form-success wide">{savedMessage}</p>}
       <button className="primary-button" type="submit" disabled={saving || loading}>
         <Building2 size={18} />
@@ -740,6 +847,8 @@ function OrganizationManagementPanel({
     try {
       await updateOrganization(session, organization.id, {
         name: getFormValue(event, "name"),
+        email: getFormValue(event, "email"),
+        description: getFormValue(event, "description"),
         type: getFormValue(event, "type"),
         planTier: getFormValue(event, "planTier")
       });
@@ -827,6 +936,10 @@ function OrganizationManagementPanel({
               <dd>{organization.memberships.length}</dd>
             </div>
             <div>
+              <dt>Email</dt>
+              <dd>{organization.email ?? "Not set"}</dd>
+            </div>
+            <div>
               <dt>Workspace</dt>
               <dd>{primaryWorkspace?.name ?? "Organization wide"}</dd>
             </div>
@@ -841,7 +954,7 @@ function OrganizationManagementPanel({
           </dl>
           <div className="description-block">
             <span>Description</span>
-            <p>{primaryWorkspace?.description || "No workspace description has been added yet."}</p>
+            <p>{organization.description || primaryWorkspace?.description || "No organization description has been added yet."}</p>
           </div>
         </section>
 
@@ -875,6 +988,10 @@ function OrganizationManagementPanel({
               <input name="name" defaultValue={organization.name} required />
             </label>
             <label>
+              Organization email
+              <input name="email" defaultValue={organization.email ?? ""} placeholder="ops@example.com" type="email" />
+            </label>
+            <label>
               Type
               <select name="type" defaultValue={organization.type}>
                 <option value="PERSONAL">Personal</option>
@@ -892,6 +1009,10 @@ function OrganizationManagementPanel({
                 <option value="BUSINESS">Business</option>
                 <option value="ENTERPRISE">Enterprise</option>
               </select>
+            </label>
+            <label className="wide">
+              Description
+              <textarea name="description" defaultValue={organization.description ?? ""} />
             </label>
             <div className="row-actions wide">
               <button className="primary-button" type="submit" disabled={saving}>
@@ -3264,6 +3385,15 @@ function formatEnum(value: string) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function splitFullName(fullName: string) {
+  const [firstName = "", ...rest] = fullName.split(/\s+/).filter(Boolean);
+
+  return {
+    firstName,
+    lastName: rest.join(" ")
+  };
 }
 
 function getInitials(name: string, email: string) {
