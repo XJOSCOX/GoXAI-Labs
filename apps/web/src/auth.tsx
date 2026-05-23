@@ -73,6 +73,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const {
           data: { subscription }
         } = client.auth.onAuthStateChange((_event, nextSession) => {
+          setSession(nextSession);
+
           void syncSession(nextSession).catch((reason: unknown) => {
             setError(reason instanceof Error ? reason.message : "Unable to sync user session.");
           });

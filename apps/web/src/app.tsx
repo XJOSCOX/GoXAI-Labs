@@ -14,7 +14,7 @@ import {
   Sun,
   UserRoundPlus
 } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
   createAsset,
@@ -363,6 +363,7 @@ function OrganizationSetupPage() {
   const { session } = useAuth();
   const navigate = useNavigate();
   const { error, loading, organizations, reload, setError } = useOrganizations(session);
+  const organizationDraft = useFormDraft("goxai-draft-organization");
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
@@ -387,6 +388,7 @@ function OrganizationSetupPage() {
       });
 
       setSavedMessage(`${result.organization.name} and ${result.workspace.name} are ready.`);
+      organizationDraft.clearDraft();
       await reload();
       navigate("/projects");
     } catch (reason) {
@@ -423,7 +425,12 @@ function OrganizationSetupPage() {
           </div>
         </section>
       )}
-      <form className="panel setup-form" onSubmit={handleSubmit}>
+      <form
+        className="panel setup-form"
+        onChange={organizationDraft.saveDraft}
+        onSubmit={handleSubmit}
+        ref={organizationDraft.formRef}
+      >
         <label>
           Organization name
           <input name="name" placeholder="GoXAI Labs" required />
@@ -475,6 +482,7 @@ function ProjectsPage() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const projectDraft = useFormDraft("goxai-draft-project");
   const defaultOrganization = organizations[0];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -509,6 +517,7 @@ function ProjectsPage() {
       });
 
       form.reset();
+      projectDraft.clearDraft();
       setSavedMessage(`${project.name} was created as a draft.`);
       setShowForm(false);
       await reloadProjects();
@@ -541,7 +550,12 @@ function ProjectsPage() {
       )}
       {savedMessage && <p className="form-success">{savedMessage}</p>}
       {showForm && (
-        <form className="panel project-form" onSubmit={handleSubmit}>
+        <form
+          className="panel project-form"
+          onChange={projectDraft.saveDraft}
+          onSubmit={handleSubmit}
+          ref={projectDraft.formRef}
+        >
           <label>
             Organization
             <select name="organizationId" defaultValue={defaultOrganization?.id ?? ""} required>
@@ -759,6 +773,9 @@ function DatasetForm({
 }) {
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const datasetDraft = useFormDraft(
+    defaultProjectId ? `goxai-draft-dataset-${defaultProjectId}` : "goxai-draft-dataset"
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -781,6 +798,7 @@ function DatasetForm({
       });
 
       form.reset();
+      datasetDraft.clearDraft();
       setSavedMessage(`${dataset.name} was created as a draft.`);
       await onCreated();
     } catch (reason) {
@@ -791,7 +809,12 @@ function DatasetForm({
   }
 
   return (
-    <form className="panel dataset-form" onSubmit={handleSubmit}>
+    <form
+      className="panel dataset-form"
+      onChange={datasetDraft.saveDraft}
+      onSubmit={handleSubmit}
+      ref={datasetDraft.formRef}
+    >
       {!defaultProjectId && (
         <label>
           Project
@@ -954,6 +977,7 @@ function AssetForm({
 }) {
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const assetDraft = useFormDraft(`goxai-draft-asset-${dataset.id}`);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -986,6 +1010,7 @@ function AssetForm({
           });
 
       form.reset();
+      assetDraft.clearDraft();
       setSavedMessage(`${asset.fileName} was ${file ? "uploaded to" : "registered from"} R2.`);
       await onCreated();
     } catch (reason) {
@@ -996,7 +1021,12 @@ function AssetForm({
   }
 
   return (
-    <form className="panel asset-form" onSubmit={handleSubmit}>
+    <form
+      className="panel asset-form"
+      onChange={assetDraft.saveDraft}
+      onSubmit={handleSubmit}
+      ref={assetDraft.formRef}
+    >
       <label className="wide">
         Upload file
         <input name="file" type="file" />
@@ -1340,6 +1370,73 @@ function useAssets(
     loading,
     reload,
     setError
+  };
+}
+
+function useFormDraft(key: string) {
+  const formRef = useRef<HTMLFormElement | null>(null);
+
+  useEffect(() => {
+    const form = formRef.current;
+
+    if (!form) {
+      return;
+    }
+
+    const rawDraft = localStorage.getItem(key);
+
+    if (!rawDraft) {
+      return;
+    }
+
+    try {
+      const draft = JSON.parse(rawDraft) as Record<string, string>;
+
+      for (const [name, value] of Object.entries(draft)) {
+        const field = form.elements.namedItem(name);
+
+        if (
+          field instanceof HTMLInputElement ||
+          field instanceof HTMLSelectElement ||
+          field instanceof HTMLTextAreaElement
+        ) {
+          if (field instanceof HTMLInputElement && field.type === "file") {
+            continue;
+          }
+
+          field.value = value;
+        }
+      }
+    } catch {
+      localStorage.removeItem(key);
+    }
+  }, [key]);
+
+  const saveDraft = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      const form = event.currentTarget;
+      const formData = new FormData(form);
+      const draft: Record<string, string> = {};
+
+      for (const [name, value] of formData.entries()) {
+        if (typeof value === "string") {
+          draft[name] = value;
+        }
+      }
+
+      localStorage.setItem(key, JSON.stringify(draft));
+    },
+    [key]
+  );
+
+  const clearDraft = useCallback(() => {
+    localStorage.removeItem(key);
+  }, [key]);
+
+  return {
+    clearDraft,
+    formRef,
+    saveDraft
   };
 }
 

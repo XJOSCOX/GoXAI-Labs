@@ -22,6 +22,8 @@ export interface BackendConfig {
 
 export const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
+let supabaseBrowserClientPromise: Promise<SupabaseClient> | null = null;
+
 export interface OrganizationSummary {
   id: string;
   name: string;
@@ -184,6 +186,16 @@ export interface ClientLogInput {
 }
 
 export async function createSupabaseBrowserClient() {
+  if (supabaseBrowserClientPromise) {
+    return supabaseBrowserClientPromise;
+  }
+
+  supabaseBrowserClientPromise = createSupabaseBrowserClientFromApi();
+
+  return supabaseBrowserClientPromise;
+}
+
+async function createSupabaseBrowserClientFromApi() {
   const response = await fetch(`${apiUrl}/api/config`);
 
   if (!response.ok) {
