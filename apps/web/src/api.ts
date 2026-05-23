@@ -176,6 +176,11 @@ export interface AssetUploadUrl {
   asset: CreateAssetInput;
 }
 
+export interface AssetAccessUrl {
+  accessUrl: string;
+  expiresInSeconds: number;
+}
+
 export interface ClientLogInput {
   entityId?: string;
   entityType?: string;
@@ -380,6 +385,16 @@ export async function createAssetUploadUrl(session: Session, input: AssetUploadR
   }
 
   return (await response.json()) as AssetUploadUrl;
+}
+
+export async function getAssetAccessUrl(session: Session, assetId: string) {
+  const response = await authenticatedFetch(session, `/api/assets/${encodeURIComponent(assetId)}/access-url`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create asset access URL."));
+  }
+
+  return (await response.json()) as AssetAccessUrl;
 }
 
 export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["upload"]) {

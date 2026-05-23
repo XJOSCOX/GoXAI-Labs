@@ -5,10 +5,14 @@ import {
   CheckCircle2,
   CloudUpload,
   Database,
+  ExternalLink,
+  Eye,
+  FileText,
   FolderKanban,
   HardDrive,
   LogOut,
   Moon,
+  Search,
   ShieldCheck,
   Sparkles,
   Sun,
@@ -22,6 +26,7 @@ import {
   createDataset,
   createOrganization,
   createProject,
+  getAssetAccessUrl,
   getDataset,
   getProject,
   listAssets,
@@ -953,7 +958,7 @@ function DatasetDetailPage() {
             session={session}
             setPageError={setAssetsError}
           />
-          <AssetsTable assets={assets} loading={assetsLoading} />
+          <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
         </>
       ) : !datasetError ? (
         <section className="panel">
@@ -983,6 +988,7 @@ function AssetForm({
     event.preventDefault();
     const form = event.currentTarget;
     const file = getFormFile(event, "file");
+    const objectKey = getFormValue(event, "objectKey");
     setSavedMessage(null);
     setPageError(null);
 
@@ -991,15 +997,20 @@ function AssetForm({
       return;
     }
 
+    if (!file && !objectKey) {
+      setPageError("R2 object key is required when registering an existing object.");
+      return;
+    }
+
     setSaving(true);
 
     try {
       const asset = file
-        ? await uploadAndRegisterAsset(session, dataset.id, file, getFormValue(event, "objectKey"))
+        ? await uploadAndRegisterAsset(session, dataset.id, file, objectKey)
         : await createAsset(session, {
             datasetId: dataset.id,
             bucket: getFormValue(event, "bucket"),
-            objectKey: getFormValue(event, "objectKey"),
+            objectKey,
             fileName: getFormValue(event, "fileName"),
             mimeType: getFormValue(event, "mimeType"),
             fileSize: getFormValue(event, "fileSize"),
@@ -1037,7 +1048,7 @@ function AssetForm({
       </label>
       <label>
         R2 object key
-        <input name="objectKey" placeholder="datasets/training-set-v1/image-001.jpg" required />
+        <input name="objectKey" placeholder="Auto-generated for uploads" />
       </label>
       <label>
         File name
@@ -1114,45 +1125,225 @@ async function uploadAndRegisterAsset(
   return createAsset(session, signedUpload.asset);
 }
 
-function AssetsTable({ assets, loading }: { assets: AssetSummary[]; loading: boolean }) {
+function AssetsTable({
+  assets,
+  loading,
+  session,
+  setPageError
+}: {
+  assets: AssetSummary[];
+  loading: boolean;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [selectedAsset, setSelectedAsset] = useState<AssetSummary | null>(null);
+  const [accessUrl, setAccessUrl] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredAssets = normalizedQuery
+    ? assets.filter((asset) =>
+        [asset.fileName, asset.objectKey, asset.mimeType, asset.provider]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery)
+      )
+    : assets;
+  const totalBytes = assets.reduce((total, asset) => total + Number(asset.fileSize || 0), 0);
+
+  async function handleInspect(asset: AssetSummary) {
+    setSelectedAsset(asset);
+    setAccessUrl(null);
+    setAccessError(null);
+    setPageError(null);
+
+    if (!session) {
+      setAccessError("Authentication required.");
+      return;
+    }
+
+    setAccessLoading(true);
+
+    try {
+      const result = await getAssetAccessUrl(session, asset.id);
+      setAccessUrl(result.accessUrl);
+    } catch (reason) {
+      setAccessError(reason instanceof Error ? reason.message : "Unable to create asset preview URL.");
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
   return (
-    <section className="table-panel">
-      <div className="table-row assets-head table-head">
-        <span>File</span>
-        <span>Provider</span>
-        <span>Size</span>
-        <span>Registered</span>
+    <section className="asset-workspace">
+      <div className="asset-toolbar">
+        <div>
+          <p className="eyebrow">Assets</p>
+          <h2>{assets.length} registered</h2>
+          <span>{formatBytes(String(totalBytes))} across this dataset</span>
+        </div>
+        <label className="search-field">
+          <Search size={16} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search files, keys, or MIME types"
+          />
+        </label>
       </div>
-      {loading ? (
-        <div className="empty-state">
-          <HardDrive size={28} />
-          <strong>Loading assets</strong>
-          <span>Checking registered R2 objects for this dataset.</span>
+      <section className="table-panel">
+        <div className="table-row assets-head table-head">
+          <span>File</span>
+          <span>Type</span>
+          <span>Size</span>
+          <span>Action</span>
         </div>
-      ) : assets.length > 0 ? (
-        assets.map((asset) => <AssetRow asset={asset} key={asset.id} />)
-      ) : (
-        <div className="empty-state">
-          <HardDrive size={28} />
-          <strong>No assets registered</strong>
-          <span>Register R2 object metadata before generating upload flows.</span>
-        </div>
+        {loading ? (
+          <div className="empty-state">
+            <HardDrive size={28} />
+            <strong>Loading assets</strong>
+            <span>Checking registered R2 objects for this dataset.</span>
+          </div>
+        ) : filteredAssets.length > 0 ? (
+          filteredAssets.map((asset) => (
+            <AssetRow
+              asset={asset}
+              key={asset.id}
+              onInspect={() => {
+                void handleInspect(asset);
+              }}
+            />
+          ))
+        ) : assets.length > 0 ? (
+          <div className="empty-state">
+            <Search size={28} />
+            <strong>No matching assets</strong>
+            <span>Try a file name, object key, provider, or MIME type.</span>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <HardDrive size={28} />
+            <strong>No assets registered</strong>
+            <span>Upload an R2 object to start building annotation tasks.</span>
+          </div>
+        )}
+      </section>
+      {selectedAsset && (
+        <AssetPreview
+          accessError={accessError}
+          accessLoading={accessLoading}
+          accessUrl={accessUrl}
+          asset={selectedAsset}
+          onClose={() => {
+            setSelectedAsset(null);
+            setAccessUrl(null);
+            setAccessError(null);
+          }}
+        />
       )}
     </section>
   );
 }
 
-function AssetRow({ asset }: { asset: AssetSummary }) {
+function AssetRow({ asset, onInspect }: { asset: AssetSummary; onInspect: () => void }) {
   return (
     <article className="table-row assets-head project-row">
       <span>
-        <strong>{asset.fileName}</strong>
+        <button className="link-button" type="button" onClick={onInspect}>
+          {asset.fileName}
+        </button>
         <small>{asset.objectKey}</small>
       </span>
-      <span>{asset.provider}</span>
+      <span>
+        <span className="status-pill compact">{formatAssetKind(asset.mimeType)}</span>
+        <small>{asset.mimeType}</small>
+      </span>
       <span>{formatBytes(asset.fileSize)}</span>
-      <span>{formatDate(asset.createdAt)}</span>
+      <span>
+        <button className="secondary-button compact-button" type="button" onClick={onInspect}>
+          <Eye size={16} />
+          Preview
+        </button>
+      </span>
     </article>
+  );
+}
+
+function AssetPreview({
+  accessError,
+  accessLoading,
+  accessUrl,
+  asset,
+  onClose
+}: {
+  accessError: string | null;
+  accessLoading: boolean;
+  accessUrl: string | null;
+  asset: AssetSummary;
+  onClose: () => void;
+}) {
+  const isImage = asset.mimeType.startsWith("image/");
+  const isVideo = asset.mimeType.startsWith("video/");
+  const isAudio = asset.mimeType.startsWith("audio/");
+
+  return (
+    <section className="panel asset-preview">
+      <div className="asset-preview-head">
+        <div>
+          <p className="eyebrow">Preview</p>
+          <h2>{asset.fileName}</h2>
+          <span>{asset.objectKey}</span>
+        </div>
+        <div className="asset-preview-actions">
+          {accessUrl && (
+            <a className="secondary-button compact-button" href={accessUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={16} />
+              Open
+            </a>
+          )}
+          <button className="ghost-button compact-button" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+      <dl className="detail-list asset-detail-list">
+        <div>
+          <dt>Type</dt>
+          <dd>{asset.mimeType}</dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd>{formatBytes(asset.fileSize)}</dd>
+        </div>
+        <div>
+          <dt>Dimensions</dt>
+          <dd>{asset.width && asset.height ? `${asset.width} x ${asset.height}` : "Not set"}</dd>
+        </div>
+        <div>
+          <dt>Registered</dt>
+          <dd>{formatDate(asset.createdAt)}</dd>
+        </div>
+      </dl>
+      {accessError && <p className="form-error">{accessError}</p>}
+      <div className="asset-preview-stage">
+        {accessLoading ? (
+          <span className="muted-copy">Creating signed preview URL.</span>
+        ) : accessUrl && isImage ? (
+          <img alt={asset.fileName} src={accessUrl} />
+        ) : accessUrl && isVideo ? (
+          <video controls src={accessUrl} />
+        ) : accessUrl && isAudio ? (
+          <audio controls src={accessUrl} />
+        ) : (
+          <div className="empty-state">
+            <FileText size={28} />
+            <strong>{accessUrl ? "Preview opens in a new tab" : "Preview unavailable"}</strong>
+            <span>{accessUrl ? "Use Open to inspect this file." : "Select an asset to create a signed URL."}</span>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1446,6 +1637,12 @@ function formatEnum(value: string) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatAssetKind(mimeType: string) {
+  const [kind] = mimeType.split("/");
+
+  return kind ? formatEnum(kind) : "File";
 }
 
 function formatDate(value: string) {

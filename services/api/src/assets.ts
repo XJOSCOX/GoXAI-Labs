@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   getPrismaClient,
@@ -13,6 +13,116 @@ import { getRequestId, saveAuditLog } from "./logging.js";
 const router = Router();
 
 router.use(requireAuthenticatedUser);
+
+router.get("/:assetId/access-url", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const assetId = normalizeId(request.params.assetId);
+
+  if (!assetId) {
+    response.status(400).json({ error: "Asset is required." });
+    return;
+  }
+
+  const config = getR2Config();
+
+  if (!config.ok) {
+    void saveAuditLog({
+      action: "asset.access_url.config_missing",
+      userId: user.id,
+      entityType: "storage_asset",
+      entityId: assetId,
+      metadata: {
+        requestId: getRequestId(request),
+        error: config.error
+      }
+    });
+    response.status(503).json({ error: config.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const asset = await prisma.storageAsset.findUnique({
+    where: {
+      id: assetId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      projectId: true,
+      provider: true,
+      bucket: true,
+      objectKey: true,
+      fileName: true,
+      mimeType: true
+    }
+  });
+
+  if (!asset) {
+    response.status(404).json({ error: "Asset was not found." });
+    return;
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: asset.organizationId,
+      status: "ACTIVE"
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({ error: "You do not have access to this asset." });
+    return;
+  }
+
+  if (asset.provider !== StorageProvider.R2) {
+    response.status(400).json({ error: "Only R2 assets support signed access URLs right now." });
+    return;
+  }
+
+  const expiresInSeconds = 60 * 10;
+  const client = createR2Client(config.value);
+  const accessUrl = await getSignedUrl(
+    client,
+    new GetObjectCommand({
+      Bucket: asset.bucket,
+      Key: asset.objectKey,
+      ResponseContentType: asset.mimeType,
+      ResponseContentDisposition: `inline; filename="${asset.fileName.replaceAll("\"", "")}"`
+    }),
+    { expiresIn: expiresInSeconds }
+  );
+
+  void saveAuditLog({
+    action: "asset.access_url.created",
+    organizationId: asset.organizationId,
+    projectId: asset.projectId ?? undefined,
+    userId: user.id,
+    entityType: "storage_asset",
+    entityId: asset.id,
+    metadata: {
+      requestId: getRequestId(request),
+      bucket: asset.bucket,
+      objectKey: asset.objectKey,
+      fileName: asset.fileName,
+      expiresInSeconds
+    }
+  });
+
+  response.status(200).json({
+    accessUrl,
+    expiresInSeconds
+  });
+});
 
 router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
