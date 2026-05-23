@@ -36,6 +36,8 @@ export function OrganizationSetupPage() {
 
   async function handleJoinByCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
+    const code = getFormValue(event, "code");
     setError(null);
     setJoinMessage(null);
 
@@ -47,8 +49,8 @@ export function OrganizationSetupPage() {
     setJoining(true);
 
     try {
-      await joinOrganizationWithCode(session, getFormValue(event, "code"));
-      event.currentTarget.reset();
+      await joinOrganizationWithCode(session, code);
+      formElement.reset();
       setJoinMessage("Organization joined. Your access is active.");
       await reload();
     } catch (reason) {

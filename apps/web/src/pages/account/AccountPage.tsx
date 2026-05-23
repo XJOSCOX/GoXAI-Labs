@@ -72,6 +72,7 @@ export function AccountPage() {
 
   async function handleVerificationSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setMessage(null);
     setError(null);
 
@@ -80,7 +81,7 @@ export function AccountPage() {
       return;
     }
 
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
 
     try {
       const application = await submitVerificationApplication(session, {
@@ -91,7 +92,7 @@ export function AccountPage() {
       setVerificationApplication(application);
       await refreshUser();
       setMessage("Verification application submitted.");
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to submit verification application.");
     }
@@ -99,6 +100,7 @@ export function AccountPage() {
 
   async function handleCreatorSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setMessage(null);
     setError(null);
 
@@ -107,7 +109,7 @@ export function AccountPage() {
       return;
     }
 
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
 
     try {
       const application = await submitCreatorApplication(session, {
@@ -117,7 +119,7 @@ export function AccountPage() {
       setCreatorApplication(application);
       await refreshUser();
       setMessage("Creator rights application submitted.");
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to submit creator application.");
     }
