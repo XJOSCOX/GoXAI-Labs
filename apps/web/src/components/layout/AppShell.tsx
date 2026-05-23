@@ -1,6 +1,7 @@
 import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, LogOut } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
+import goxaiLogo from "../../assets/goxailab-logo.png";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum, getInitials } from "../../utils/format";
 import { LoadingScreen } from "./LoadingScreen";
@@ -32,6 +33,7 @@ export function AppShell() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row compact sidebar-brand">
+          <img className="brand-logo" src={goxaiLogo} alt="" />
           <strong className="brand-wordmark">GoXAi Lab</strong>
         </div>
         <section className="sidebar-profile">

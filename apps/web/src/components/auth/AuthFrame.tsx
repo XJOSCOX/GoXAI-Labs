@@ -1,5 +1,6 @@
 import type React from "react";
 import { Link } from "react-router-dom";
+import goxaiLogo from "../../assets/goxailab-logo.png";
 import { ThemeToggle } from "../layout/ThemeToggle";
 
 export function AuthFrame({ children, title, subtitle }: { children: React.ReactNode; title: string; subtitle: string }) {
@@ -10,7 +11,7 @@ export function AuthFrame({ children, title, subtitle }: { children: React.React
           <ThemeToggle />
         </div>
         <div className="brand-row">
-          <div className="brand-mark">GX</div>
+          <img className="auth-brand-logo" src={goxaiLogo} alt="" />
           <div>
             <p className="eyebrow">GoXAi Lab</p>
             <h1>{title}</h1>
