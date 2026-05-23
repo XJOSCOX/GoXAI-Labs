@@ -284,6 +284,10 @@ export interface AssetAccessUrl {
   expiresInSeconds: number;
 }
 
+export interface DeleteAssetsResult {
+  deletedCount: number;
+}
+
 export interface TaskSummary {
   id: string;
   projectId: string;
@@ -717,6 +721,22 @@ export async function getAssetAccessUrl(session: Session, assetId: string) {
   }
 
   return (await response.json()) as AssetAccessUrl;
+}
+
+export async function deleteAssets(
+  session: Session,
+  input: { assetIds?: string[]; datasetId?: string; folderPrefix?: string }
+) {
+  const response = await authenticatedFetch(session, "/api/assets/delete", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to delete assets."));
+  }
+
+  return (await response.json()) as DeleteAssetsResult;
 }
 
 export async function listTasks(session: Session, input: { datasetId?: string; projectId?: string } = {}) {

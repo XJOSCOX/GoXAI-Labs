@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   getPrismaClient,
@@ -268,6 +268,164 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.post("/delete", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const parsed = parseDeleteAssetsBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const assets = await prisma.storageAsset.findMany({
+    where: parsed.value.assetIds
+      ? {
+          id: {
+            in: parsed.value.assetIds
+          }
+        }
+      : {
+          datasetId: parsed.value.datasetId,
+          objectKey: {
+            startsWith: parsed.value.folderPrefix
+          }
+        },
+    include: {
+      project: {
+        select: {
+          id: true,
+          createdById: true
+        }
+      }
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+    take: 1001
+  });
+
+  if (assets.length === 0) {
+    response.status(404).json({ error: "No registered assets matched this delete request." });
+    return;
+  }
+
+  if (assets.length > 1000) {
+    response.status(400).json({ error: "Delete up to 1000 registered assets at a time." });
+    return;
+  }
+
+  const projectIds = [
+    ...new Set(
+      assets
+        .map((asset) => asset.projectId)
+        .filter((projectId): projectId is string => typeof projectId === "string" && projectId.length > 0)
+    )
+  ];
+  const memberships = await prisma.projectMembership.findMany({
+    where: {
+      userId: user.id,
+      projectId: {
+        in: projectIds
+      },
+      status: "ACTIVE"
+    },
+    select: {
+      projectId: true,
+      role: true
+    }
+  });
+  const manageableProjectIds = new Set(
+    memberships.filter((membership) => canManageProjectScope(membership)).map((membership) => membership.projectId)
+  );
+  const unauthorizedAsset = assets.find((asset) => {
+    if (!asset.projectId || !asset.project) {
+      return true;
+    }
+
+    return asset.project.createdById !== user.id && !manageableProjectIds.has(asset.projectId);
+  });
+
+  if (unauthorizedAsset) {
+    response.status(403).json({ error: "You need project owner or admin access to delete these assets." });
+    return;
+  }
+
+  const r2Assets = assets.filter((asset) => asset.provider === StorageProvider.R2);
+
+  if (r2Assets.length > 0) {
+    const config = getR2Config();
+
+    if (!config.ok) {
+      response.status(503).json({ error: config.error });
+      return;
+    }
+
+    const client = createR2Client(config.value);
+    const buckets = [...new Set(r2Assets.map((asset) => asset.bucket))];
+
+    for (const bucket of buckets) {
+      const bucketAssets = r2Assets.filter((asset) => asset.bucket === bucket);
+      const result = await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: {
+            Objects: bucketAssets.map((asset) => ({
+              Key: asset.objectKey
+            })),
+            Quiet: true
+          }
+        })
+      );
+
+      if (result.Errors && result.Errors.length > 0) {
+        response.status(502).json({
+          error: `R2 refused to delete ${result.Errors.length} object${result.Errors.length === 1 ? "" : "s"}.`
+        });
+        return;
+      }
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.storageAsset.deleteMany({
+      where: {
+        id: {
+          in: assets.map((asset) => asset.id)
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: assets[0]?.organizationId,
+        projectId: assets[0]?.projectId ?? undefined,
+        userId: user.id,
+        action: "asset.deleted",
+        entityType: parsed.value.folderPrefix ? "storage_asset_folder" : "storage_asset",
+        entityId: parsed.value.folderPrefix ?? assets[0]?.id,
+        metadata: {
+          requestId: getRequestId(request),
+          deletedCount: assets.length,
+          assetIds: assets.map((asset) => asset.id),
+          folderPrefix: parsed.value.folderPrefix,
+          datasetId: parsed.value.datasetId
+        }
+      }
+    });
+  });
+
+  response.status(200).json({
+    deletedCount: assets.length
+  });
+});
+
 router.get("/", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
 
@@ -526,6 +684,14 @@ type CreateUploadUrlBody =
     }
   | undefined;
 
+type DeleteAssetsBody =
+  | {
+      assetIds?: unknown;
+      datasetId?: unknown;
+      folderPrefix?: unknown;
+    }
+  | undefined;
+
 function parseCreateAssetBody(body: CreateAssetBody):
   | {
       ok: true;
@@ -649,6 +815,64 @@ function parseCreateUploadUrlBody(body: CreateUploadUrlBody):
       fileName,
       mimeType,
       fileSize
+    }
+  };
+}
+
+function parseDeleteAssetsBody(body: DeleteAssetsBody):
+  | {
+      ok: true;
+      value:
+        | {
+            assetIds: string[];
+            datasetId?: undefined;
+            folderPrefix?: undefined;
+          }
+        | {
+            assetIds?: undefined;
+            datasetId: string;
+            folderPrefix: string;
+          };
+    }
+  | { ok: false; error: string } {
+  const assetIds = Array.isArray(body?.assetIds)
+    ? [
+        ...new Set(
+          body.assetIds
+            .map((assetId) => normalizeId(assetId))
+            .filter((assetId): assetId is string => Boolean(assetId))
+        )
+      ]
+    : undefined;
+  const datasetId = normalizeId(body?.datasetId);
+  const folderPrefix = normalizeFolderPrefix(body?.folderPrefix);
+
+  if (assetIds && assetIds.length > 0) {
+    if (assetIds.length > 1000) {
+      return { ok: false, error: "Delete up to 1000 registered assets at a time." };
+    }
+
+    return {
+      ok: true,
+      value: {
+        assetIds
+      }
+    };
+  }
+
+  if (!datasetId || !folderPrefix) {
+    return { ok: false, error: "Choose files or a dataset folder to delete." };
+  }
+
+  if (folderPrefix.length < 2) {
+    return { ok: false, error: "Folder prefix is too short." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      datasetId,
+      folderPrefix
     }
   };
 }
@@ -793,6 +1017,16 @@ function normalizeId(value: unknown) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeFolderPrefix(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+
+  return normalized ? `${normalized}/` : undefined;
 }
 
 function parsePositiveInteger(value: unknown) {

@@ -1343,6 +1343,12 @@ textarea:focus {
   color: var(--text);
 }
 
+.drop-zone small {
+  max-width: 560px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .asset-form.drag-active .drop-zone {
   border-color: var(--accent-strong);
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
@@ -1738,6 +1744,25 @@ textarea:focus {
   gap: 16px;
 }
 
+.asset-toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.folder-delete-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
 .asset-toolbar h2 {
   margin: 2px 0;
 }
@@ -1772,7 +1797,7 @@ textarea:focus {
 }
 
 .table-row.assets-head {
-  grid-template-columns: minmax(0, 2fr) 1fr 1fr 1fr;
+  grid-template-columns: 30px minmax(0, 2fr) 1fr 1fr 1.35fr;
 }
 
 .table-row.task-head {
@@ -1814,6 +1839,20 @@ textarea:focus {
 .table-row.assets-head > span:nth-child(2) {
   display: grid;
   gap: 4px;
+}
+
+.selection-summary {
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 10px 18px;
+}
+
+.asset-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .project-row small {
@@ -2010,6 +2049,7 @@ textarea:focus {
   .page-actions,
   .asset-toolbar,
   .asset-preview-head,
+  .asset-toolbar-actions,
   .section-actions,
   .section-head,
   .table-toolbar,
@@ -2020,8 +2060,13 @@ textarea:focus {
   }
 
   .section-actions,
-  .table-toolbar {
+  .table-toolbar,
+  .asset-toolbar-actions {
     width: 100%;
+  }
+
+  .folder-delete-bar {
+    grid-template-columns: 1fr;
   }
 
   .section-actions .primary-button,

@@ -1,10 +1,11 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Save, Search, X } from "lucide-react";
+import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Save, Search, Trash2, X } from "lucide-react";
 import {
   archiveDataset,
   createAsset,
   createAssetUploadUrl,
+  deleteAssets,
   generateTasksFromDataset,
   getAssetAccessUrl,
   logClientEvent,
@@ -291,7 +292,14 @@ export function DatasetDetailPage() {
                 setPageError={setTasksError}
                 tasks={tasks}
               />
-              <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
+              <AssetsTable
+                assets={assets}
+                datasetId={dataset.id}
+                loading={assetsLoading}
+                onChanged={reloadAssets}
+                session={session}
+                setPageError={setAssetsError}
+              />
             </section>
             <aside className="side-column">
               <AssetForm
@@ -414,7 +422,7 @@ function AssetForm({
         const batchBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
 
         if (selectedFiles.length > maxBulkUploadFiles) {
-          throw new Error(`Upload up to ${maxBulkUploadFiles} files at once.`);
+          throw new Error(`Upload up to ${maxBulkUploadFiles} files at once. For larger batches, split files into multiple folders and upload them separately.`);
         }
 
         if (batchBytes > maxBulkUploadBytes) {
@@ -563,7 +571,9 @@ function AssetForm({
     const totalBytes = limited.reduce((total, file) => total + file.size, 0);
 
     if (merged.length > maxBulkUploadFiles) {
-      setPageError(`Upload up to ${maxBulkUploadFiles} files at once. Extra files were not added.`);
+      setPageError(
+        `Only ${maxBulkUploadFiles} files are allowed in one upload. Extra files were not added. For larger datasets, create multiple folders and upload one folder at a time.`
+      );
     } else if (totalBytes > maxBulkUploadBytes) {
       setPageError(`Upload up to ${formatBytes(String(maxBulkUploadBytes))} per batch. Remove some files before uploading.`);
     } else {
@@ -607,7 +617,8 @@ function AssetForm({
       <div className="drop-zone wide">
         <CloudUpload size={22} />
         <strong>Drop images or files here</strong>
-        <span>Choose many files, or choose a folder to keep the folder paths in R2.</span>
+        <span>Choose up to {maxBulkUploadFiles} files at once, or choose a folder to keep the folder paths in R2.</span>
+        <small>For more than {maxBulkUploadFiles} images, split them into multiple folders and upload each folder separately.</small>
         <div className="upload-picker-row">
           <label className="secondary-button file-picker-button">
             <CloudUpload size={16} />
@@ -799,17 +810,25 @@ function UploadProgressPanel({ progress }: { progress: UploadProgress }) {
 
 function AssetsTable({
   assets,
+  datasetId,
   loading,
+  onChanged,
   session,
   setPageError
 }: {
   assets: AssetSummary[];
+  datasetId: string;
   loading: boolean;
+  onChanged: () => Promise<void>;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
+  const [folderPrefix, setFolderPrefix] = useState("");
   const [selectedAsset, setSelectedAsset] = useState<AssetSummary | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
   const [accessLoading, setAccessLoading] = useState(false);
@@ -823,6 +842,12 @@ function AssetsTable({
       )
     : assets;
   const totalBytes = assets.reduce((total, asset) => total + Number(asset.fileSize || 0), 0);
+  const folderOptions = [
+    ...new Set(assets.map((asset) => getAssetFolderPrefix(asset.objectKey)).filter((prefix) => prefix.length > 0))
+  ].sort();
+  const selectedVisibleAssets = filteredAssets.filter((asset) => selectedAssetIds.includes(asset.id));
+  const selectedVisibleCount = selectedVisibleAssets.length;
+  const allVisibleSelected = filteredAssets.length > 0 && filteredAssets.every((asset) => selectedAssetIds.includes(asset.id));
 
   async function handleInspect(asset: AssetSummary) {
     setSelectedAsset(asset);
@@ -847,6 +872,121 @@ function AssetsTable({
     }
   }
 
+  function toggleAsset(assetId: string, checked: boolean) {
+    setSelectedAssetIds((current) =>
+      checked ? [...new Set([...current, assetId])] : current.filter((selectedId) => selectedId !== assetId)
+    );
+  }
+
+  function toggleVisibleAssets(checked: boolean) {
+    const visibleIds = filteredAssets.map((asset) => asset.id);
+
+    setSelectedAssetIds((current) =>
+      checked ? [...new Set([...current, ...visibleIds])] : current.filter((selectedId) => !visibleIds.includes(selectedId))
+    );
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedAssetIds.length === 0 || deleting) {
+      return;
+    }
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedAssetIds.length} selected registered file${selectedAssetIds.length === 1 ? "" : "s"} from R2 and this dataset?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteMessage(null);
+    setPageError(null);
+
+    try {
+      const result = await deleteAssets(session, { assetIds: selectedAssetIds });
+      setSelectedAssetIds([]);
+      setSelectedAsset((current) => (current && selectedAssetIds.includes(current.id) ? null : current));
+      await onChanged();
+      setDeleteMessage(`Deleted ${result.deletedCount} registered file${result.deletedCount === 1 ? "" : "s"}.`);
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to delete selected files.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleDeleteOne(asset: AssetSummary) {
+    if (!session || deleting) {
+      setPageError(session ? null : "Authentication required.");
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${asset.fileName} from R2 and this dataset?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteMessage(null);
+    setPageError(null);
+
+    try {
+      await deleteAssets(session, { assetIds: [asset.id] });
+      setSelectedAssetIds((current) => current.filter((assetId) => assetId !== asset.id));
+      setSelectedAsset((current) => (current?.id === asset.id ? null : current));
+      await onChanged();
+      setDeleteMessage("File deleted.");
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to delete file.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleDeleteFolder() {
+    if (!folderPrefix || deleting) {
+      return;
+    }
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    const matchingCount = assets.filter((asset) => asset.objectKey.startsWith(folderPrefix)).length;
+    const confirmed = window.confirm(
+      `Delete ${matchingCount} registered file${matchingCount === 1 ? "" : "s"} from folder ${folderPrefix}? This only deletes registered files you can manage.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleting(true);
+    setDeleteMessage(null);
+    setPageError(null);
+
+    try {
+      const result = await deleteAssets(session, { datasetId, folderPrefix });
+      setFolderPrefix("");
+      setSelectedAssetIds([]);
+      setSelectedAsset((current) => (current && current.objectKey.startsWith(folderPrefix) ? null : current));
+      await onChanged();
+      setDeleteMessage(`Deleted ${result.deletedCount} registered file${result.deletedCount === 1 ? "" : "s"} from ${folderPrefix}.`);
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to delete folder files.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <section className="asset-workspace">
       <div className="asset-toolbar">
@@ -855,22 +995,64 @@ function AssetsTable({
           <h2>{assets.length} registered</h2>
           <span>{formatBytes(String(totalBytes))} across this dataset</span>
         </div>
-        <label className="search-field">
-          <Search size={16} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search files, keys, or MIME types"
-          />
-        </label>
+        <div className="asset-toolbar-actions">
+          {selectedAssetIds.length > 0 && (
+            <button className="ghost-button danger-button compact-button" type="button" onClick={handleDeleteSelected} disabled={deleting}>
+              <Trash2 size={16} />
+              Delete selected ({selectedAssetIds.length})
+            </button>
+          )}
+          <label className="search-field">
+            <Search size={16} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search files, keys, or MIME types"
+            />
+          </label>
+        </div>
       </div>
+      {folderOptions.length > 0 && (
+        <div className="folder-delete-bar">
+          <label>
+            Delete registered folder
+            <select value={folderPrefix} onChange={(event) => setFolderPrefix(event.target.value)}>
+              <option value="">Choose folder prefix</option>
+              {folderOptions.map((prefix) => (
+                <option key={prefix} value={prefix}>
+                  {prefix}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="ghost-button danger-button compact-button" type="button" onClick={handleDeleteFolder} disabled={!folderPrefix || deleting}>
+            <Trash2 size={16} />
+            Delete folder files
+          </button>
+        </div>
+      )}
+      {deleteMessage && <p className="form-success">{deleteMessage}</p>}
       <section className="table-panel">
         <div className="table-row assets-head table-head">
+          <span>
+            <input
+              aria-label="Select visible assets"
+              checked={allVisibleSelected}
+              disabled={filteredAssets.length === 0}
+              onChange={(event) => toggleVisibleAssets(event.currentTarget.checked)}
+              type="checkbox"
+            />
+          </span>
           <span>File</span>
           <span>Type</span>
           <span>Size</span>
           <span>Action</span>
         </div>
+        {selectedVisibleCount > 0 && (
+          <div className="selection-summary">
+            {selectedVisibleCount} visible file{selectedVisibleCount === 1 ? "" : "s"} selected.
+          </div>
+        )}
         {loading ? (
           <div className="empty-state">
             <HardDrive size={28} />
@@ -881,10 +1063,15 @@ function AssetsTable({
           filteredAssets.map((asset) => (
             <AssetRow
               asset={asset}
+              checked={selectedAssetIds.includes(asset.id)}
               key={asset.id}
+              onDelete={() => {
+                void handleDeleteOne(asset);
+              }}
               onInspect={() => {
                 void handleInspect(asset);
               }}
+              onToggle={(checked) => toggleAsset(asset.id, checked)}
             />
           ))
         ) : assets.length > 0 ? (
@@ -918,9 +1105,29 @@ function AssetsTable({
   );
 }
 
-function AssetRow({ asset, onInspect }: { asset: AssetSummary; onInspect: () => void }) {
+function AssetRow({
+  asset,
+  checked,
+  onDelete,
+  onInspect,
+  onToggle
+}: {
+  asset: AssetSummary;
+  checked: boolean;
+  onDelete: () => void;
+  onInspect: () => void;
+  onToggle: (checked: boolean) => void;
+}) {
   return (
     <article className="table-row assets-head project-row">
+      <span>
+        <input
+          aria-label={`Select ${asset.fileName}`}
+          checked={checked}
+          onChange={(event) => onToggle(event.currentTarget.checked)}
+          type="checkbox"
+        />
+      </span>
       <span>
         <button className="link-button" type="button" onClick={onInspect}>
           {asset.fileName}
@@ -933,13 +1140,25 @@ function AssetRow({ asset, onInspect }: { asset: AssetSummary; onInspect: () => 
       </span>
       <span>{formatBytes(asset.fileSize)}</span>
       <span>
-        <button className="secondary-button compact-button" type="button" onClick={onInspect}>
-          <Eye size={16} />
-          Preview
-        </button>
+        <div className="asset-row-actions">
+          <button className="secondary-button compact-button" type="button" onClick={onInspect}>
+            <Eye size={16} />
+            Preview
+          </button>
+          <button className="ghost-button danger-button compact-button" type="button" onClick={onDelete}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+        </div>
       </span>
     </article>
   );
+}
+
+function getAssetFolderPrefix(objectKey: string) {
+  const slashIndex = objectKey.lastIndexOf("/");
+
+  return slashIndex > -1 ? objectKey.slice(0, slashIndex + 1) : "";
 }
 
 function AssetPreview({
