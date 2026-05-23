@@ -408,28 +408,210 @@ function DashboardPage() {
 
 function OrganizationSetupPage() {
   const { session } = useAuth();
-  const navigate = useNavigate();
   const { error, loading, organizations, reload, setError } = useOrganizations(session);
-  const organizationDraft = useFormDraft("goxai-draft-organization");
-  const [saving, setSaving] = useState(false);
-  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
-  const activeOrganizationId = selectedOrganizationId || organizations[0]?.id || "";
   const {
     error: organizationDetailError,
     loading: organizationDetailLoading,
     organization,
     reload: reloadOrganization,
     setError: setOrganizationDetailError
-  } = useOrganization(session, activeOrganizationId);
+  } = useOrganization(session, selectedOrganizationId);
+
+  return (
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Organization</p>
+          <h1>Organizations</h1>
+        </div>
+        {organizations.length > 0 && (
+          <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+            <Building2 size={18} />
+            New organization
+          </button>
+        )}
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      {organizations.length > 0 ? (
+        <>
+          <section className="panel">
+            <div className="section-head">
+              <div>
+                <p className="eyebrow">Existing organizations</p>
+                <h2>{organizations.length} organization{organizations.length === 1 ? "" : "s"}</h2>
+              </div>
+              <span className="muted-copy">Select one to manage settings and members.</span>
+            </div>
+            <div className="org-card-grid">
+              {organizations.map((organization) => (
+                <button
+                  className={`org-summary-card${selectedOrganizationId === organization.id ? " active" : ""}`}
+                  key={organization.id}
+                  onClick={() => setSelectedOrganizationId(organization.id)}
+                  type="button"
+                >
+                  <span>
+                    <strong>{organization.name}</strong>
+                    <small>{organization.workspace?.name ?? "Organization wide"}</small>
+                  </span>
+                  <span className="org-summary-meta">
+                    <span>{formatEnum(organization.type)}</span>
+                    <span>{formatEnum(organization.planTier)}</span>
+                  </span>
+                  <span className="org-summary-footer">
+                    <span className="status-pill compact">{formatEnum(organization.role)}</span>
+                    <small>Updated {formatDate(organization.updatedAt)}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+          {(organizationDetailError || organizationDetailLoading) && (
+            <p className={organizationDetailError ? "form-error" : "muted-copy"}>
+              {organizationDetailError ?? "Loading organization details."}
+            </p>
+          )}
+          {!selectedOrganizationId && (
+            <section className="panel empty-state">
+              <Building2 size={28} />
+              <strong>Select an organization</strong>
+              <span>Open a card above to view details, manage settings, and update members.</span>
+            </section>
+          )}
+          {organization && (
+            <OrganizationManagementPanel
+              onChanged={async () => {
+                await reload();
+                await reloadOrganization();
+              }}
+              organization={organization}
+              session={session}
+              setPageError={setOrganizationDetailError}
+            />
+          )}
+        </>
+      ) : (
+        <div className="single-column">
+          <OrganizationCreateForm
+            loading={loading}
+            onCreated={async (organizationId) => {
+              await reload();
+              setSelectedOrganizationId(organizationId);
+            }}
+            session={session}
+            setPageError={setError}
+          />
+        </div>
+      )}
+      {showCreateModal && (
+        <OrganizationCreateModal
+          loading={loading}
+          onClose={() => setShowCreateModal(false)}
+          onCreated={async (organizationId) => {
+            await reload();
+            setSelectedOrganizationId(organizationId);
+            setShowCreateModal(false);
+          }}
+          session={session}
+          setPageError={setError}
+        />
+      )}
+    </section>
+  );
+}
+
+function OrganizationCreateModal({
+  loading,
+  onClose,
+  onCreated,
+  session,
+  setPageError
+}: {
+  loading: boolean;
+  onClose: () => void;
+  onCreated: (organizationId: string) => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="organization-modal-title"
+        aria-modal="true"
+        className="modal-panel"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Organizations</p>
+            <h2 id="organization-modal-title">Create organization</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close organization form">
+            <X size={17} />
+          </button>
+        </div>
+        {modalError && <p className="form-error">{modalError}</p>}
+        <OrganizationCreateForm
+          embedded
+          loading={loading}
+          onCreated={async (organizationId) => {
+            setModalError(null);
+            setPageError(null);
+            await onCreated(organizationId);
+          }}
+          session={session}
+          setPageError={(error) => {
+            setModalError(error);
+            if (!error) {
+              setPageError(null);
+            }
+          }}
+        />
+      </section>
+    </div>
+  );
+}
+
+function OrganizationCreateForm({
+  embedded = false,
+  loading,
+  onCreated,
+  session,
+  setPageError
+}: {
+  embedded?: boolean;
+  loading: boolean;
+  onCreated: (organizationId: string) => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const organizationDraft = useFormDraft("goxai-draft-organization");
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSavedMessage(null);
-    setError(null);
+    setPageError(null);
 
     if (!session) {
-      setError("Authentication required.");
+      setPageError("Authentication required.");
       return;
     }
 
@@ -443,21 +625,19 @@ function OrganizationSetupPage() {
         planTier: getFormValue(event, "plan")
       });
 
-      setSavedMessage(`${result.organization.name} and ${result.workspace.name} are ready.`);
       organizationDraft.clearDraft();
-      await reload();
-      setSelectedOrganizationId(result.organization.id);
-      navigate("/projects");
+      setSavedMessage(`${result.organization.name} and ${result.workspace.name} are ready.`);
+      await onCreated(result.organization.id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to create organization.");
+      setPageError(reason instanceof Error ? reason.message : "Unable to create organization.");
     } finally {
       setSaving(false);
     }
   }
 
-  const createOrganizationForm = (
+  return (
     <form
-      className="panel setup-form"
+      className={embedded ? "setup-form" : "panel setup-form"}
       onChange={organizationDraft.saveDraft}
       onSubmit={handleSubmit}
       ref={organizationDraft.formRef}
@@ -493,79 +673,12 @@ function OrganizationSetupPage() {
           <option value="ENTERPRISE">Enterprise</option>
         </select>
       </label>
-      {error && <p className="form-error wide">{error}</p>}
       {savedMessage && <p className="form-success wide">{savedMessage}</p>}
       <button className="primary-button" type="submit" disabled={saving || loading}>
         <Building2 size={18} />
         {saving ? "Creating" : "Create organization"}
       </button>
     </form>
-  );
-
-  return (
-    <section className="page-stack">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Organization</p>
-          <h1>Setup</h1>
-        </div>
-      </div>
-      {organizations.length > 0 ? (
-        <div className="detail-layout organization-layout">
-          <section className="content-column">
-            <section className="panel">
-              <div>
-                <p className="eyebrow">Existing organizations</p>
-                <h2>{organizations.length} workspace foundation</h2>
-              </div>
-              <label className="wide">
-                Manage organization
-                <select
-                  value={activeOrganizationId}
-                  onChange={(event) => setSelectedOrganizationId(event.target.value)}
-                >
-                  {organizations.map((organization) => (
-                    <option key={organization.id} value={organization.id}>
-                      {organization.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="org-list">
-                {organizations.map((organization) => (
-                  <article className="org-item" key={organization.id}>
-                    <div>
-                      <strong>{organization.name}</strong>
-                      <span>{organization.workspace?.name ?? "Organization wide"}</span>
-                    </div>
-                    <span className="status-pill">{organization.role}</span>
-                  </article>
-                ))}
-              </div>
-            </section>
-            {(organizationDetailError || organizationDetailLoading) && (
-              <p className={organizationDetailError ? "form-error" : "muted-copy"}>
-                {organizationDetailError ?? "Loading organization settings."}
-              </p>
-            )}
-            {organization && (
-              <OrganizationManagementPanel
-                onChanged={async () => {
-                  await reload();
-                  await reloadOrganization();
-                }}
-                organization={organization}
-                session={session}
-                setPageError={setOrganizationDetailError}
-              />
-            )}
-          </section>
-          <aside className="side-column">{createOrganizationForm}</aside>
-        </div>
-      ) : (
-        <div className="single-column">{createOrganizationForm}</div>
-      )}
-    </section>
   );
 }
 
@@ -583,6 +696,7 @@ function OrganizationManagementPanel({
   const [saving, setSaving] = useState(false);
   const [memberSaving, setMemberSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const primaryWorkspace = organization.workspaces[0] ?? null;
 
   async function handleUpdate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -662,17 +776,55 @@ function OrganizationManagementPanel({
   }
 
   return (
-    <section className="panel management-panel">
-      <div>
-        <p className="eyebrow">Manage</p>
-        <h2>{organization.name}</h2>
-      </div>
-      {message && <p className="form-success">{message}</p>}
-      <div className="management-split">
-        <form className="management-grid compact-management" onSubmit={handleUpdate}>
-          <div className="wide">
-            <h3>Settings</h3>
+    <section className="organization-detail">
+      <section className="panel">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Organization details</p>
+            <h2>{organization.name}</h2>
           </div>
+          <span className="status-pill">{formatEnum(organization.currentUserRole)}</span>
+        </div>
+        <dl className="detail-list">
+          <div>
+            <dt>Type</dt>
+            <dd>{formatEnum(organization.type)}</dd>
+          </div>
+          <div>
+            <dt>Plan</dt>
+            <dd>{formatEnum(organization.planTier)}</dd>
+          </div>
+          <div>
+            <dt>Members</dt>
+            <dd>{organization.memberships.length}</dd>
+          </div>
+          <div>
+            <dt>Workspace</dt>
+            <dd>{primaryWorkspace?.name ?? "Organization wide"}</dd>
+          </div>
+          <div>
+            <dt>Slug</dt>
+            <dd>{organization.slug}</dd>
+          </div>
+          <div>
+            <dt>Updated</dt>
+            <dd>{formatDate(organization.updatedAt)}</dd>
+          </div>
+        </dl>
+        <div className="description-block">
+          <span>Description</span>
+          <p>{primaryWorkspace?.description || "No workspace description has been added yet."}</p>
+        </div>
+      </section>
+
+      {message && <p className="form-success">{message}</p>}
+
+      <section className="panel management-panel">
+        <div>
+          <p className="eyebrow">Settings</p>
+          <h2>Edit organization</h2>
+        </div>
+        <form className="management-grid" onSubmit={handleUpdate}>
           <label>
             Name
             <input name="name" defaultValue={organization.name} required />
@@ -706,10 +858,16 @@ function OrganizationManagementPanel({
             </button>
           </div>
         </form>
-        <form className="management-grid compact-management" onSubmit={handleAddMember}>
-          <div className="wide">
-            <h3>Add member</h3>
+      </section>
+
+      <section className="panel management-panel">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">Members</p>
+            <h2>{organization.memberships.length} active member{organization.memberships.length === 1 ? "" : "s"}</h2>
           </div>
+        </div>
+        <form className="management-grid" onSubmit={handleAddMember}>
           <label>
             Member email
             <input name="email" placeholder="teammate@example.com" type="email" required />
@@ -729,7 +887,7 @@ function OrganizationManagementPanel({
             {memberSaving ? "Adding" : "Add member"}
           </button>
         </form>
-      </div>
+      </section>
       <MembersTable
         members={organization.memberships}
         onChanged={onChanged}
@@ -737,7 +895,13 @@ function OrganizationManagementPanel({
         session={session}
         setPageError={setPageError}
       />
-      <RolePrivilegesPanel />
+      <section className="panel">
+        <div>
+          <p className="eyebrow">Access</p>
+          <h2>Role permissions</h2>
+        </div>
+        <RolePrivilegesPanel />
+      </section>
     </section>
   );
 }
