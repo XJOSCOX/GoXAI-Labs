@@ -1,0 +1,58 @@
+import { Link } from "react-router-dom";
+import { Database } from "lucide-react";
+import type { DatasetSummary } from "../../api";
+import { formatDate, formatEnum } from "../../utils/format";
+
+export function DatasetsTable({
+  datasets,
+  loading,
+  projectScoped = false
+}: {
+  datasets: DatasetSummary[];
+  loading: boolean;
+  projectScoped?: boolean;
+}) {
+  return (
+    <section className="table-panel">
+      <div className="table-row table-head">
+        <span>Name</span>
+        <span>{projectScoped ? "Version" : "Project"}</span>
+        <span>Status</span>
+        <span>Updated</span>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <Database size={28} />
+          <strong>Loading datasets</strong>
+          <span>Checking dataset records and project access.</span>
+        </div>
+      ) : datasets.length > 0 ? (
+        datasets.map((dataset) => <DatasetRow dataset={dataset} key={dataset.id} projectScoped={projectScoped} />)
+      ) : (
+        <div className="empty-state">
+          <Database size={28} />
+          <strong>No datasets yet</strong>
+          <span>Create a draft dataset before adding file ingestion.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DatasetRow({ dataset, projectScoped }: { dataset: DatasetSummary; projectScoped: boolean }) {
+  return (
+    <article className="table-row project-row">
+      <span>
+        <Link className="table-link" to={`/datasets/${dataset.id}`}>
+          {dataset.name}
+        </Link>
+        <small>{dataset.organization.name}</small>
+      </span>
+      <span>{projectScoped ? `v${dataset.version}` : dataset.project.name}</span>
+      <span>
+        <span className="status-pill compact">{formatEnum(dataset.status)}</span>
+      </span>
+      <span>{formatDate(dataset.updatedAt)}</span>
+    </article>
+  );
+}
