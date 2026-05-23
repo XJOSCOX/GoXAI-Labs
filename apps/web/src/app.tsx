@@ -18,6 +18,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
   createAsset,
+  createAssetUploadUrl,
   createDataset,
   createOrganization,
   createProject,
@@ -27,6 +28,7 @@ import {
   listDatasets,
   listOrganizations,
   listProjects,
+  uploadFileToSignedUrl,
   type AssetSummary,
   type DatasetSummary,
   type OrganizationSummary,
@@ -955,6 +957,7 @@ function AssetForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
+    const file = getFormFile(event, "file");
     setSavedMessage(null);
     setPageError(null);
 
@@ -966,21 +969,23 @@ function AssetForm({
     setSaving(true);
 
     try {
-      const asset = await createAsset(session, {
-        datasetId: dataset.id,
-        bucket: getFormValue(event, "bucket"),
-        objectKey: getFormValue(event, "objectKey"),
-        fileName: getFormValue(event, "fileName"),
-        mimeType: getFormValue(event, "mimeType"),
-        fileSize: getFormValue(event, "fileSize"),
-        checksum: getFormValue(event, "checksum"),
-        width: getFormValue(event, "width"),
-        height: getFormValue(event, "height"),
-        duration: getFormValue(event, "duration")
-      });
+      const asset = file
+        ? await uploadAndRegisterAsset(session, dataset.id, file, getFormValue(event, "objectKey"))
+        : await createAsset(session, {
+            datasetId: dataset.id,
+            bucket: getFormValue(event, "bucket"),
+            objectKey: getFormValue(event, "objectKey"),
+            fileName: getFormValue(event, "fileName"),
+            mimeType: getFormValue(event, "mimeType"),
+            fileSize: getFormValue(event, "fileSize"),
+            checksum: getFormValue(event, "checksum"),
+            width: getFormValue(event, "width"),
+            height: getFormValue(event, "height"),
+            duration: getFormValue(event, "duration")
+          });
 
       form.reset();
-      setSavedMessage(`${asset.fileName} was registered from R2.`);
+      setSavedMessage(`${asset.fileName} was ${file ? "uploaded to" : "registered from"} R2.`);
       await onCreated();
     } catch (reason) {
       setPageError(reason instanceof Error ? reason.message : "Unable to register R2 asset.");
@@ -991,6 +996,10 @@ function AssetForm({
 
   return (
     <form className="panel asset-form" onSubmit={handleSubmit}>
+      <label className="wide">
+        Upload file
+        <input name="file" type="file" />
+      </label>
       <label>
         R2 bucket
         <input name="bucket" placeholder="Uses R2_BUCKET when empty" />
@@ -1001,15 +1010,15 @@ function AssetForm({
       </label>
       <label>
         File name
-        <input name="fileName" placeholder="image-001.jpg" required />
+        <input name="fileName" placeholder="image-001.jpg" />
       </label>
       <label>
         MIME type
-        <input name="mimeType" placeholder="image/jpeg" required />
+        <input name="mimeType" placeholder="image/jpeg" />
       </label>
       <label>
         File size bytes
-        <input name="fileSize" inputMode="numeric" placeholder="2483912" required />
+        <input name="fileSize" inputMode="numeric" placeholder="2483912" />
       </label>
       <label>
         Checksum
@@ -1030,10 +1039,29 @@ function AssetForm({
       {savedMessage && <p className="form-success wide">{savedMessage}</p>}
       <button className="primary-button wide" type="submit" disabled={saving}>
         <CloudUpload size={18} />
-        {saving ? "Registering" : "Register R2 asset"}
+        {saving ? "Uploading" : "Upload or register R2 asset"}
       </button>
     </form>
   );
+}
+
+async function uploadAndRegisterAsset(
+  session: NonNullable<ReturnType<typeof useAuth>["session"]>,
+  datasetId: string,
+  file: File,
+  objectKey?: string
+) {
+  const signedUpload = await createAssetUploadUrl(session, {
+    datasetId,
+    objectKey,
+    fileName: file.name,
+    mimeType: file.type || "application/octet-stream",
+    fileSize: file.size.toString()
+  });
+
+  await uploadFileToSignedUrl(file, signedUpload.upload);
+
+  return createAsset(session, signedUpload.asset);
 }
 
 function AssetsTable({ assets, loading }: { assets: AssetSummary[]; loading: boolean }) {
@@ -1323,6 +1351,13 @@ function formatBytes(value: string) {
   const amount = bytes / 1024 ** index;
 
   return `${amount.toFixed(amount >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function getFormFile(event: FormEvent<HTMLFormElement>, name: string) {
+  const form = new FormData(event.currentTarget);
+  const value = form.get(name);
+
+  return value instanceof File && value.size > 0 ? value : null;
 }
 
 function LoadingScreen() {

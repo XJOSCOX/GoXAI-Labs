@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   getPrismaClient,
   StorageProvider,
@@ -9,6 +12,116 @@ import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 const router = Router();
 
 router.use(requireAuthenticatedUser);
+
+router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const parsed = parseCreateUploadUrlBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const config = getR2Config();
+
+  if (!config.ok) {
+    response.status(503).json({ error: config.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: parsed.value.datasetId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      projectId: true
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: dataset.organizationId,
+      status: "ACTIVE",
+      role: {
+        in: ["OWNER", "ADMIN", "MANAGER"]
+      }
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({
+      error: "You need owner, admin, or manager access to upload assets to this dataset."
+    });
+    return;
+  }
+
+  const objectKey =
+    parsed.value.objectKey ??
+    buildDatasetObjectKey(dataset.projectId, dataset.id, parsed.value.fileName);
+  const existingAsset = await prisma.storageAsset.findUnique({
+    where: {
+      provider_bucket_objectKey: {
+        provider: StorageProvider.R2,
+        bucket: config.value.bucket,
+        objectKey
+      }
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (existingAsset) {
+    response.status(409).json({ error: "An asset already exists for this R2 bucket and object key." });
+    return;
+  }
+
+  const client = createR2Client(config.value);
+  const command = new PutObjectCommand({
+    Bucket: config.value.bucket,
+    Key: objectKey,
+    ContentLength: Number(parsed.value.fileSize),
+    ContentType: parsed.value.mimeType
+  });
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn: 60 * 10 });
+
+  response.status(201).json({
+    upload: {
+      uploadUrl,
+      method: "PUT",
+      expiresInSeconds: 60 * 10,
+      headers: {
+        "Content-Type": parsed.value.mimeType
+      }
+    },
+    asset: {
+      datasetId: dataset.id,
+      bucket: config.value.bucket,
+      objectKey,
+      fileName: parsed.value.fileName,
+      mimeType: parsed.value.mimeType,
+      fileSize: parsed.value.fileSize.toString()
+    }
+  });
+});
 
 router.get("/", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
@@ -259,6 +372,16 @@ type CreateAssetBody =
     }
   | undefined;
 
+type CreateUploadUrlBody =
+  | {
+      datasetId?: unknown;
+      objectKey?: unknown;
+      fileName?: unknown;
+      mimeType?: unknown;
+      fileSize?: unknown;
+    }
+  | undefined;
+
 function parseCreateAssetBody(body: CreateAssetBody):
   | {
       ok: true;
@@ -332,6 +455,60 @@ function parseCreateAssetBody(body: CreateAssetBody):
   };
 }
 
+function parseCreateUploadUrlBody(body: CreateUploadUrlBody):
+  | {
+      ok: true;
+      value: {
+        datasetId: string;
+        objectKey?: string;
+        fileName: string;
+        mimeType: string;
+        fileSize: bigint;
+      };
+    }
+  | { ok: false; error: string } {
+  const datasetId = normalizeId(body?.datasetId);
+  const objectKey = normalizeText(body?.objectKey);
+  const fileName = normalizeText(body?.fileName);
+  const mimeType = normalizeText(body?.mimeType);
+  const fileSize = parsePositiveBigInt(body?.fileSize);
+
+  if (!datasetId) {
+    return { ok: false, error: "Dataset is required." };
+  }
+
+  if (objectKey && objectKey.length > 1024) {
+    return { ok: false, error: "R2 object key must be 1024 characters or fewer." };
+  }
+
+  if (!fileName) {
+    return { ok: false, error: "File name is required." };
+  }
+
+  if (fileName.length > 255) {
+    return { ok: false, error: "File name must be 255 characters or fewer." };
+  }
+
+  if (!mimeType) {
+    return { ok: false, error: "MIME type is required." };
+  }
+
+  if (!fileSize) {
+    return { ok: false, error: "File size must be a positive number of bytes." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      datasetId,
+      objectKey,
+      fileName,
+      mimeType,
+      fileSize
+    }
+  };
+}
+
 async function getAccessibleOrganizationIds(userId: string) {
   const prisma = getPrismaClient();
   const memberships = await prisma.membership.findMany({
@@ -392,6 +569,78 @@ function serializeAsset(asset: AssetWithRelations) {
 
 function getDefaultR2Bucket() {
   return process.env.R2_BUCKET?.trim() || undefined;
+}
+
+interface R2Config {
+  accessKeyId: string;
+  bucket: string;
+  endpoint: string;
+  secretAccessKey: string;
+}
+
+function getR2Config():
+  | { ok: true; value: R2Config }
+  | { ok: false; error: string } {
+  const accountId = process.env.R2_ACCOUNT_ID?.trim();
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+  const bucket = process.env.R2_BUCKET?.trim();
+  const endpoint = process.env.R2_ENDPOINT?.trim() || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
+  const missing = [
+    ["R2_ACCESS_KEY_ID", accessKeyId],
+    ["R2_SECRET_ACCESS_KEY", secretAccessKey],
+    ["R2_BUCKET", bucket],
+    ["R2_ACCOUNT_ID or R2_ENDPOINT", endpoint]
+  ]
+    .filter(([, value]) => !value)
+    .map(([key]) => key);
+
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `Missing R2 environment variables: ${missing.join(", ")}`
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      accessKeyId: accessKeyId!,
+      bucket: bucket!,
+      endpoint,
+      secretAccessKey: secretAccessKey!
+    }
+  };
+}
+
+function createR2Client(config: R2Config) {
+  return new S3Client({
+    region: "auto",
+    endpoint: config.endpoint,
+    credentials: {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey
+    }
+  });
+}
+
+function buildDatasetObjectKey(projectId: string, datasetId: string, fileName: string) {
+  return [
+    "projects",
+    projectId,
+    "datasets",
+    datasetId,
+    `${new Date().toISOString().slice(0, 10)}-${randomUUID()}-${sanitizeFileName(fileName)}`
+  ].join("/");
+}
+
+function sanitizeFileName(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 180) || "asset";
 }
 
 function normalizeId(value: unknown) {

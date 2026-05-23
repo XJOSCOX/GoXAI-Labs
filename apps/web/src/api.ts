@@ -156,6 +156,24 @@ export interface CreateAssetInput {
   duration?: string;
 }
 
+export interface AssetUploadRequest {
+  datasetId: string;
+  objectKey?: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: string;
+}
+
+export interface AssetUploadUrl {
+  upload: {
+    uploadUrl: string;
+    method: "PUT";
+    expiresInSeconds: number;
+    headers: Record<string, string>;
+  };
+  asset: CreateAssetInput;
+}
+
 export async function createSupabaseBrowserClient() {
   const response = await fetch(`${apiUrl}/api/config`);
 
@@ -328,6 +346,31 @@ export async function createAsset(session: Session, input: CreateAssetInput) {
   }
 
   return ((await response.json()) as { asset: AssetSummary }).asset;
+}
+
+export async function createAssetUploadUrl(session: Session, input: AssetUploadRequest) {
+  const response = await authenticatedFetch(session, "/api/assets/upload-url", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create R2 upload URL."));
+  }
+
+  return (await response.json()) as AssetUploadUrl;
+}
+
+export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["upload"]) {
+  const response = await fetch(upload.uploadUrl, {
+    method: upload.method,
+    headers: upload.headers,
+    body: file
+  });
+
+  if (!response.ok) {
+    throw new Error("R2 upload failed. Check the bucket CORS settings and R2 credentials.");
+  }
 }
 
 function authenticatedFetch(session: Session, path: string, init: RequestInit = {}) {
