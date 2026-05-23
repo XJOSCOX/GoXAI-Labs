@@ -201,8 +201,12 @@ export interface ProjectSummary {
   allowExternalMembers: boolean;
   joinCode: string | null;
   joinCodeEnabled: boolean;
+  annotationTemplateId: string | null;
   instructions: string | null;
   labelingConfig: Record<string, unknown> | null;
+  annotationTemplate: AnnotationTemplateSummary | null;
+  labels: ProjectLabelSummary[];
+  tools: ProjectToolSummary[];
   currentUserRole: string | null;
   canManage: boolean;
   canCreateDataset: boolean;
@@ -228,6 +232,7 @@ export interface ProjectSummary {
 export interface CreateProjectInput {
   organizationId: string;
   workspaceId?: string;
+  annotationTemplateId?: string;
   name: string;
   description?: string;
   dataType: string;
@@ -237,6 +242,8 @@ export interface CreateProjectInput {
   joinCodeEnabled?: boolean;
   instructions?: string;
   labelingConfig?: Record<string, unknown> | null;
+  labels?: ProjectLabelInput[];
+  tools?: ProjectToolInput[];
 }
 
 export interface UpdateProjectInput {
@@ -249,6 +256,47 @@ export interface UpdateProjectInput {
   joinCodeEnabled?: boolean;
   instructions?: string;
   labelingConfig?: Record<string, unknown> | null;
+  labels?: ProjectLabelInput[];
+  tools?: ProjectToolInput[];
+}
+
+export interface AnnotationTemplateSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  dataType: string;
+  configJson: Record<string, unknown>;
+}
+
+export interface ProjectLabelSummary {
+  id: string;
+  name: string;
+  color: string;
+  shortcutKey: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectToolSummary {
+  id: string;
+  tool: string;
+  enabled: boolean;
+  configJson: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectLabelInput {
+  color?: string;
+  name: string;
+  shortcutKey?: string;
+}
+
+export interface ProjectToolInput {
+  configJson?: Record<string, unknown>;
+  enabled?: boolean;
+  tool: string;
 }
 
 export interface DatasetSummary {
@@ -385,6 +433,8 @@ export interface TaskSummary {
     organizationId: string;
     status: string;
     labelingConfig: Record<string, unknown> | null;
+    labels: ProjectLabelSummary[];
+    tools: ProjectToolSummary[];
   };
   dataset: {
     id: string;
@@ -452,13 +502,21 @@ export interface TaskDetailResult {
 export interface SaveAnnotationInput {
   leadTimeSeconds?: number;
   regions: {
-    geometry: {
-      height: number;
-      width: number;
-      x: number;
-      y: number;
-    };
+    geometry:
+      | {
+          height: number;
+          width: number;
+          x: number;
+          y: number;
+        }
+      | {
+          points: {
+            x: number;
+            y: number;
+          }[];
+        };
     label?: string | null;
+    type?: string;
   }[];
 }
 

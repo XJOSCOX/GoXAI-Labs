@@ -1,4 +1,5 @@
 import {
+  AnnotationTool,
   AnnotationRegionType,
   AnnotationStatus,
   getPrismaClient,
@@ -528,7 +529,7 @@ async function saveTaskAnnotation(request: AuthenticatedRequest, response: Respo
           geometryJson: region.geometryJson,
           label: region.label,
           metadata: region.metadata as Prisma.InputJsonObject,
-          type: AnnotationRegionType.BBOX
+          type: region.type
         }))
       });
     }
@@ -777,7 +778,30 @@ const taskIncludes = {
       organizationId: true,
       status: true,
       accessMode: true,
-      labelingConfig: true
+      labelingConfig: true,
+      labels: {
+        orderBy: {
+          createdAt: "asc"
+        },
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          shortcutKey: true,
+          metadata: true
+        }
+      },
+      tools: {
+        orderBy: {
+          createdAt: "asc"
+        },
+        select: {
+          id: true,
+          tool: true,
+          enabled: true,
+          configJson: true
+        }
+      }
     }
   },
   dataset: {
@@ -861,6 +885,19 @@ type TaskWithRelations = Task & {
     status: ProjectStatus;
     accessMode: ProjectAccessMode;
     labelingConfig: unknown;
+    labels: {
+      id: string;
+      name: string;
+      color: string;
+      shortcutKey: string | null;
+      metadata: unknown;
+    }[];
+    tools: {
+      id: string;
+      tool: AnnotationTool;
+      enabled: boolean;
+      configJson: unknown;
+    }[];
   };
   dataset: {
     id: string;
@@ -1000,33 +1037,32 @@ function normalizeId(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const values = Object.values(enumValues);
+  return values.includes(value) ? (value as T[keyof T]) : undefined;
+}
+
 function parseAnnotationBody(body: unknown):
   | {
       ok: true;
       value: {
         leadTimeSeconds?: number;
         regions: {
-          geometryJson: {
-            height: number;
-            width: number;
-            x: number;
-            y: number;
-          };
+          geometryJson: Prisma.InputJsonObject;
           label: string | null;
           metadata: Record<string, unknown>;
+          type: AnnotationRegionType;
         }[];
         resultJson: {
           regions: {
-            geometry: {
-              height: number;
-              width: number;
-              x: number;
-              y: number;
-            };
+            geometry: Prisma.InputJsonObject;
             label: string | null;
-            type: "BBOX";
+            type: "BBOX" | "POLYGON";
           }[];
-          tool: "bbox";
         };
       };
     }
@@ -1050,36 +1086,83 @@ function parseAnnotationBody(body: unknown):
     }
 
     const region = rawRegion as Record<string, unknown>;
+    const type = parseEnumValue(AnnotationRegionType, region.type) ?? AnnotationRegionType.BBOX;
     const geometry = region.geometry;
 
     if (!geometry || typeof geometry !== "object") {
       return { ok: false, error: "Each annotation region needs geometry." };
     }
 
-    const box = geometry as Record<string, unknown>;
-    const x = normalizeUnitNumber(box.x);
-    const y = normalizeUnitNumber(box.y);
-    const width = normalizeUnitNumber(box.width);
-    const height = normalizeUnitNumber(box.height);
+    const label = typeof region.label === "string" && region.label.trim() ? region.label.trim().slice(0, 120) : null;
 
-    if (x === null || y === null || width === null || height === null || width <= 0 || height <= 0) {
-      return { ok: false, error: "Bounding boxes must use normalized x, y, width, and height values." };
+    if (type === AnnotationRegionType.BBOX) {
+      const box = geometry as Record<string, unknown>;
+      const x = normalizeUnitNumber(box.x);
+      const y = normalizeUnitNumber(box.y);
+      const width = normalizeUnitNumber(box.width);
+      const height = normalizeUnitNumber(box.height);
+
+      if (x === null || y === null || width === null || height === null || width <= 0 || height <= 0) {
+        return { ok: false, error: "Bounding boxes must use normalized x, y, width, and height values." };
+      }
+
+      const geometryJson = {
+        height,
+        width,
+        x,
+        y
+      };
+
+      regions.push({
+        geometryJson,
+        label,
+        metadata: {
+          tool: "bbox"
+        },
+        type
+      });
+      continue;
     }
 
-    const label = typeof region.label === "string" && region.label.trim() ? region.label.trim().slice(0, 120) : null;
+    if (type !== AnnotationRegionType.POLYGON) {
+      return { ok: false, error: "This annotation tool is not supported yet." };
+    }
+
+    const points = Array.isArray((geometry as Record<string, unknown>).points)
+      ? ((geometry as Record<string, unknown>).points as unknown[])
+      : [];
+
+    if (points.length < 3 || points.length > 200) {
+      return { ok: false, error: "Polygons must have between 3 and 200 points." };
+    }
+
+    const normalizedPoints = points.map((point) => {
+      if (!point || typeof point !== "object") {
+        return null;
+      }
+
+      const record = point as Record<string, unknown>;
+      const x = normalizeUnitNumber(record.x);
+      const y = normalizeUnitNumber(record.y);
+
+      return x === null || y === null ? null : { x, y };
+    });
+
+    if (normalizedPoints.some((point) => point === null)) {
+      return { ok: false, error: "Polygon points must use normalized x and y values." };
+    }
+
     const geometryJson = {
-      height,
-      width,
-      x,
-      y
+      points: normalizedPoints as { x: number; y: number }[]
     };
 
     regions.push({
       geometryJson,
       label,
       metadata: {
-        tool: "bbox"
-      }
+        tool: "polygon"
+      },
+      type
     });
   }
 
@@ -1097,9 +1180,8 @@ function parseAnnotationBody(body: unknown):
         regions: regions.map((region) => ({
           geometry: region.geometryJson,
           label: region.label,
-          type: "BBOX"
-        })),
-        tool: "bbox"
+          type: region.type === AnnotationRegionType.POLYGON ? "POLYGON" : "BBOX"
+        }))
       }
     }
   };

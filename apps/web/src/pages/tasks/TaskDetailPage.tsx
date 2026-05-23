@@ -6,18 +6,26 @@ import { useAuth } from "../../auth";
 import { useTask } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
 
-interface BBox {
-  height: number;
+interface AnnotationShape {
+  height?: number;
   id: string;
   label: string;
-  width: number;
-  x: number;
-  y: number;
+  points?: Point[];
+  type: "BBOX" | "POLYGON";
+  width?: number;
+  x?: number;
+  y?: number;
 }
 
 interface LabelOption {
   color: string;
   name: string;
+  shortcutKey?: string | null;
+}
+
+interface Point {
+  x: number;
+  y: number;
 }
 
 const defaultLabel = "Object";
@@ -31,9 +39,11 @@ export function TaskDetailPage() {
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
   const [assetLoading, setAssetLoading] = useState(false);
-  const [boxes, setBoxes] = useState<BBox[]>([]);
-  const [draftBox, setDraftBox] = useState<BBox | null>(null);
+  const [shapes, setShapes] = useState<AnnotationShape[]>([]);
+  const [draftShape, setDraftShape] = useState<AnnotationShape | null>(null);
+  const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
   const [activeLabel, setActiveLabel] = useState(defaultLabel);
+  const [activeTool, setActiveTool] = useState<"BBOX" | "POLYGON">("BBOX");
   const [zoom, setZoom] = useState(1);
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
@@ -44,11 +54,19 @@ export function TaskDetailPage() {
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
   const pageTitle = task?.asset?.fileName ?? "Task workspace";
-  const labelOptions = useMemo(() => getLabelOptions(task?.project.labelingConfig), [task?.project.labelingConfig]);
+  const labelOptions = useMemo(() => getLabelOptions(task?.project.labels, task?.project.labelingConfig), [task?.project.labels, task?.project.labelingConfig]);
+  const toolOptions = useMemo(() => getToolOptions(task?.project.tools), [task?.project.tools]);
+  const supportsBbox = toolOptions.includes("BBOX");
+  const supportsPolygon = toolOptions.includes("POLYGON");
 
   useEffect(() => {
-    setBoxes(annotationToBoxes(annotation));
+    setShapes(annotationToShapes(annotation));
   }, [annotation?.id, annotation?.updatedAt]);
+
+  useEffect(() => {
+    setActiveTool((current) => (toolOptions.includes(current) ? current : toolOptions[0] ?? "BBOX"));
+    setPolygonPoints([]);
+  }, [toolOptions]);
 
   useEffect(() => {
     if (labelOptions.length > 0 && (activeLabel === defaultLabel || activeLabel.trim().length === 0)) {
@@ -78,7 +96,11 @@ export function TaskDetailPage() {
 
       if ((event.key === "Backspace" || event.key === "Delete") && canAnnotate) {
         event.preventDefault();
-        setBoxes((current) => current.slice(0, -1));
+        if (polygonPoints.length > 0) {
+          setPolygonPoints((current) => current.slice(0, -1));
+        } else {
+          setShapes((current) => current.slice(0, -1));
+        }
         return;
       }
 
@@ -97,13 +119,24 @@ export function TaskDetailPage() {
         setZoom((current) => Math.max(1, current - zoomStep));
       } else if (event.key === "0") {
         setZoom(1);
+      } else if (event.key.toLowerCase() === "b" && supportsBbox) {
+        setActiveTool("BBOX");
+        setPolygonPoints([]);
+      } else if (event.key.toLowerCase() === "p" && supportsPolygon) {
+        setActiveTool("POLYGON");
+      } else if (event.key === "Enter" && activeTool === "POLYGON" && polygonPoints.length >= 3) {
+        event.preventDefault();
+        finishPolygon();
+      } else if (event.key === "Escape") {
+        setPolygonPoints([]);
+        setDraftShape(null);
       }
     }
 
     window.addEventListener("keydown", handleKeyboard);
 
     return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [canAnnotate, handleSaveDraft, handleSubmitAnnotation, labelOptions]);
+  }, [activeTool, canAnnotate, handleSaveDraft, handleSubmitAnnotation, labelOptions, polygonPoints.length, supportsBbox, supportsPolygon]);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,19 +174,25 @@ export function TaskDetailPage() {
     };
   }, [session, task?.assetId]);
 
-  const boxPayload = useMemo(
+  const annotationPayload = useMemo(
     () => ({
-      regions: boxes.map((box) => ({
-        geometry: {
-          height: box.height,
-          width: box.width,
-          x: box.x,
-          y: box.y
-        },
-        label: box.label
+      regions: shapes.map((shape) => ({
+        geometry:
+          shape.type === "POLYGON"
+            ? {
+                points: shape.points ?? []
+              }
+            : {
+                height: shape.height ?? 0,
+                width: shape.width ?? 0,
+                x: shape.x ?? 0,
+                y: shape.y ?? 0
+              },
+        label: shape.label,
+        type: shape.type
       }))
     }),
-    [boxes]
+    [shapes]
   );
 
   function getPoint(event: PointerEvent<HTMLDivElement>) {
@@ -181,12 +220,18 @@ export function TaskDetailPage() {
       return;
     }
 
+    if (activeTool === "POLYGON") {
+      setPolygonPoints((current) => [...current, point]);
+      return;
+    }
+
     drawStartRef.current = point;
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDraftBox({
+    setDraftShape({
       height: 0,
       id: `draft-${Date.now()}`,
       label: activeLabel.trim() || defaultLabel,
+      type: "BBOX",
       width: 0,
       x: point.x,
       y: point.y
@@ -204,25 +249,42 @@ export function TaskDetailPage() {
       return;
     }
 
-    setDraftBox(createBoxFromPoints(drawStartRef.current, point, activeLabel.trim() || defaultLabel));
+    setDraftShape(createBoxFromPoints(drawStartRef.current, point, activeLabel.trim() || defaultLabel));
   }
 
   function handlePointerUp() {
-    if (!drawStartRef.current || !draftBox) {
+    if (!drawStartRef.current || !draftShape) {
       return;
     }
 
     drawStartRef.current = null;
 
-    if (draftBox.width > 0.01 && draftBox.height > 0.01) {
-      setBoxes((current) => [...current, { ...draftBox, id: `box-${Date.now()}` }]);
+    if ((draftShape.width ?? 0) > 0.01 && (draftShape.height ?? 0) > 0.01) {
+      setShapes((current) => [...current, { ...draftShape, id: `box-${Date.now()}` }]);
     }
 
-    setDraftBox(null);
+    setDraftShape(null);
   }
 
   function removeBox(boxId: string) {
-    setBoxes((current) => current.filter((box) => box.id !== boxId));
+    setShapes((current) => current.filter((shape) => shape.id !== boxId));
+  }
+
+  function finishPolygon() {
+    if (polygonPoints.length < 3) {
+      return;
+    }
+
+    setShapes((current) => [
+      ...current,
+      {
+        id: `polygon-${Date.now()}`,
+        label: activeLabel.trim() || defaultLabel,
+        points: polygonPoints,
+        type: "POLYGON"
+      }
+    ]);
+    setPolygonPoints([]);
   }
 
   function zoomIn() {
@@ -261,7 +323,7 @@ export function TaskDetailPage() {
     setError(null);
 
     try {
-      const result = await saveTaskAnnotation(session, task.id, boxPayload);
+      const result = await saveTaskAnnotation(session, task.id, annotationPayload);
       setAnnotation(result.annotation);
       setTask(result.task);
       setSavedMessage("Annotation draft saved.");
@@ -277,7 +339,7 @@ export function TaskDetailPage() {
       return;
     }
 
-    if (boxes.length === 0 && !window.confirm("Submit this task without any boxes?")) {
+    if (shapes.length === 0 && !window.confirm("Submit this task without any regions?")) {
       return;
     }
 
@@ -286,7 +348,7 @@ export function TaskDetailPage() {
     setError(null);
 
     try {
-      const result = await submitTaskAnnotation(session, task.id, boxPayload);
+      const result = await submitTaskAnnotation(session, task.id, annotationPayload);
       setAnnotation(result.annotation);
       setTask(result.task);
       setSavedMessage("Annotation submitted.");
@@ -344,18 +406,27 @@ export function TaskDetailPage() {
                       onPointerMove={handlePointerMove}
                       onPointerUp={handlePointerUp}
                       onPointerLeave={handlePointerUp}
+                      onDoubleClick={finishPolygon}
                       ref={annotationCanvasRef}
                       style={{ width: `${zoom * 100}%` }}
                     >
                       <img alt={task.asset?.fileName ?? "Task asset"} draggable={false} src={accessUrl} />
                       <svg className="annotation-overlay" preserveAspectRatio="none" viewBox="0 0 1 1">
-                        {[...boxes, ...(draftBox ? [draftBox] : [])].map((box) => (
-                          <g key={box.id}>
-                            <rect height={box.height} width={box.width} x={box.x} y={box.y} style={{ stroke: getLabelColor(box.label, labelOptions) }} />
-                            <text fill={getLabelColor(box.label, labelOptions)} x={box.x} y={Math.max(0.03, box.y - 0.01)}>
-                              {box.label}
-                            </text>
-                          </g>
+                        {[...shapes, ...(draftShape ? [draftShape] : [])].map((shape) => (
+                          <AnnotationSvgShape key={shape.id} labelOptions={labelOptions} shape={shape} />
+                        ))}
+                        {polygonPoints.length > 0 && (
+                          <polyline className="annotation-draft-line" points={pointsToSvg(polygonPoints)} style={{ stroke: getLabelColor(activeLabel, labelOptions) }} />
+                        )}
+                        {polygonPoints.map((point, index) => (
+                          <circle
+                            className="annotation-point"
+                            cx={point.x}
+                            cy={point.y}
+                            key={`${point.x}-${point.y}-${index}`}
+                            r="0.006"
+                            style={{ fill: getLabelColor(activeLabel, labelOptions) }}
+                          />
                         ))}
                       </svg>
                     </div>
@@ -377,7 +448,9 @@ export function TaskDetailPage() {
                 </div>
                 <div className="annotation-shortcuts">
                   <span>1-9 labels</span>
-                  <span>Delete removes last box</span>
+                  <span>B/P switches tool</span>
+                  <span>Enter closes polygon</span>
+                  <span>Delete removes last region</span>
                   <span>Ctrl+S saves</span>
                   <span>Ctrl+Enter submits</span>
                 </div>
@@ -406,7 +479,38 @@ export function TaskDetailPage() {
                 </dl>
               </section>
               <section className="panel">
-                <p className="eyebrow">Bounding boxes</p>
+                <p className="eyebrow">Tools</p>
+                <div className="annotation-tool-tabs">
+                  {supportsBbox && (
+                    <button className={activeTool === "BBOX" ? "active" : ""} type="button" onClick={() => setActiveTool("BBOX")} disabled={!canAnnotate}>
+                      Box
+                    </button>
+                  )}
+                  {supportsPolygon && (
+                    <button
+                      className={activeTool === "POLYGON" ? "active" : ""}
+                      type="button"
+                      onClick={() => setActiveTool("POLYGON")}
+                      disabled={!canAnnotate}
+                    >
+                      Polygon
+                    </button>
+                  )}
+                </div>
+                {activeTool === "POLYGON" && polygonPoints.length > 0 && (
+                  <div className="row-actions compact-row">
+                    <span className="muted-copy">{polygonPoints.length} points</span>
+                    <button className="secondary-button compact-button" type="button" onClick={finishPolygon} disabled={polygonPoints.length < 3}>
+                      Finish polygon
+                    </button>
+                    <button className="ghost-button compact-button" type="button" onClick={() => setPolygonPoints([])}>
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </section>
+              <section className="panel">
+                <p className="eyebrow">Labels</p>
                 {labelOptions.length > 0 ? (
                   <div className="label-picker">
                     {labelOptions.map((label, index) => (
@@ -430,15 +534,15 @@ export function TaskDetailPage() {
                   </label>
                 )}
                 <div className="annotation-region-list">
-                  {boxes.length > 0 ? (
-                    boxes.map((box, index) => (
-                      <button key={box.id} className="annotation-region-chip" type="button" onClick={() => removeBox(box.id)} disabled={!canAnnotate}>
-                        <span>{index + 1}. {box.label}</span>
-                        <small>{Math.round(box.width * 100)}% x {Math.round(box.height * 100)}%</small>
+                  {shapes.length > 0 ? (
+                    shapes.map((shape, index) => (
+                      <button key={shape.id} className="annotation-region-chip" type="button" onClick={() => removeBox(shape.id)} disabled={!canAnnotate}>
+                        <span>{index + 1}. {shape.label}</span>
+                        <small>{shape.type === "POLYGON" ? `${shape.points?.length ?? 0} points` : `${Math.round((shape.width ?? 0) * 100)}% x ${Math.round((shape.height ?? 0) * 100)}%`}</small>
                       </button>
                     ))
                   ) : (
-                    <span className="muted-copy">Draw on the image to add boxes.</span>
+                    <span className="muted-copy">Use the active tool on the image to add regions.</span>
                   )}
                 </div>
               </section>
@@ -475,29 +579,74 @@ export function TaskDetailPage() {
   );
 }
 
-function annotationToBoxes(annotation: AnnotationSummary | null): BBox[] {
+function AnnotationSvgShape({ labelOptions, shape }: { labelOptions: LabelOption[]; shape: AnnotationShape }) {
+  const color = getLabelColor(shape.label, labelOptions);
+
+  if (shape.type === "POLYGON" && shape.points && shape.points.length > 0) {
+    const firstPoint = shape.points[0];
+
+    return (
+      <g>
+        <polygon points={pointsToSvg(shape.points)} style={{ stroke: color }} />
+        <text fill={color} x={firstPoint.x} y={Math.max(0.03, firstPoint.y - 0.01)}>
+          {shape.label}
+        </text>
+      </g>
+    );
+  }
+
+  return (
+    <g>
+      <rect
+        height={shape.height ?? 0}
+        width={shape.width ?? 0}
+        x={shape.x ?? 0}
+        y={shape.y ?? 0}
+        style={{ stroke: color }}
+      />
+      <text fill={color} x={shape.x ?? 0} y={Math.max(0.03, (shape.y ?? 0) - 0.01)}>
+        {shape.label}
+      </text>
+    </g>
+  );
+}
+
+function annotationToShapes(annotation: AnnotationSummary | null): AnnotationShape[] {
   if (!annotation) {
     return [];
   }
 
-  return annotation.regions
-    .map((region, index) => {
-      const geometry = region.geometryJson;
+  const shapes: AnnotationShape[] = [];
 
-      if (!isBoxGeometry(geometry)) {
-        return null;
-      }
+  annotation.regions.forEach((region, index) => {
+    const geometry = region.geometryJson;
 
-      return {
-        height: geometry.height,
+    if (region.type === "POLYGON" && isPolygonGeometry(geometry)) {
+      shapes.push({
         id: region.id || `region-${index}`,
         label: region.label ?? defaultLabel,
-        width: geometry.width,
-        x: geometry.x,
-        y: geometry.y
-      };
-    })
-    .filter((box): box is BBox => Boolean(box));
+        points: geometry.points,
+        type: "POLYGON"
+      });
+      return;
+    }
+
+    if (!isBoxGeometry(geometry)) {
+      return;
+    }
+
+    shapes.push({
+      height: geometry.height,
+      id: region.id || `region-${index}`,
+      label: region.label ?? defaultLabel,
+      type: "BBOX",
+      width: geometry.width,
+      x: geometry.x,
+      y: geometry.y
+    });
+  });
+
+  return shapes;
 }
 
 function isBoxGeometry(value: unknown): value is { height: number; width: number; x: number; y: number } {
@@ -509,7 +658,22 @@ function isBoxGeometry(value: unknown): value is { height: number; width: number
   return ["height", "width", "x", "y"].every((key) => typeof geometry[key] === "number");
 }
 
-function createBoxFromPoints(start: { x: number; y: number }, end: { x: number; y: number }, label: string): BBox {
+function isPolygonGeometry(value: unknown): value is { points: Point[] } {
+  if (!value || typeof value !== "object" || !Array.isArray((value as Record<string, unknown>).points)) {
+    return false;
+  }
+
+  return ((value as { points: unknown[] }).points).every((point) => {
+    if (!point || typeof point !== "object") {
+      return false;
+    }
+
+    const record = point as Record<string, unknown>;
+    return typeof record.x === "number" && typeof record.y === "number";
+  });
+}
+
+function createBoxFromPoints(start: { x: number; y: number }, end: { x: number; y: number }, label: string): AnnotationShape {
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
   const width = Math.abs(end.x - start.x);
@@ -519,6 +683,7 @@ function createBoxFromPoints(start: { x: number; y: number }, end: { x: number; 
     height,
     id: "draft",
     label,
+    type: "BBOX",
     width,
     x,
     y
@@ -529,40 +694,71 @@ function clamp(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-function getLabelOptions(config: Record<string, unknown> | null | undefined): LabelOption[] {
+function getLabelOptions(
+  projectLabels: { color: string; name: string; shortcutKey: string | null }[] | undefined,
+  config: Record<string, unknown> | null | undefined
+): LabelOption[] {
+  if (projectLabels && projectLabels.length > 0) {
+    return projectLabels.map((label, index) => ({
+      color: label.color || labelColors[index % labelColors.length],
+      name: label.name,
+      shortcutKey: label.shortcutKey
+    }));
+  }
+
   if (!config || !Array.isArray(config.labels)) {
     return [];
   }
 
-  return config.labels
-    .map((label, index) => {
-      if (typeof label === "string") {
-        return {
-          color: labelColors[index % labelColors.length],
-          name: label
-        };
-      }
+  const labels: LabelOption[] = [];
 
-      if (!label || typeof label !== "object") {
-        return null;
-      }
+  config.labels.forEach((label, index) => {
+    if (typeof label === "string") {
+      labels.push({
+        color: labelColors[index % labelColors.length],
+        name: label,
+        shortcutKey: getShortcutKey(index)
+      });
+      return;
+    }
 
-      const record = label as Record<string, unknown>;
-      const name = typeof record.name === "string" ? record.name.trim() : "";
-      const color = typeof record.color === "string" && record.color.trim().length > 0 ? record.color.trim() : labelColors[index % labelColors.length];
+    if (!label || typeof label !== "object") {
+      return;
+    }
 
-      return name
-        ? {
-            color,
-            name
-          }
-        : null;
-    })
-    .filter((label): label is LabelOption => Boolean(label));
+    const record = label as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    const color = typeof record.color === "string" && record.color.trim().length > 0 ? record.color.trim() : labelColors[index % labelColors.length];
+
+    if (name) {
+      labels.push({
+        color,
+        name,
+        shortcutKey: getShortcutKey(index)
+      });
+    }
+  });
+
+  return labels;
 }
 
 function getLabelColor(labelName: string, options: LabelOption[]) {
   return options.find((option) => option.name === labelName)?.color ?? labelColors[0];
+}
+
+function getToolOptions(projectTools: { enabled: boolean; tool: string }[] | undefined): Array<"BBOX" | "POLYGON"> {
+  const enabledTools = (projectTools ?? []).filter((tool) => tool.enabled).map((tool) => tool.tool);
+  const supported = enabledTools.filter((tool): tool is "BBOX" | "POLYGON" => tool === "BBOX" || tool === "POLYGON");
+
+  return supported.length > 0 ? supported : ["BBOX"];
+}
+
+function pointsToSvg(points: Point[]) {
+  return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
+function getShortcutKey(index: number) {
+  return index >= 0 && index < 9 ? String(index + 1) : undefined;
 }
 
 function getNextTaskAction(status: string) {

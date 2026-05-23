@@ -162,6 +162,21 @@ enum AnnotationRegionType {
   RELATION
 }
 
+enum AnnotationTool {
+  BBOX
+  POLYGON
+  BRUSH
+  TEXT_SPAN
+  KEYPOINT
+  RELATION
+  CLASSIFICATION
+  MASK
+  POLYLINE
+  AUDIO_REGION
+  VIDEO_REGION
+  TIMESERIES_RANGE
+}
+
 enum ReviewStatus {
   PENDING
   APPROVED
@@ -314,6 +329,7 @@ model User {
   lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz(6)
 
   ownedOrganizations Organization[]    @relation("OrganizationOwner")
+  createdAnnotationTemplates AnnotationTemplate[] @relation("AnnotationTemplateCreator")
   memberships         Membership[]
   projectMemberships  ProjectMembership[] @relation("ProjectMemberUser")
   invitedProjectMemberships ProjectMembership[] @relation("ProjectMemberInviter")
@@ -434,6 +450,7 @@ model Organization {
   auditLogs           AuditLog[]
   apiKeys             ApiKey[]
   webhooks            Webhook[]
+  annotationTemplates AnnotationTemplate[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -516,6 +533,7 @@ model Project {
   allowExternalMembers Boolean  @default(false) @map("allow_external_members")
   joinCode        String?       @unique @map("join_code")
   joinCodeEnabled Boolean       @default(false) @map("join_code_enabled")
+  annotationTemplateId String?  @map("annotation_template_id")
   labelingConfig  Json?         @map("labeling_config")
   instructions    String?
   createdById     String        @map("created_by_id")
@@ -523,6 +541,9 @@ model Project {
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspace    Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   createdBy    User            @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  annotationTemplate AnnotationTemplate? @relation(fields: [annotationTemplateId], references: [id], onDelete: SetNull)
+  labels       ProjectLabel[]
+  tools        ProjectTool[]
   datasets     Dataset[]
   assets       StorageAsset[]
   tasks        Task[]
@@ -540,6 +561,7 @@ model Project {
 
   @@index([organizationId])
   @@index([workspaceId])
+  @@index([annotationTemplateId])
   @@index([createdById])
   @@index([status])
   @@index([dataType])
@@ -547,6 +569,68 @@ model Project {
   @@index([joinCode])
   @@unique([organizationId, slug])
   @@map("projects")
+}
+
+model AnnotationTemplate {
+  id             String   @id @default(cuid())
+  organizationId String?  @map("organization_id")
+  name           String
+  description    String?
+  dataType       DataType @map("data_type")
+  configJson     Json     @default("{}") @map("config_json")
+  createdById    String?  @map("created_by_id")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation("AnnotationTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  projects     Project[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([createdById])
+  @@index([dataType])
+  @@unique([organizationId, name])
+  @@map("annotation_templates")
+}
+
+model ProjectLabel {
+  id          String  @id @default(cuid())
+  projectId   String  @map("project_id")
+  name        String
+  color       String
+  shortcutKey String? @map("shortcut_key")
+  metadata    Json?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([name])
+  @@unique([projectId, name])
+  @@unique([projectId, shortcutKey])
+  @@map("project_labels")
+}
+
+model ProjectTool {
+  id         String         @id @default(cuid())
+  projectId  String         @map("project_id")
+  tool       AnnotationTool
+  enabled    Boolean        @default(true)
+  configJson Json?          @map("config_json")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([tool])
+  @@index([enabled])
+  @@unique([projectId, tool])
+  @@map("project_tools")
 }
 
 model ProjectMembership {

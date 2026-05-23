@@ -2206,10 +2206,25 @@ textarea:focus {
   pointer-events: none;
 }
 
-.annotation-overlay rect {
-  fill: rgba(125, 211, 252, 0.12);
+.annotation-overlay rect,
+.annotation-overlay polygon {
+  fill: rgba(125, 211, 252, 0.08);
   stroke: #7dd3fc;
-  stroke-width: 0.0035;
+  stroke-linejoin: round;
+  stroke-width: 0.0017;
+  vector-effect: non-scaling-stroke;
+}
+
+.annotation-draft-line {
+  fill: none;
+  stroke-width: 0.0017;
+  vector-effect: non-scaling-stroke;
+}
+
+.annotation-point {
+  stroke: rgba(0, 0, 0, 0.72);
+  stroke-width: 0.0015;
+  vector-effect: non-scaling-stroke;
 }
 
 .annotation-overlay text {
@@ -2246,6 +2261,56 @@ textarea:focus {
 .label-picker {
   display: grid;
   gap: 8px;
+}
+
+.annotation-tool-tabs,
+.annotation-tool-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.annotation-tool-tabs {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.annotation-tool-tabs button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.annotation-tool-tabs button.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-soft));
+}
+
+.annotation-tool-picker {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.annotation-tool-picker legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.annotation-tool-picker .check-row {
+  align-items: flex-start;
+}
+
+.annotation-tool-picker small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .label-option {

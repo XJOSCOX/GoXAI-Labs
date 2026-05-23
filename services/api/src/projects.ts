@@ -1,4 +1,5 @@
 import {
+  AnnotationTool,
   CreatorStatus,
   DataType,
   getPrismaClient,
@@ -295,6 +296,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         allowExternalMembers: parsed.value.allowExternalMembers,
         joinCode: parsed.value.joinCodeEnabled ? await getUniqueProjectJoinCode() : null,
         joinCodeEnabled: parsed.value.joinCodeEnabled,
+        annotationTemplateId: parsed.value.annotationTemplateId,
         instructions: parsed.value.instructions,
         labelingConfig: parsed.value.labelingConfig,
         createdById: user.id
@@ -311,6 +313,9 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         joinedAt: new Date()
       }
     });
+
+    await syncProjectLabels(tx, createdProject.id, parsed.value.labels);
+    await syncProjectTools(tx, createdProject.id, parsed.value.tools);
 
     await tx.auditLog.create({
       data: {
@@ -396,8 +401,9 @@ router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
   }
 
   const updatedProject = await prisma.$transaction(async (tx) => {
+    const { labels, tools, ...projectValues } = parsed.value;
     const data = {
-      ...parsed.value,
+      ...projectValues,
       ...(parsed.value.joinCodeEnabled === true && !project.joinCode ? { joinCode: await getUniqueProjectJoinCode() } : {})
     };
     const saved = await tx.project.update({
@@ -407,6 +413,14 @@ router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
       data,
       include: projectIncludes
     });
+
+    if (labels) {
+      await syncProjectLabels(tx, saved.id, labels);
+    }
+
+    if (tools) {
+      await syncProjectTools(tx, saved.id, tools);
+    }
 
     await tx.auditLog.create({
       data: {
@@ -775,6 +789,7 @@ type CreateProjectBody =
   | {
       organizationId?: unknown;
       workspaceId?: unknown;
+      annotationTemplateId?: unknown;
       name?: unknown;
       description?: unknown;
       dataType?: unknown;
@@ -784,6 +799,8 @@ type CreateProjectBody =
       joinCodeEnabled?: unknown;
       instructions?: unknown;
       labelingConfig?: unknown;
+      labels?: unknown;
+      tools?: unknown;
     }
   | undefined;
 
@@ -798,6 +815,8 @@ type UpdateProjectBody =
       joinCodeEnabled?: unknown;
       instructions?: unknown;
       labelingConfig?: unknown;
+      labels?: unknown;
+      tools?: unknown;
     }
   | undefined;
 
@@ -808,12 +827,26 @@ type ProjectMemberBody =
     }
   | undefined;
 
+type ParsedProjectLabel = {
+  color: string;
+  metadata?: Prisma.InputJsonObject;
+  name: string;
+  shortcutKey?: string;
+};
+
+type ParsedProjectTool = {
+  configJson?: Prisma.InputJsonObject;
+  enabled: boolean;
+  tool: AnnotationTool;
+};
+
 function parseCreateProjectBody(body: CreateProjectBody):
   | {
       ok: true;
       value: {
         organizationId: string;
         workspaceId?: string;
+        annotationTemplateId?: string;
         name: string;
         description?: string;
         dataType: DataType;
@@ -823,11 +856,14 @@ function parseCreateProjectBody(body: CreateProjectBody):
         joinCodeEnabled: boolean;
         instructions?: string;
         labelingConfig?: Prisma.InputJsonObject;
+        labels: ParsedProjectLabel[];
+        tools: ParsedProjectTool[];
       };
     }
   | { ok: false; error: string } {
   const organizationId = normalizeId(body?.organizationId);
   const workspaceId = normalizeId(body?.workspaceId);
+  const annotationTemplateId = normalizeId(body?.annotationTemplateId);
   const name = normalizeText(body?.name);
   const description = normalizeText(body?.description);
   const dataType = parseEnumValue(DataType, body?.dataType);
@@ -837,6 +873,7 @@ function parseCreateProjectBody(body: CreateProjectBody):
   const joinCodeEnabled = normalizeBoolean(body?.joinCodeEnabled) ?? false;
   const instructions = normalizeText(body?.instructions);
   const labelingConfig = parseLabelingConfig(body?.labelingConfig, false);
+  const projectConfig = parseProjectAnnotationConfig(body?.labels, body?.tools, body?.labelingConfig, dataType);
 
   if (!organizationId) {
     return { ok: false, error: "Organization is required." };
@@ -870,11 +907,16 @@ function parseCreateProjectBody(body: CreateProjectBody):
     return { ok: false, error: labelingConfig.error };
   }
 
+  if (!projectConfig.ok) {
+    return { ok: false, error: projectConfig.error };
+  }
+
   return {
     ok: true,
     value: {
       organizationId,
       workspaceId,
+      annotationTemplateId,
       name,
       description,
       dataType,
@@ -883,7 +925,9 @@ function parseCreateProjectBody(body: CreateProjectBody):
       allowExternalMembers,
       joinCodeEnabled,
       instructions,
-      labelingConfig: labelingConfig.value ?? undefined
+      labelingConfig: labelingConfig.value ?? undefined,
+      labels: projectConfig.labels,
+      tools: projectConfig.tools
     }
   };
 }
@@ -901,6 +945,8 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
         joinCodeEnabled?: boolean;
         instructions?: string | null;
         labelingConfig?: Prisma.InputJsonObject;
+        labels?: ParsedProjectLabel[];
+        tools?: ParsedProjectTool[];
       };
     }
   | { ok: false; error: string } {
@@ -913,6 +959,7 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
   const allowExternalMembers = normalizeBoolean(body?.allowExternalMembers);
   const joinCodeEnabled = normalizeBoolean(body?.joinCodeEnabled);
   const labelingConfig = parseLabelingConfig(body?.labelingConfig, true);
+  const projectConfig = parseProjectAnnotationConfig(body?.labels, body?.tools, body?.labelingConfig, undefined);
 
   if (name && name.length > 120) {
     return { ok: false, error: "Project name must be 120 characters or fewer." };
@@ -946,6 +993,10 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
     return { ok: false, error: labelingConfig.error };
   }
 
+  if (!projectConfig.ok) {
+    return { ok: false, error: projectConfig.error };
+  }
+
   return {
     ok: true,
     value: {
@@ -957,7 +1008,9 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
       ...(allowExternalMembers !== undefined ? { allowExternalMembers } : {}),
       ...(joinCodeEnabled !== undefined ? { joinCodeEnabled } : {}),
       ...(body?.instructions !== undefined ? { instructions } : {}),
-      ...(body?.labelingConfig !== undefined ? { labelingConfig: labelingConfig.value } : {})
+      ...(body?.labelingConfig !== undefined ? { labelingConfig: labelingConfig.value } : {}),
+      ...(body?.labelingConfig !== undefined || body?.labels !== undefined ? { labels: projectConfig.labels } : {}),
+      ...(body?.labelingConfig !== undefined || body?.tools !== undefined ? { tools: projectConfig.tools } : {})
     }
   };
 }
@@ -989,6 +1042,215 @@ function parseProjectMemberBody(body: ProjectMemberBody):
       role
     }
   };
+}
+
+function parseProjectAnnotationConfig(
+  labelsInput: unknown,
+  toolsInput: unknown,
+  configInput: unknown,
+  dataType: DataType | undefined
+): { ok: true; labels: ParsedProjectLabel[]; tools: ParsedProjectTool[] } | { ok: false; error: string } {
+  const config = isRecord(configInput) ? configInput : {};
+  const labelSource = labelsInput ?? config.labels ?? [];
+  const toolSource = toolsInput ?? config.tools;
+  const labels = parseProjectLabels(labelSource);
+  const tools = parseProjectTools(toolSource, dataType);
+
+  if (!labels.ok) {
+    return labels;
+  }
+
+  if (!tools.ok) {
+    return tools;
+  }
+
+  return {
+    ok: true,
+    labels: labels.value,
+    tools: tools.value
+  };
+}
+
+function parseProjectLabels(value: unknown): { ok: true; value: ParsedProjectLabel[] } | { ok: false; error: string } {
+  const rawLabels = Array.isArray(value) ? value : [];
+  const labels: ParsedProjectLabel[] = [];
+
+  rawLabels.forEach((label, index) => {
+    if (typeof label === "string") {
+      const name = label.trim();
+
+      if (name) {
+        labels.push({
+          color: defaultLabelColors[index % defaultLabelColors.length],
+          name,
+          shortcutKey: getShortcutKey(index)
+        });
+      }
+
+      return;
+    }
+
+    if (!isRecord(label)) {
+      return;
+    }
+
+    const name = normalizeText(label.name);
+
+    if (!name) {
+      return;
+    }
+
+    const color = normalizeText(label.color) ?? defaultLabelColors[index % defaultLabelColors.length];
+    const shortcutKey = normalizeText(label.shortcutKey) ?? getShortcutKey(index);
+    const metadata = isRecord(label.metadata) ? (label.metadata as Prisma.InputJsonObject) : undefined;
+
+    labels.push({
+      color,
+      metadata,
+      name,
+      shortcutKey
+    });
+  });
+
+  if (labels.length > 50) {
+    return { ok: false, error: "A project can have up to 50 labels." };
+  }
+
+  if (labels.some((label) => label.name.length > 60)) {
+    return { ok: false, error: "Label names must be 60 characters or fewer." };
+  }
+
+  const names = new Set(labels.map((label) => label.name.toLowerCase()));
+
+  if (names.size !== labels.length) {
+    return { ok: false, error: "Project labels must be unique." };
+  }
+
+  return {
+    ok: true,
+    value: labels
+  };
+}
+
+function parseProjectTools(
+  value: unknown,
+  dataType: DataType | undefined
+): { ok: true; value: ParsedProjectTool[] } | { ok: false; error: string } {
+  const source = Array.isArray(value) && value.length > 0 ? value : getDefaultToolsForDataType(dataType);
+  const tools = source
+    .map((toolInput) => {
+      if (typeof toolInput === "string") {
+        const tool = parseEnumValue(AnnotationTool, toolInput);
+
+        return tool
+          ? {
+              enabled: true,
+              tool
+            }
+          : null;
+      }
+
+      if (!isRecord(toolInput)) {
+        return null;
+      }
+
+      const tool = parseEnumValue(AnnotationTool, toolInput.tool);
+
+      if (!tool) {
+        return null;
+      }
+
+      return {
+        configJson: isRecord(toolInput.configJson) ? (toolInput.configJson as Prisma.InputJsonObject) : undefined,
+        enabled: normalizeBoolean(toolInput.enabled) ?? true,
+        tool
+      };
+    })
+    .filter((tool): tool is ParsedProjectTool => Boolean(tool));
+
+  if (tools.length === 0) {
+    return { ok: false, error: "Choose at least one annotation tool." };
+  }
+
+  const uniqueTools = new Map<AnnotationTool, ParsedProjectTool>();
+
+  for (const tool of tools) {
+    uniqueTools.set(tool.tool, tool);
+  }
+
+  return {
+    ok: true,
+    value: [...uniqueTools.values()]
+  };
+}
+
+async function syncProjectLabels(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  labels: ParsedProjectLabel[]
+) {
+  await tx.projectLabel.deleteMany({
+    where: {
+      projectId
+    }
+  });
+
+  if (labels.length > 0) {
+    await tx.projectLabel.createMany({
+      data: labels.map((label) => ({
+        color: label.color,
+        metadata: label.metadata,
+        name: label.name,
+        projectId,
+        shortcutKey: label.shortcutKey
+      }))
+    });
+  }
+}
+
+async function syncProjectTools(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  tools: ParsedProjectTool[]
+) {
+  await tx.projectTool.deleteMany({
+    where: {
+      projectId
+    }
+  });
+
+  await tx.projectTool.createMany({
+    data: tools.map((tool) => ({
+      configJson: tool.configJson,
+      enabled: tool.enabled,
+      projectId,
+      tool: tool.tool
+    }))
+  });
+}
+
+function getDefaultToolsForDataType(dataType: DataType | undefined) {
+  if (dataType === DataType.TEXT || dataType === DataType.PDF) {
+    return [AnnotationTool.TEXT_SPAN, AnnotationTool.CLASSIFICATION];
+  }
+
+  if (dataType === DataType.AUDIO) {
+    return [AnnotationTool.AUDIO_REGION, AnnotationTool.CLASSIFICATION];
+  }
+
+  if (dataType === DataType.VIDEO) {
+    return [AnnotationTool.BBOX, AnnotationTool.POLYGON, AnnotationTool.VIDEO_REGION];
+  }
+
+  if (dataType === DataType.TIME_SERIES) {
+    return [AnnotationTool.TIMESERIES_RANGE, AnnotationTool.CLASSIFICATION];
+  }
+
+  return [AnnotationTool.BBOX];
+}
+
+function getShortcutKey(index: number) {
+  return index >= 0 && index < 9 ? String(index + 1) : undefined;
 }
 
 function parseLabelingConfig(value: unknown, nullable: boolean):
@@ -1087,6 +1349,8 @@ function randomCodePart() {
   return Math.random().toString(36).slice(2, 7).toUpperCase().padEnd(5, "X");
 }
 
+const defaultLabelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
+
 const projectIncludes = {
   organization: {
     select: {
@@ -1107,6 +1371,42 @@ const projectIncludes = {
       userId: true,
       role: true,
       status: true
+    }
+  },
+  labels: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      shortcutKey: true,
+      metadata: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  },
+  tools: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      tool: true,
+      enabled: true,
+      configJson: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  },
+  annotationTemplate: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      dataType: true,
+      configJson: true
     }
   },
   _count: {
@@ -1134,6 +1434,30 @@ type ProjectWithRelations = Project & {
     role: MembershipRole;
     status: string;
   }[];
+  labels: {
+    id: string;
+    name: string;
+    color: string;
+    shortcutKey: string | null;
+    metadata: unknown;
+    createdAt: Date;
+    updatedAt: Date;
+  }[];
+  tools: {
+    id: string;
+    tool: AnnotationTool;
+    enabled: boolean;
+    configJson: unknown;
+    createdAt: Date;
+    updatedAt: Date;
+  }[];
+  annotationTemplate: {
+    id: string;
+    name: string;
+    description: string | null;
+    dataType: DataType;
+    configJson: unknown;
+  } | null;
   _count: {
     projectMemberships: number;
     datasets: number;
@@ -1164,8 +1488,12 @@ function serializeProject(project: ProjectWithRelations, currentUserId?: string)
     allowExternalMembers: project.allowExternalMembers,
     joinCode: project.joinCode,
     joinCodeEnabled: project.joinCodeEnabled,
+    annotationTemplateId: project.annotationTemplateId,
     instructions: project.instructions,
     labelingConfig: project.labelingConfig as Record<string, unknown> | null,
+    annotationTemplate: project.annotationTemplate,
+    labels: project.labels,
+    tools: project.tools,
     currentUserRole: currentMembership?.role ?? null,
     canManage,
     canCreateDataset: canManage,
