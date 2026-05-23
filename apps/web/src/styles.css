@@ -1929,21 +1929,21 @@ textarea:focus {
 .asset-row-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   flex-wrap: nowrap;
   gap: 8px;
   width: 100%;
 }
 
-.asset-row-preview-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+.asset-action-button {
+  width: 34px;
+  min-height: 34px;
+  color: var(--text);
 }
 
-.asset-row-actions .ghost-button {
-  width: auto;
+.danger-action-button {
+  color: var(--danger-text);
+  border-color: color-mix(in srgb, var(--danger-text) 45%, var(--border));
 }
 
 .project-row small {
@@ -2210,12 +2210,7 @@ textarea:focus {
   }
 
   .asset-row-actions {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .asset-row-preview-actions {
-    width: 100%;
+    justify-content: flex-start;
   }
 
   .folder-delete-bar {

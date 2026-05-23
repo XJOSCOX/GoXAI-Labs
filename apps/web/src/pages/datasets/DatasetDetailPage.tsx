@@ -1375,19 +1375,14 @@ function AssetRow({
       <span>{formatBytes(asset.fileSize)}</span>
       <span>
         <div className="asset-row-actions">
-          <div className="asset-row-preview-actions">
-            <button className="secondary-button compact-button" type="button" onClick={onInspect}>
-              <Eye size={16} />
-              Quick preview
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onPreview}>
-              <Maximize2 size={16} />
-              Preview
-            </button>
-          </div>
-          <button className="ghost-button danger-button compact-button" type="button" onClick={onDelete}>
+          <button className="icon-button asset-action-button" type="button" onClick={onInspect} aria-label="Quick preview" title="Quick preview">
+            <Eye size={16} />
+          </button>
+          <button className="icon-button asset-action-button" type="button" onClick={onPreview} aria-label="Preview" title="Preview">
+            <Maximize2 size={16} />
+          </button>
+          <button className="icon-button asset-action-button danger-action-button" type="button" onClick={onDelete} aria-label="Delete" title="Delete">
             <Trash2 size={16} />
-            Delete
           </button>
         </div>
       </span>
