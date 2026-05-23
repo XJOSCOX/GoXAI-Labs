@@ -457,6 +457,31 @@ select:focus {
   max-width: 720px;
 }
 
+.org-list {
+  display: grid;
+  gap: 10px;
+}
+
+.org-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 14px;
+}
+
+.org-item div {
+  display: grid;
+  gap: 4px;
+}
+
+.org-item span {
+  color: var(--muted);
+}
+
 .table-panel {
   overflow: hidden;
 }

@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { getSupabaseConfig } from "@goxai/database";
 import { getBearerToken, syncUserFromAccessToken } from "./auth.js";
+import { organizationsRouter } from "./organizations.js";
 
 export const app = express();
 
@@ -86,3 +87,5 @@ app.post("/api/auth/sync", async (request, response) => {
     });
   }
 });
+
+app.use("/api/organizations", organizationsRouter);

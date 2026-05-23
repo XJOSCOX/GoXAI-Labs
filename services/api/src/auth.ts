@@ -1,4 +1,9 @@
 import { createSupabaseUserClient, getPrismaClient, getSupabaseConfig } from "@goxai/database";
+import type { Request, Response, NextFunction } from "express";
+
+export interface AuthenticatedRequest extends Request {
+  currentUser?: Awaited<ReturnType<typeof syncUserFromAccessToken>>;
+}
 
 export async function getUserFromAccessToken(accessToken: string) {
   const config = getSupabaseConfig();
@@ -51,6 +56,30 @@ export function getBearerToken(authorizationHeader: string | undefined) {
   }
 
   return authorizationHeader.slice("Bearer ".length).trim() || null;
+}
+
+export async function requireAuthenticatedUser(
+  request: AuthenticatedRequest,
+  response: Response,
+  next: NextFunction
+) {
+  const accessToken = getBearerToken(request.header("authorization"));
+
+  if (!accessToken) {
+    response.status(401).json({
+      error: "Missing bearer token."
+    });
+    return;
+  }
+
+  try {
+    request.currentUser = await syncUserFromAccessToken(accessToken);
+    next();
+  } catch (error) {
+    response.status(401).json({
+      error: error instanceof Error ? error.message : "Unable to verify Supabase token."
+    });
+  }
 }
 
 function getUserProfile(user: {

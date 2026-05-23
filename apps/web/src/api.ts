@@ -22,6 +22,29 @@ export interface BackendConfig {
 
 export const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  slug: string;
+  type: string;
+  planTier: string;
+  role: string;
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateOrganizationInput {
+  organizationName: string;
+  workspaceName: string;
+  organizationType: string;
+  planTier: string;
+}
+
 export async function createSupabaseBrowserClient() {
   const response = await fetch(`${apiUrl}/api/config`);
 
@@ -49,6 +72,55 @@ export async function syncAuthenticatedUser(session: Session) {
   }
 
   return ((await response.json()) as { user: ApiUser }).user;
+}
+
+export async function listOrganizations(session: Session) {
+  const response = await authenticatedFetch(session, "/api/organizations");
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(payload.error ?? "Unable to load organizations.");
+  }
+
+  return ((await response.json()) as { organizations: OrganizationSummary[] }).organizations;
+}
+
+export async function createOrganization(session: Session, input: CreateOrganizationInput) {
+  const response = await authenticatedFetch(session, "/api/organizations", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(payload.error ?? "Unable to create organization.");
+  }
+
+  return (await response.json()) as {
+    organization: {
+      id: string;
+      name: string;
+      slug: string;
+      type: string;
+      planTier: string;
+    };
+    workspace: {
+      id: string;
+      name: string;
+      slug: string;
+    };
+  };
+}
+
+function authenticatedFetch(session: Session, path: string, init: RequestInit = {}) {
+  return fetch(`${apiUrl}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+      ...init.headers
+    }
+  });
 }
 
 export type { SupabaseClient };

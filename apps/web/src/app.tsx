@@ -12,8 +12,13 @@ import {
   Sun,
   UserRoundPlus
 } from "lucide-react";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import {
+  createOrganization,
+  listOrganizations,
+  type OrganizationSummary
+} from "./api";
 import { AuthProvider, getFormValue, useAuth } from "./auth";
 import { useTheme } from "./theme";
 
@@ -271,7 +276,8 @@ function ThemeToggle() {
 }
 
 function DashboardPage() {
-  const { dbUser } = useAuth();
+  const { dbUser, session } = useAuth();
+  const { organizations } = useOrganizations(session);
   const initials = useMemo(() => {
     const parts = [dbUser?.firstName, dbUser?.lastName].filter(Boolean);
     return parts.length ? parts.map((part) => part?.[0]).join("") : "GX";
@@ -288,9 +294,9 @@ function DashboardPage() {
       </div>
       <div className="stat-grid">
         <article className="stat-card">
-          <Database size={20} />
-          <span>Datasets</span>
-          <strong>0</strong>
+          <Building2 size={20} />
+          <span>Organizations</span>
+          <strong>{organizations.length}</strong>
         </article>
         <article className="stat-card">
           <FolderKanban size={20} />
@@ -333,11 +339,40 @@ function DashboardPage() {
 }
 
 function OrganizationSetupPage() {
-  const [saved, setSaved] = useState(false);
+  const { session } = useAuth();
+  const navigate = useNavigate();
+  const { error, loading, organizations, reload, setError } = useOrganizations(session);
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSaved(true);
+    setSavedMessage(null);
+    setError(null);
+
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const result = await createOrganization(session, {
+        organizationName: getFormValue(event, "name"),
+        workspaceName: getFormValue(event, "workspace"),
+        organizationType: getFormValue(event, "type"),
+        planTier: getFormValue(event, "plan")
+      });
+
+      setSavedMessage(`${result.organization.name} and ${result.workspace.name} are ready.`);
+      await reload();
+      navigate("/projects");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to create organization.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -348,6 +383,25 @@ function OrganizationSetupPage() {
           <h1>Setup</h1>
         </div>
       </div>
+      {organizations.length > 0 && (
+        <section className="panel">
+          <div>
+            <p className="eyebrow">Existing organizations</p>
+            <h2>{organizations.length} workspace foundation</h2>
+          </div>
+          <div className="org-list">
+            {organizations.map((organization) => (
+              <article className="org-item" key={organization.id}>
+                <div>
+                  <strong>{organization.name}</strong>
+                  <span>{organization.workspace?.name ?? "Organization wide"}</span>
+                </div>
+                <span className="status-pill">{organization.role}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <form className="panel setup-form" onSubmit={handleSubmit}>
         <label>
           Organization name
@@ -358,18 +412,29 @@ function OrganizationSetupPage() {
           <input name="workspace" placeholder="Default workspace" required />
         </label>
         <label>
+          Type
+          <select name="type" defaultValue="COMPANY">
+            <option value="PERSONAL">Personal</option>
+            <option value="COMPANY">Company</option>
+            <option value="ENTERPRISE">Enterprise</option>
+            <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+          </select>
+        </label>
+        <label>
           Plan
           <select name="plan" defaultValue="FREE">
             <option value="FREE">Free</option>
             <option value="STARTER">Starter</option>
             <option value="PRO">Pro</option>
             <option value="BUSINESS">Business</option>
+            <option value="ENTERPRISE">Enterprise</option>
           </select>
         </label>
-        {saved && <p className="form-success">Organization setup is ready for the backend create endpoint.</p>}
-        <button className="primary-button" type="submit">
+        {error && <p className="form-error">{error}</p>}
+        {savedMessage && <p className="form-success">{savedMessage}</p>}
+        <button className="primary-button" type="submit" disabled={saving || loading}>
           <Building2 size={18} />
-          Save setup
+          {saving ? "Creating" : "Create organization"}
         </button>
       </form>
     </section>
@@ -377,6 +442,9 @@ function OrganizationSetupPage() {
 }
 
 function ProjectsPage() {
+  const { session } = useAuth();
+  const { organizations } = useOrganizations(session);
+
   return (
     <section className="page-stack">
       <div className="page-heading">
@@ -399,11 +467,51 @@ function ProjectsPage() {
         <div className="empty-state">
           <FolderKanban size={28} />
           <strong>No projects yet</strong>
-          <span>Create an organization first, then projects and datasets come next.</span>
+          <span>
+            {organizations.length > 0
+              ? "Organization foundation is ready. Project creation is the next backend step."
+              : "Create an organization first, then projects and datasets come next."}
+          </span>
         </div>
       </section>
     </section>
   );
+}
+
+function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!session) {
+      setOrganizations([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setOrganizations(await listOrganizations(session));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load organizations.");
+    } finally {
+      setLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    organizations,
+    reload,
+    setError
+  };
 }
 
 function LoadingScreen() {
