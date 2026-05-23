@@ -434,13 +434,20 @@ textarea:focus {
 }
 
 .sidebar-profile .avatar {
+  position: relative;
   width: 74px;
   height: 74px;
-  border-radius: 999px;
+  border-radius: 48% 52% 44% 56% / 58% 42% 55% 45%;
+  border: 2px solid color-mix(in srgb, #7dd3fc 72%, white);
   background: linear-gradient(135deg, #bae6fd, #7dd3fc);
   color: #0f172a;
   font-size: 22px;
+  isolation: isolate;
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, #7dd3fc 18%, transparent),
+    0 10px 24px rgba(125, 211, 252, 0.12);
 }
+
 
 .sidebar-profile-info {
   display: grid;
