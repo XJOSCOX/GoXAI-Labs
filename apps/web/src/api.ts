@@ -393,12 +393,14 @@ export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["
     });
   } catch (error) {
     throw new Error(
-      "R2 upload could not reach Cloudflare. Check the bucket CORS policy for http://localhost:5173 and confirm R2_ENDPOINT uses the r2.cloudflarestorage.com endpoint."
+      "R2 upload could not reach Cloudflare. Check the bucket CORS policy for http://localhost:5173, confirm R2_ENDPOINT uses the r2.cloudflarestorage.com endpoint, then run pnpm check:r2-cors."
     );
   }
 
   if (!response.ok) {
-    throw new Error(`R2 upload failed with status ${response.status}. Check the bucket CORS settings and R2 credentials.`);
+    throw new Error(
+      `R2 upload failed with status ${response.status}. Check the bucket CORS settings and R2 credentials, then run pnpm check:r2-cors.`
+    );
   }
 }
 
