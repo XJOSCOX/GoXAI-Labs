@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth";
+import { DatasetWorkspaceRoute } from "./components/auth/DatasetWorkspaceRoute";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { AppShell } from "./components/layout/AppShell";
 import { AdminPage } from "./pages/admin/AdminPage";
@@ -41,8 +42,22 @@ export function App() {
           <Route path="organization/:organizationId" element={<OrganizationSetupPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:projectId" element={<ProjectDetailPage />} />
-          <Route path="datasets" element={<DatasetsPage />} />
-          <Route path="datasets/:datasetId" element={<DatasetDetailPage />} />
+          <Route
+            path="datasets"
+            element={
+              <DatasetWorkspaceRoute>
+                <DatasetsPage />
+              </DatasetWorkspaceRoute>
+            }
+          />
+          <Route
+            path="datasets/:datasetId"
+            element={
+              <DatasetWorkspaceRoute>
+                <DatasetDetailPage />
+              </DatasetWorkspaceRoute>
+            }
+          />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route path="admin" element={<AdminPage />} />
