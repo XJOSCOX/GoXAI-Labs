@@ -474,7 +474,7 @@ function ThemeToggle() {
 }
 
 function OnboardingPage() {
-  const { session } = useAuth();
+  const { logout, session } = useAuth();
   const { loading, organizations } = useOrganizations(session);
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
@@ -537,7 +537,13 @@ function OnboardingPage() {
             <p className="eyebrow">Onboarding</p>
             <h1>Finish {organization.name}</h1>
           </div>
-          <ThemeToggle />
+          <div className="onboarding-actions">
+            <ThemeToggle />
+            <button className="secondary-button danger-button compact-button" type="button" onClick={() => void logout()}>
+              <LogOut size={16} />
+              Sign out
+            </button>
+          </div>
         </div>
         {pageError && <p className="form-error">{pageError}</p>}
         <form className="setup-form onboarding-form" onSubmit={handleSubmit}>

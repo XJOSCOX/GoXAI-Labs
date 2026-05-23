@@ -590,6 +590,12 @@ textarea:focus {
   gap: 18px;
 }
 
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .onboarding-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
