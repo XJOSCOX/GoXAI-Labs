@@ -103,9 +103,16 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
   }
 
   const datasetId = normalizeId(request.body?.datasetId);
+  const hasQuantity = Object.prototype.hasOwnProperty.call(request.body ?? {}, "quantity");
+  const quantity = normalizePositiveInteger(request.body?.quantity);
 
   if (!datasetId) {
     response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  if (hasQuantity && !quantity) {
+    response.status(400).json({ error: "Quantity must be a whole number greater than 0." });
     return;
   }
 
@@ -152,6 +159,9 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
       projectId: dataset.projectId,
       organizationId: dataset.organizationId
     },
+    orderBy: {
+      createdAt: "asc"
+    },
     select: {
       id: true,
       fileName: true
@@ -176,11 +186,13 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
   });
   const existingAssetIds = new Set(existingTasks.map((task) => task.assetId).filter(Boolean));
   const missingAssets = assets.filter((asset) => !existingAssetIds.has(asset.id));
+  const assetsToCreate = quantity ? missingAssets.slice(0, quantity) : missingAssets;
+  const remainingCount = Math.max(0, missingAssets.length - assetsToCreate.length);
 
-  if (missingAssets.length > 0) {
+  if (assetsToCreate.length > 0) {
     await prisma.$transaction(async (tx) => {
       await tx.task.createMany({
-        data: missingAssets.map((asset) => ({
+        data: assetsToCreate.map((asset) => ({
           projectId: dataset.projectId,
           datasetId: dataset.id,
           assetId: asset.id,
@@ -203,7 +215,9 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
           metadata: {
             requestId: getRequestId(request),
             datasetName: dataset.name,
-            createdCount: missingAssets.length,
+            createdCount: assetsToCreate.length,
+            remainingCount,
+            requestedQuantity: quantity ?? "all",
             skippedCount: existingAssetIds.size
           }
         }
@@ -227,7 +241,8 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
   });
 
   response.status(201).json({
-    createdCount: missingAssets.length,
+    createdCount: assetsToCreate.length,
+    remainingCount,
     skippedCount: existingAssetIds.size,
     tasks: tasks.map(serializeTask)
   });
@@ -538,4 +553,17 @@ function serializeUserName(user: {
 
 function normalizeId(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizePositiveInteger(value: unknown) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }

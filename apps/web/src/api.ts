@@ -334,6 +334,7 @@ export interface TaskSummary {
 export interface GenerateTasksResult {
   createdCount: number;
   skippedCount: number;
+  remainingCount?: number;
   tasks: TaskSummary[];
 }
 
@@ -812,10 +813,10 @@ export async function listTasks(session: Session, input: { datasetId?: string; p
   return ((await response.json()) as { tasks: TaskSummary[] }).tasks;
 }
 
-export async function generateTasksFromDataset(session: Session, datasetId: string) {
+export async function generateTasksFromDataset(session: Session, datasetId: string, input: { quantity?: number } = {}) {
   const response = await authenticatedFetch(session, "/api/tasks/generate-from-dataset", {
     method: "POST",
-    body: JSON.stringify({ datasetId })
+    body: JSON.stringify(removeEmptyValues({ datasetId, quantity: input.quantity }))
   });
 
   if (!response.ok) {

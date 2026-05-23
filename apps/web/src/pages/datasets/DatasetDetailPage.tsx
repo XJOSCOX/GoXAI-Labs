@@ -43,6 +43,8 @@ function DatasetTasksPanel({
   tasks: TaskSummary[];
 }) {
   const [generating, setGenerating] = useState(false);
+  const [generationMode, setGenerationMode] = useState<"all" | "custom">("all");
+  const [taskQuantity, setTaskQuantity] = useState("10");
   const [message, setMessage] = useState<string | null>(null);
 
   async function handleGenerate() {
@@ -54,13 +56,24 @@ function DatasetTasksPanel({
       return;
     }
 
+    const normalizedQuantity = Number(taskQuantity);
+
+    if (generationMode === "custom" && (!Number.isInteger(normalizedQuantity) || normalizedQuantity < 1)) {
+      setPageError("Enter a whole number greater than 0 for custom task generation.");
+      return;
+    }
+
     setGenerating(true);
 
     try {
-      const result = await generateTasksFromDataset(session, dataset.id);
+      const result = await generateTasksFromDataset(session, dataset.id, {
+        quantity: generationMode === "custom" ? normalizedQuantity : undefined
+      });
       setMessage(
         result.createdCount > 0
-          ? `${result.createdCount} task${result.createdCount === 1 ? "" : "s"} generated.`
+          ? `${result.createdCount} task${result.createdCount === 1 ? "" : "s"} generated.${
+              result.remainingCount ? ` ${result.remainingCount} asset${result.remainingCount === 1 ? "" : "s"} still need tasks.` : ""
+            }`
           : "Tasks already exist for every dataset asset."
       );
       await onGenerated();
@@ -79,10 +92,40 @@ function DatasetTasksPanel({
           <h2>Dataset tasks</h2>
           <span>{tasks.length} task records for this dataset</span>
         </div>
-        <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating}>
-          <ClipboardList size={18} />
-          {generating ? "Generating" : "Generate tasks"}
-        </button>
+        <div className="task-generator">
+          <div className="task-generator-options" aria-label="Task generation quantity">
+            <button
+              className={generationMode === "all" ? "option-chip active" : "option-chip"}
+              onClick={() => setGenerationMode("all")}
+              type="button"
+            >
+              All
+            </button>
+            <button
+              className={generationMode === "custom" ? "option-chip active" : "option-chip"}
+              onClick={() => setGenerationMode("custom")}
+              type="button"
+            >
+              Custom
+            </button>
+            {generationMode === "custom" && (
+              <label className="task-quantity-field">
+                <span>Qty</span>
+                <input
+                  min="1"
+                  onChange={(event) => setTaskQuantity(event.currentTarget.value)}
+                  step="1"
+                  type="number"
+                  value={taskQuantity}
+                />
+              </label>
+            )}
+          </div>
+          <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating}>
+            <ClipboardList size={18} />
+            {generating ? "Generating" : "Generate tasks"}
+          </button>
+        </div>
       </div>
       {message && <p className="form-success">{message}</p>}
       <TasksTable loading={loading} onChanged={onGenerated} session={session} setPageError={setPageError} tasks={tasks} />

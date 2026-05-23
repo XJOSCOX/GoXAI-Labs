@@ -1747,6 +1747,54 @@ textarea:focus {
   color: var(--muted);
 }
 
+.task-generator {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.task-generator-options {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.option-chip {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.option-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
+  color: var(--text);
+}
+
+.task-quantity-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.task-quantity-field input {
+  width: 82px;
+  min-height: 34px;
+}
+
 .asset-toolbar {
   display: flex;
   align-items: end;
@@ -2105,8 +2153,13 @@ textarea:focus {
 
   .section-actions,
   .table-toolbar,
-  .asset-toolbar-actions {
+  .asset-toolbar-actions,
+  .task-generator {
     width: 100%;
+  }
+
+  .task-generator {
+    justify-content: flex-start;
   }
 
   .pagination-bar > div {
