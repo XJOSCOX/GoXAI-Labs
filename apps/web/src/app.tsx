@@ -285,7 +285,6 @@ function AppShell() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-row compact sidebar-brand">
-          <div className="brand-mark">GX</div>
           <strong className="brand-wordmark">GoXAi Lab</strong>
         </div>
         <section className="sidebar-profile">
