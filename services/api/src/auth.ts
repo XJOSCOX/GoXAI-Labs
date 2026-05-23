@@ -1,4 +1,9 @@
-import { createSupabaseUserClient, getPrismaClient, getSupabaseConfig } from "@goxai/database";
+import {
+  createSupabaseUserClient,
+  getPrismaClient,
+  getSupabaseConfig,
+  GlobalRole
+} from "@goxai/database";
 import type { Request, Response, NextFunction } from "express";
 
 export interface AuthenticatedRequest extends Request {
@@ -27,6 +32,32 @@ export async function syncUserFromAccessToken(accessToken: string) {
   const prisma = getPrismaClient();
   const profile = getUserProfile(authUser);
   const now = new Date();
+  const [userCount, superAdminCount, existingUser, firstUser] = await Promise.all([
+    prisma.user.count(),
+    prisma.user.count({
+      where: {
+        globalRole: GlobalRole.SUPER_ADMIN
+      }
+    }),
+    prisma.user.findUnique({
+      where: {
+        supabaseAuthId: authUser.id
+      },
+      select: {
+        id: true
+      }
+    }),
+    prisma.user.findFirst({
+      orderBy: {
+        createdAt: "asc"
+      },
+      select: {
+        id: true
+      }
+    })
+  ]);
+  const shouldBootstrapOwner =
+    userCount === 0 || (superAdminCount === 0 && existingUser?.id === firstUser?.id);
 
   return prisma.user.upsert({
     where: {
@@ -38,6 +69,7 @@ export async function syncUserFromAccessToken(accessToken: string) {
       firstName: profile.firstName,
       lastName: profile.lastName,
       avatarUrl: profile.avatarUrl,
+      globalRole: shouldBootstrapOwner ? GlobalRole.SUPER_ADMIN : GlobalRole.USER,
       lastLoginAt: now
     },
     update: {
@@ -45,6 +77,7 @@ export async function syncUserFromAccessToken(accessToken: string) {
       firstName: profile.firstName,
       lastName: profile.lastName,
       avatarUrl: profile.avatarUrl,
+      ...(shouldBootstrapOwner ? { globalRole: GlobalRole.SUPER_ADMIN } : {}),
       lastLoginAt: now
     }
   });
