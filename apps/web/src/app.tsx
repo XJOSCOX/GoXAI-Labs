@@ -70,6 +70,13 @@ import { useTheme } from "./theme";
 const maxBulkUploadFiles = 100;
 const maxBulkUploadBytes = 1024 ** 3;
 const folderInputAttributes = { directory: "", webkitdirectory: "" } as Record<string, string>;
+const planOptions = [
+  { value: "FREE", label: "Free", detail: "Start small", price: "$0" },
+  { value: "STARTER", label: "Starter", detail: "Solo projects", price: "Basic" },
+  { value: "PRO", label: "Pro", detail: "Growing teams", price: "Scale" },
+  { value: "BUSINESS", label: "Business", detail: "Team controls", price: "Ops" },
+  { value: "ENTERPRISE", label: "Enterprise", detail: "Custom needs", price: "Custom" }
+];
 
 type UploadProgress = {
   completed: number;
@@ -95,6 +102,7 @@ export function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="organization" element={<OrganizationSetupPage />} />
+          <Route path="organization/:organizationId" element={<OrganizationSetupPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
@@ -408,23 +416,29 @@ function DashboardPage() {
 
 function OrganizationSetupPage() {
   const { session } = useAuth();
+  const navigate = useNavigate();
+  const { organizationId = "" } = useParams();
   const { error, loading, organizations, reload, setError } = useOrganizations(session);
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
   const {
     error: organizationDetailError,
     loading: organizationDetailLoading,
     organization,
     reload: reloadOrganization,
     setError: setOrganizationDetailError
-  } = useOrganization(session, selectedOrganizationId);
+  } = useOrganization(session, organizationId);
 
   return (
-    <section className="page-stack">
+    <section className="page-stack organization-page">
       <div className="page-heading">
         <div>
           <p className="eyebrow">Organization</p>
-          <h1>Organizations</h1>
+          <h1>{organizationId ? organization?.name ?? "Organization details" : "Organizations"}</h1>
+          {organizationId && (
+            <Link className="back-link" to="/organization">
+              All organizations
+            </Link>
+          )}
         </div>
         {organizations.length > 0 && (
           <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
@@ -434,7 +448,7 @@ function OrganizationSetupPage() {
         )}
       </div>
       {error && <p className="form-error">{error}</p>}
-      {organizations.length > 0 ? (
+      {organizations.length > 0 && !organizationId ? (
         <>
           <section className="panel">
             <div className="section-head">
@@ -446,11 +460,10 @@ function OrganizationSetupPage() {
             </div>
             <div className="org-card-grid">
               {organizations.map((organization) => (
-                <button
-                  className={`org-summary-card${selectedOrganizationId === organization.id ? " active" : ""}`}
+                <Link
+                  className="org-summary-card"
                   key={organization.id}
-                  onClick={() => setSelectedOrganizationId(organization.id)}
-                  type="button"
+                  to={`/organization/${organization.id}`}
                 >
                   <span>
                     <strong>{organization.name}</strong>
@@ -464,21 +477,17 @@ function OrganizationSetupPage() {
                     <span className="status-pill compact">{formatEnum(organization.role)}</span>
                     <small>Updated {formatDate(organization.updatedAt)}</small>
                   </span>
-                </button>
+                </Link>
               ))}
             </div>
           </section>
+        </>
+      ) : organizations.length > 0 && organizationId ? (
+        <>
           {(organizationDetailError || organizationDetailLoading) && (
             <p className={organizationDetailError ? "form-error" : "muted-copy"}>
               {organizationDetailError ?? "Loading organization details."}
             </p>
-          )}
-          {!selectedOrganizationId && (
-            <section className="panel empty-state">
-              <Building2 size={28} />
-              <strong>Select an organization</strong>
-              <span>Open a card above to view details, manage settings, and update members.</span>
-            </section>
           )}
           {organization && (
             <OrganizationManagementPanel
@@ -491,6 +500,16 @@ function OrganizationSetupPage() {
               setPageError={setOrganizationDetailError}
             />
           )}
+          {!organization && !organizationDetailLoading && !organizationDetailError && (
+            <section className="panel empty-state compact-empty">
+              <Building2 size={28} />
+              <strong>Organization not found</strong>
+              <span>Choose an organization from the directory.</span>
+              <Link className="secondary-button" to="/organization">
+                Back to organizations
+              </Link>
+            </section>
+          )}
         </>
       ) : (
         <div className="single-column">
@@ -498,7 +517,7 @@ function OrganizationSetupPage() {
             loading={loading}
             onCreated={async (organizationId) => {
               await reload();
-              setSelectedOrganizationId(organizationId);
+              navigate(`/organization/${organizationId}`);
             }}
             session={session}
             setPageError={setError}
@@ -511,8 +530,8 @@ function OrganizationSetupPage() {
           onClose={() => setShowCreateModal(false)}
           onCreated={async (organizationId) => {
             await reload();
-            setSelectedOrganizationId(organizationId);
             setShowCreateModal(false);
+            navigate(`/organization/${organizationId}`);
           }}
           session={session}
           setPageError={setError}
@@ -553,7 +572,7 @@ function OrganizationCreateModal({
       <section
         aria-labelledby="organization-modal-title"
         aria-modal="true"
-        className="modal-panel"
+        className="modal-panel organization-modal"
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
       >
@@ -663,16 +682,19 @@ function OrganizationCreateForm({
           <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
         </select>
       </label>
-      <label>
-        Plan
-        <select name="plan" defaultValue="FREE">
-          <option value="FREE">Free</option>
-          <option value="STARTER">Starter</option>
-          <option value="PRO">Pro</option>
-          <option value="BUSINESS">Business</option>
-          <option value="ENTERPRISE">Enterprise</option>
-        </select>
-      </label>
+      <fieldset className="plan-picker wide">
+        <legend>Plan</legend>
+        <div className="plan-option-row">
+          {planOptions.map((plan) => (
+            <label className="plan-option" key={plan.value}>
+              <input name="plan" type="radio" value={plan.value} defaultChecked={plan.value === "FREE"} />
+              <strong>{plan.label}</strong>
+              <span>{plan.price}</span>
+              <small>{plan.detail}</small>
+            </label>
+          ))}
+        </div>
+      </fieldset>
       {savedMessage && <p className="form-success wide">{savedMessage}</p>}
       <button className="primary-button" type="submit" disabled={saving || loading}>
         <Building2 size={18} />
@@ -776,132 +798,135 @@ function OrganizationManagementPanel({
   }
 
   return (
-    <section className="organization-detail">
-      <section className="panel">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">Organization details</p>
-            <h2>{organization.name}</h2>
+    <section className="detail-layout organization-detail-layout">
+      <section className="content-column">
+        <section className="panel">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">Organization details</p>
+              <h2>{organization.name}</h2>
+            </div>
+            <span className="status-pill">{formatEnum(organization.currentUserRole)}</span>
           </div>
-          <span className="status-pill">{formatEnum(organization.currentUserRole)}</span>
-        </div>
-        <dl className="detail-list">
-          <div>
-            <dt>Type</dt>
-            <dd>{formatEnum(organization.type)}</dd>
+          <dl className="detail-list">
+            <div>
+              <dt>Type</dt>
+              <dd>{formatEnum(organization.type)}</dd>
+            </div>
+            <div>
+              <dt>Plan</dt>
+              <dd>{formatEnum(organization.planTier)}</dd>
+            </div>
+            <div>
+              <dt>Members</dt>
+              <dd>{organization.memberships.length}</dd>
+            </div>
+            <div>
+              <dt>Workspace</dt>
+              <dd>{primaryWorkspace?.name ?? "Organization wide"}</dd>
+            </div>
+            <div>
+              <dt>Slug</dt>
+              <dd>{organization.slug}</dd>
+            </div>
+            <div>
+              <dt>Updated</dt>
+              <dd>{formatDate(organization.updatedAt)}</dd>
+            </div>
+          </dl>
+          <div className="description-block">
+            <span>Description</span>
+            <p>{primaryWorkspace?.description || "No workspace description has been added yet."}</p>
           </div>
+        </section>
+
+        <MembersTable
+          members={organization.memberships}
+          onChanged={onChanged}
+          organizationId={organization.id}
+          session={session}
+          setPageError={setPageError}
+        />
+
+        <section className="panel">
           <div>
-            <dt>Plan</dt>
-            <dd>{formatEnum(organization.planTier)}</dd>
+            <p className="eyebrow">Access</p>
+            <h2>Role permissions</h2>
           </div>
-          <div>
-            <dt>Members</dt>
-            <dd>{organization.memberships.length}</dd>
-          </div>
-          <div>
-            <dt>Workspace</dt>
-            <dd>{primaryWorkspace?.name ?? "Organization wide"}</dd>
-          </div>
-          <div>
-            <dt>Slug</dt>
-            <dd>{organization.slug}</dd>
-          </div>
-          <div>
-            <dt>Updated</dt>
-            <dd>{formatDate(organization.updatedAt)}</dd>
-          </div>
-        </dl>
-        <div className="description-block">
-          <span>Description</span>
-          <p>{primaryWorkspace?.description || "No workspace description has been added yet."}</p>
-        </div>
+          <RolePrivilegesPanel />
+        </section>
       </section>
 
-      {message && <p className="form-success">{message}</p>}
-
-      <section className="panel management-panel">
-        <div>
-          <p className="eyebrow">Settings</p>
-          <h2>Edit organization</h2>
-        </div>
-        <form className="management-grid" onSubmit={handleUpdate}>
-          <label>
-            Name
-            <input name="name" defaultValue={organization.name} required />
-          </label>
-          <label>
-            Type
-            <select name="type" defaultValue={organization.type}>
-              <option value="PERSONAL">Personal</option>
-              <option value="COMPANY">Company</option>
-              <option value="ENTERPRISE">Enterprise</option>
-              <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
-            </select>
-          </label>
-          <label>
-            Plan
-            <select name="planTier" defaultValue={organization.planTier}>
-              <option value="FREE">Free</option>
-              <option value="STARTER">Starter</option>
-              <option value="PRO">Pro</option>
-              <option value="BUSINESS">Business</option>
-              <option value="ENTERPRISE">Enterprise</option>
-            </select>
-          </label>
-          <div className="row-actions wide">
-            <button className="primary-button" type="submit" disabled={saving}>
-              <Save size={18} />
-              {saving ? "Saving" : "Save organization"}
-            </button>
-            <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
-              Delete empty organization
-            </button>
+      <aside className="side-column">
+        {message && <p className="form-success">{message}</p>}
+        <section className="panel management-panel">
+          <div>
+            <p className="eyebrow">Settings</p>
+            <h2>Edit organization</h2>
           </div>
-        </form>
-      </section>
+          <form className="management-grid" onSubmit={handleUpdate}>
+            <label>
+              Name
+              <input name="name" defaultValue={organization.name} required />
+            </label>
+            <label>
+              Type
+              <select name="type" defaultValue={organization.type}>
+                <option value="PERSONAL">Personal</option>
+                <option value="COMPANY">Company</option>
+                <option value="ENTERPRISE">Enterprise</option>
+                <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+              </select>
+            </label>
+            <label>
+              Plan
+              <select name="planTier" defaultValue={organization.planTier}>
+                <option value="FREE">Free</option>
+                <option value="STARTER">Starter</option>
+                <option value="PRO">Pro</option>
+                <option value="BUSINESS">Business</option>
+                <option value="ENTERPRISE">Enterprise</option>
+              </select>
+            </label>
+            <div className="row-actions wide">
+              <button className="primary-button" type="submit" disabled={saving}>
+                <Save size={18} />
+                {saving ? "Saving" : "Save organization"}
+              </button>
+              <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
+                Delete empty organization
+              </button>
+            </div>
+          </form>
+        </section>
 
-      <section className="panel management-panel">
-        <div className="section-head">
+        <section className="panel management-panel">
           <div>
             <p className="eyebrow">Members</p>
-            <h2>{organization.memberships.length} active member{organization.memberships.length === 1 ? "" : "s"}</h2>
+            <h2>Add member</h2>
           </div>
-        </div>
-        <form className="management-grid" onSubmit={handleAddMember}>
-          <label>
-            Member email
-            <input name="email" placeholder="teammate@example.com" type="email" required />
-          </label>
-          <label>
-            Role
-            <select name="role" defaultValue="ANNOTATOR">
-              {memberRoles.map((role) => (
-                <option key={role} value={role}>
-                  {formatEnum(role)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button className="secondary-button" type="submit" disabled={memberSaving}>
-            <UserRoundPlus size={18} />
-            {memberSaving ? "Adding" : "Add member"}
-          </button>
-        </form>
-      </section>
-      <MembersTable
-        members={organization.memberships}
-        onChanged={onChanged}
-        organizationId={organization.id}
-        session={session}
-        setPageError={setPageError}
-      />
-      <section className="panel">
-        <div>
-          <p className="eyebrow">Access</p>
-          <h2>Role permissions</h2>
-        </div>
-        <RolePrivilegesPanel />
-      </section>
+          <form className="management-grid" onSubmit={handleAddMember}>
+            <label>
+              Member email
+              <input name="email" placeholder="teammate@example.com" type="email" required />
+            </label>
+            <label>
+              Role
+              <select name="role" defaultValue="ANNOTATOR">
+                {memberRoles.map((role) => (
+                  <option key={role} value={role}>
+                    {formatEnum(role)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="secondary-button" type="submit" disabled={memberSaving}>
+              <UserRoundPlus size={18} />
+              {memberSaving ? "Adding" : "Add member"}
+            </button>
+          </form>
+        </section>
+      </aside>
     </section>
   );
 }

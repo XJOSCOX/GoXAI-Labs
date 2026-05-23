@@ -513,6 +513,10 @@ textarea:focus {
   padding: 16px;
 }
 
+.organization-modal {
+  width: min(920px, 100%);
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;
@@ -571,6 +575,14 @@ textarea:focus {
   padding: 16px;
 }
 
+.organization-page > .panel {
+  width: min(980px, 100%);
+}
+
+.organization-page > .detail-layout {
+  width: min(1220px, 100%);
+}
+
 .detail-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -606,6 +618,10 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
 }
 
+.organization-detail-layout {
+  grid-template-columns: minmax(0, 760px) minmax(320px, 390px);
+}
+
 .content-column,
 .side-column,
 .single-column {
@@ -627,6 +643,11 @@ textarea:focus {
 .setup-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   width: min(760px, 100%);
+}
+
+.organization-modal .setup-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
 }
 
 .project-form {
@@ -928,7 +949,7 @@ textarea:focus {
 
 .org-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 320px));
   gap: 12px;
 }
 
@@ -942,6 +963,7 @@ textarea:focus {
   color: var(--text);
   padding: 14px;
   text-align: left;
+  text-decoration: none;
 }
 
 .org-summary-card:hover,
@@ -983,6 +1005,69 @@ textarea:focus {
 .organization-detail {
   display: grid;
   gap: 16px;
+}
+
+.plan-picker {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.plan-picker legend {
+  margin-bottom: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.plan-option-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plan-option {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 92px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+  cursor: pointer;
+}
+
+.plan-option:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-soft));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.plan-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.plan-option strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.plan-option span {
+  color: var(--accent-deep);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-option small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .description-block {
@@ -1255,6 +1340,14 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .organization-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-option-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .side-column {
     position: static;
   }
@@ -1275,6 +1368,7 @@ textarea:focus {
   .dataset-form,
   .asset-form,
   .advanced-grid,
+  .plan-option-row,
   .management-split,
   .management-grid,
   .role-grid,
