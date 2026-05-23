@@ -61,7 +61,7 @@ const putResponse = await fetch(uploadUrl, {
   headers: {
     "Content-Type": "text/plain"
   },
-  body: "GoXAI R2 diagnostic upload"
+  body: "GoXAi Lab R2 diagnostic upload"
 });
 let cleanupStatus = "skipped";
 

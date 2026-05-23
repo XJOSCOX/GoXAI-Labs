@@ -1,12 +1,12 @@
 # Supabase Setup
 
-GoXAI uses Supabase for:
+GoXAi Lab uses Supabase for:
 
 - PostgreSQL database
 - Authentication
 - User identity
 
-GoXAI does not use Supabase Storage for large dataset files. Large dataset assets should use dedicated object storage or a data pipeline chosen later.
+GoXAi Lab does not use Supabase Storage for large dataset files. Large dataset assets should use dedicated object storage or a data pipeline chosen later.
 
 ## Project Settings
 

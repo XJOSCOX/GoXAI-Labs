@@ -1,6 +1,6 @@
 # Role permissions
 
-GoXAI uses organization membership roles for app-level authorization.
+GoXAi Lab uses organization membership roles for app-level authorization.
 
 ## Roles
 

@@ -140,7 +140,7 @@ function AuthFrame({ children, title, subtitle }: { children: React.ReactNode; t
         <div className="brand-row">
           <div className="brand-mark">GX</div>
           <div>
-            <p className="eyebrow">GoXAI Labs</p>
+            <p className="eyebrow">GoXAi Lab</p>
             <h1>{title}</h1>
           </div>
         </div>
@@ -213,6 +213,8 @@ function RegisterPage() {
   const [signupType, setSignupType] = useState<"user" | "organization">("user");
   const [message, setMessage] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [passwordDraft, setPasswordDraft] = useState("");
+  const passwordChecks = getPasswordChecks(passwordDraft);
 
   if (session) {
     return <Navigate to="/" replace />;
@@ -273,7 +275,7 @@ function RegisterPage() {
   }
 
   return (
-    <AuthFrame title="Register" subtitle="Create your GoXAI identity and choose whether this is a personal or organization account.">
+    <AuthFrame title="Register" subtitle="Create your GoXAi Lab identity and choose whether this is a personal or organization account.">
       <form className="auth-form two-column" onSubmit={handleSubmit}>
         <fieldset className="signup-type-picker wide">
           <legend>Account type</legend>
@@ -316,7 +318,7 @@ function RegisterPage() {
           <>
             <label className="wide">
               Organization name
-              <input name="organizationName" placeholder="GoXAI Labs" required />
+              <input name="organizationName" placeholder="GoXAi Lab" required />
             </label>
             <label className="wide">
               Organization email
@@ -331,6 +333,7 @@ function RegisterPage() {
             type="password"
             autoComplete="new-password"
             minLength={10}
+            onChange={(event) => setPasswordDraft(event.currentTarget.value)}
             pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[A-Za-z])(?=.*[^A-Za-z0-9]).{10,}"
             required
           />
@@ -339,9 +342,14 @@ function RegisterPage() {
           Confirm password
           <input name="confirmPassword" type="password" autoComplete="new-password" minLength={10} required />
         </label>
-        <p className="password-rules wide">
-          Use at least 10 characters with uppercase, lowercase, a number, a letter, and a symbol.
-        </p>
+        <ul className="password-rules wide" aria-label="Password requirements">
+          {passwordChecks.map((check) => (
+            <li className={check.met ? "met" : ""} key={check.label}>
+              <CheckCircle2 size={13} />
+              {check.label}
+            </li>
+          ))}
+        </ul>
         {(formError ?? error) && <p className="form-error wide">{formError ?? error}</p>}
         {message && <p className="form-success wide">{message}</p>}
         <button className="primary-button wide" type="submit" disabled={loading}>
@@ -880,7 +888,7 @@ function OrganizationCreateForm({
       </div>
       <label>
         Organization name
-        <input name="name" placeholder="GoXAI Labs" required />
+        <input name="name" placeholder="GoXAi Lab" required />
       </label>
       <label>
         Organization email
@@ -3506,31 +3514,44 @@ function splitFullName(fullName: string) {
 }
 
 function getPasswordPolicyError(password: string) {
-  if (password.length < 10) {
-    return "Password must be at least 10 characters.";
-  }
+  const unmet = getPasswordChecks(password).find((check) => !check.met);
 
-  if (!/[A-Z]/.test(password)) {
-    return "Password must include at least one uppercase letter.";
-  }
+  return unmet ? `Password must include ${unmet.errorLabel}.` : null;
+}
 
-  if (!/[a-z]/.test(password)) {
-    return "Password must include at least one lowercase letter.";
-  }
-
-  if (!/[0-9]/.test(password)) {
-    return "Password must include at least one number.";
-  }
-
-  if (!/[A-Za-z]/.test(password)) {
-    return "Password must include at least one letter.";
-  }
-
-  if (!/[^A-Za-z0-9]/.test(password)) {
-    return "Password must include at least one symbol.";
-  }
-
-  return null;
+function getPasswordChecks(password: string) {
+  return [
+    {
+      label: "10 characters minimum",
+      errorLabel: "at least 10 characters",
+      met: password.length >= 10
+    },
+    {
+      label: "Uppercase letter",
+      errorLabel: "at least one uppercase letter",
+      met: /[A-Z]/.test(password)
+    },
+    {
+      label: "Lowercase letter",
+      errorLabel: "at least one lowercase letter",
+      met: /[a-z]/.test(password)
+    },
+    {
+      label: "Number",
+      errorLabel: "at least one number",
+      met: /[0-9]/.test(password)
+    },
+    {
+      label: "Letter",
+      errorLabel: "at least one letter",
+      met: /[A-Za-z]/.test(password)
+    },
+    {
+      label: "Symbol",
+      errorLabel: "at least one symbol",
+      met: /[^A-Za-z0-9]/.test(password)
+    }
+  ];
 }
 
 function getInitials(name: string, email: string) {
@@ -3590,7 +3611,7 @@ function LoadingScreen() {
   return (
     <main className="loading-screen">
       <div className="brand-mark">GX</div>
-      <p>Loading GoXAI Labs</p>
+      <p>Loading GoXAi Lab</p>
     </main>
   );
 }
