@@ -765,26 +765,60 @@ export async function submitTask(session: Session, taskId: string) {
   return updateTask(session, taskId, "submit");
 }
 
-export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["upload"]) {
-  let response: Response;
+export async function uploadFileToSignedUrl(
+  file: File,
+  upload: AssetUploadUrl["upload"],
+  onProgress?: (progress: { loaded: number; percent: number; total: number }) => void
+) {
+  await new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
 
-  try {
-    response = await fetch(upload.uploadUrl, {
-      method: upload.method,
-      headers: upload.headers,
-      body: file
-    });
-  } catch (error) {
-    throw new Error(
-      "R2 upload could not reach Cloudflare. Check the bucket CORS policy for http://localhost:5173, confirm R2_ENDPOINT uses the r2.cloudflarestorage.com endpoint, then run pnpm check:r2-cors."
-    );
-  }
+    request.open(upload.method, upload.uploadUrl);
 
-  if (!response.ok) {
-    throw new Error(
-      `R2 upload failed with status ${response.status}. Check the bucket CORS settings and R2 credentials, then run pnpm check:r2-cors.`
-    );
-  }
+    for (const [header, value] of Object.entries(upload.headers)) {
+      request.setRequestHeader(header, value);
+    }
+
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+
+      onProgress?.({
+        loaded: event.loaded,
+        percent: Math.round((event.loaded / event.total) * 100),
+        total: event.total
+      });
+    };
+
+    request.onerror = () => {
+      reject(
+        new Error(
+          "R2 upload could not reach Cloudflare. Check the bucket CORS policy for http://localhost:5173, confirm R2_ENDPOINT uses the r2.cloudflarestorage.com endpoint, then run pnpm check:r2-cors."
+        )
+      );
+    };
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress?.({
+          loaded: file.size,
+          percent: 100,
+          total: file.size
+        });
+        resolve();
+        return;
+      }
+
+      reject(
+        new Error(
+          `R2 upload failed with status ${request.status}. Check the bucket CORS settings and R2 credentials, then run pnpm check:r2-cors.`
+        )
+      );
+    };
+
+    request.send(file);
+  });
 }
 
 export async function logClientEvent(session: Session, input: ClientLogInput) {

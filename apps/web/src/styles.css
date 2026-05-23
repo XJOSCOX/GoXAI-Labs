@@ -1098,6 +1098,11 @@ textarea:focus {
   width: 100%;
 }
 
+.dataset-detail-frame {
+  gap: 18px;
+  width: 100%;
+}
+
 .project-directory-frame > .section-actions:empty {
   display: none;
 }
@@ -1143,6 +1148,14 @@ textarea:focus {
   align-items: start;
   gap: 16px;
   width: min(1440px, 100%);
+}
+
+.dataset-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+  align-items: start;
+  gap: 16px;
+  width: 100%;
 }
 
 .compact-project-form {
@@ -1263,6 +1276,10 @@ textarea:focus {
   justify-self: start;
   width: auto;
   min-width: 220px;
+}
+
+.dataset-form .primary-button.wide {
+  margin-top: 8px;
 }
 
 .side-column .primary-button.wide,
@@ -1413,6 +1430,15 @@ textarea:focus {
   border-radius: inherit;
   background: #7dd3fc;
   transition: width 180ms ease;
+}
+
+.current-file-track {
+  height: 5px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-strong));
+}
+
+.current-file-track span {
+  background: color-mix(in srgb, var(--accent) 70%, white);
 }
 
 .back-link,
@@ -1909,7 +1935,8 @@ textarea:focus {
 
   .detail-layout,
   .organization-layout,
-  .project-workspace-layout {
+  .project-workspace-layout,
+  .dataset-detail-layout {
     grid-template-columns: 1fr;
   }
 

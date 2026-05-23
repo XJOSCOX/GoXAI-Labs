@@ -5,7 +5,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
-import { canManageDatasets } from "./permissions.js";
+import { canManageProjectScope } from "./permissions.js";
 
 const router = Router();
 
@@ -170,7 +170,8 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     select: {
       id: true,
       name: true,
-      organizationId: true
+      organizationId: true,
+      createdById: true
     }
   });
 
@@ -179,17 +180,17 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: project.organizationId,
+      projectId: project.id,
       status: "ACTIVE"
     }
   });
 
-  if (!membership || !canManageDatasets(membership)) {
+  if (project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
     response.status(403).json({
-      error: "You need owner, admin, or manager access to create datasets in this project."
+      error: "You need project owner or admin access to create datasets in this project."
     });
     return;
   }
@@ -276,7 +277,12 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
     select: {
       id: true,
       organizationId: true,
-      projectId: true
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
     }
   });
 
@@ -285,16 +291,16 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: dataset.organizationId,
+      projectId: dataset.projectId,
       status: "ACTIVE"
     }
   });
 
-  if (!membership || !canManageDatasets(membership)) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to edit this dataset." });
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to edit this dataset." });
     return;
   }
 
@@ -349,7 +355,13 @@ router.post("/:datasetId/archive", async (request: AuthenticatedRequest, respons
     },
     select: {
       id: true,
-      organizationId: true
+      organizationId: true,
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
     }
   });
 
@@ -358,16 +370,16 @@ router.post("/:datasetId/archive", async (request: AuthenticatedRequest, respons
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: dataset.organizationId,
+      projectId: dataset.projectId,
       status: "ACTIVE"
     }
   });
 
-  if (!membership || !canManageDatasets(membership)) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to archive this dataset." });
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to archive this dataset." });
     return;
   }
 

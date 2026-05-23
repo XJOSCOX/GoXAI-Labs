@@ -8,7 +8,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
-import { canManageProjects } from "./permissions.js";
+import { canCreateOrganizationProjects, canManageProjectScope } from "./permissions.js";
 
 const router = Router();
 
@@ -233,9 +233,9 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     }
   });
 
-  if (!membership || !canManageProjects(membership)) {
+  if (!membership || !canCreateOrganizationProjects(membership)) {
     response.status(403).json({
-      error: "You need owner, admin, or manager access to create projects in this organization."
+      error: "Only an organization owner can create projects in this organization."
     });
     return;
   }
@@ -279,6 +279,16 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
       include: projectIncludes
     });
 
+    await tx.projectMembership.create({
+      data: {
+        projectId: createdProject.id,
+        userId: user.id,
+        role: MembershipRole.OWNER,
+        status: "ACTIVE",
+        joinedAt: new Date()
+      }
+    });
+
     await tx.auditLog.create({
       data: {
         organizationId: createdProject.organizationId,
@@ -296,7 +306,12 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
       }
     });
 
-    return createdProject;
+    return tx.project.findUniqueOrThrow({
+      where: {
+        id: createdProject.id
+      },
+      include: projectIncludes
+    });
   });
 
   response.status(201).json({
@@ -334,6 +349,7 @@ router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
     select: {
       id: true,
       organizationId: true,
+      createdById: true,
       joinCode: true
     }
   });
@@ -343,16 +359,16 @@ router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: project.organizationId,
+      projectId: project.id,
       status: "ACTIVE"
     }
   });
 
-  if (!membership || !canManageProjects(membership)) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to edit this project." });
+  if (project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to edit this project." });
     return;
   }
 
@@ -425,16 +441,16 @@ router.post("/:projectId/members", async (request: AuthenticatedRequest, respons
     return;
   }
 
-  const manager = await prisma.membership.findFirst({
+  const manager = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: project.organizationId,
+      projectId: project.id,
       status: "ACTIVE"
     }
   });
 
-  if (!manager || !canManageProjects(manager)) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to invite project members." });
+  if (project.createdById !== user.id && (!manager || !canManageProjectScope(manager))) {
+    response.status(403).json({ error: "You need project owner or admin access to invite project members." });
     return;
   }
 
@@ -536,7 +552,8 @@ router.post("/:projectId/archive", async (request: AuthenticatedRequest, respons
     },
     select: {
       id: true,
-      organizationId: true
+      organizationId: true,
+      createdById: true
     }
   });
 
@@ -545,16 +562,16 @@ router.post("/:projectId/archive", async (request: AuthenticatedRequest, respons
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: project.organizationId,
+      projectId: project.id,
       status: "ACTIVE"
     }
   });
 
-  if (!membership || !canManageProjects(membership)) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to archive this project." });
+  if (project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to archive this project." });
     return;
   }
 

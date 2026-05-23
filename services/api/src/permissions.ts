@@ -61,6 +61,14 @@ export function canManageProjects(membership: RoleMembership) {
   return hasRole(membership, [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MANAGER]);
 }
 
+export function canCreateOrganizationProjects(membership: RoleMembership) {
+  return hasRole(membership, [MembershipRole.OWNER]);
+}
+
+export function canManageProjectScope(membership: RoleMembership) {
+  return hasRole(membership, [MembershipRole.OWNER, MembershipRole.ADMIN]);
+}
+
 export function canManageDatasets(membership: RoleMembership) {
   return hasRole(membership, [MembershipRole.OWNER, MembershipRole.ADMIN, MembershipRole.MANAGER]);
 }

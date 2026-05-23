@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Save, Search, X } from "lucide-react";
+import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Save, Search, X } from "lucide-react";
 import {
   archiveDataset,
   createAsset,
@@ -207,74 +207,73 @@ export function DatasetDetailPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-actions">
-        <Link className="back-link" to="/datasets">
-          Datasets
-        </Link>
-      </div>
-      {(datasetError ?? assetsError ?? tasksError) && (
-        <p className="form-error">{datasetError ?? assetsError ?? tasksError}</p>
-      )}
-      {datasetLoading ? (
-        <section className="panel">
-          <p className="muted-copy">Loading dataset details.</p>
-        </section>
-      ) : dataset ? (
-        <div className="detail-layout">
-          <section className="content-column">
-            <section className="panel">
-              <div>
-                <p className="eyebrow">Dataset</p>
-                <h2>{dataset.name}</h2>
-              </div>
-              <dl className="detail-list">
-                <div>
-                  <dt>Project</dt>
-                  <dd>{dataset.project.name}</dd>
-                </div>
-                <div>
-                  <dt>Version</dt>
-                  <dd>v{dataset.version}</dd>
-                </div>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{formatEnum(dataset.status)}</dd>
-                </div>
-              </dl>
-            </section>
-            <DatasetTasksPanel
-              dataset={dataset}
-              loading={tasksLoading}
-              onGenerated={reloadTasks}
-              session={session}
-              setPageError={setTasksError}
-              tasks={tasks}
-            />
-            <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
-          </section>
-          <aside className="side-column">
-            <DatasetSettingsPanel
-              dataset={dataset}
-              onChanged={reloadDataset}
-              session={session}
-              setPageError={setTasksError}
-            />
-            <AssetForm
-              dataset={dataset}
-              onCreated={async () => {
-                await reloadAssets();
-                await reloadTasks();
-              }}
-              session={session}
-              setPageError={setAssetsError}
-            />
-          </aside>
+      <section className="panel dataset-detail-frame">
+        <div className="organization-detail-nav">
+          <Link className="secondary-button compact-button" to="/datasets">
+            <ArrowLeft size={16} />
+            Back to datasets
+          </Link>
         </div>
-      ) : !datasetError ? (
-        <section className="panel">
+        {(datasetError ?? assetsError ?? tasksError) && (
+          <p className="form-error">{datasetError ?? assetsError ?? tasksError}</p>
+        )}
+        {datasetLoading ? (
+          <p className="muted-copy">Loading dataset details.</p>
+        ) : dataset ? (
+          <div className="dataset-detail-layout">
+            <section className="content-column">
+              <section className="panel">
+                <div>
+                  <p className="eyebrow">Dataset</p>
+                  <h2>{dataset.name}</h2>
+                </div>
+                <dl className="detail-list">
+                  <div>
+                    <dt>Project</dt>
+                    <dd>{dataset.project.name}</dd>
+                  </div>
+                  <div>
+                    <dt>Version</dt>
+                    <dd>v{dataset.version}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{formatEnum(dataset.status)}</dd>
+                  </div>
+                </dl>
+              </section>
+              <DatasetTasksPanel
+                dataset={dataset}
+                loading={tasksLoading}
+                onGenerated={reloadTasks}
+                session={session}
+                setPageError={setTasksError}
+                tasks={tasks}
+              />
+              <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
+            </section>
+            <aside className="side-column">
+              <DatasetSettingsPanel
+                dataset={dataset}
+                onChanged={reloadDataset}
+                session={session}
+                setPageError={setTasksError}
+              />
+              <AssetForm
+                dataset={dataset}
+                onCreated={async () => {
+                  await reloadAssets();
+                  await reloadTasks();
+                }}
+                session={session}
+                setPageError={setAssetsError}
+              />
+            </aside>
+          </div>
+        ) : !datasetError ? (
           <p className="muted-copy">Dataset was not found.</p>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
     </section>
   );
 }
@@ -283,7 +282,8 @@ async function uploadAndRegisterAsset(
   session: NonNullable<ReturnType<typeof useAuth>["session"]>,
   datasetId: string,
   file: File,
-  objectKey?: string
+  objectKey?: string,
+  onProgress?: (progress: { loaded: number; percent: number; total: number }) => void
 ) {
   const signedUpload = await createAssetUploadUrl(session, {
     datasetId,
@@ -294,7 +294,7 @@ async function uploadAndRegisterAsset(
   });
 
   try {
-    await uploadFileToSignedUrl(file, signedUpload.upload);
+    await uploadFileToSignedUrl(file, signedUpload.upload, onProgress);
   } catch (error) {
     await logClientEvent(session, {
       entityId: datasetId,
@@ -381,6 +381,9 @@ function AssetForm({
           completed: 0,
           currentFile: selectedFiles[0]?.name ?? "",
           failed: 0,
+          currentFilePercent: 0,
+          currentLoadedBytes: 0,
+          currentTotalBytes: selectedFiles[0]?.size ?? 0,
           status: "uploading",
           total: selectedFiles.length
         });
@@ -390,6 +393,9 @@ function AssetForm({
             completed: uploaded.length,
             currentFile: file.webkitRelativePath || file.name,
             failed: failed.length,
+            currentFilePercent: 0,
+            currentLoadedBytes: 0,
+            currentTotalBytes: file.size,
             status: "uploading",
             total: selectedFiles.length
           });
@@ -404,7 +410,19 @@ function AssetForm({
                   folder: uploadFolder,
                   prefix: renamePrefix,
                   rename: renameFiles
-                })
+                }),
+                (progress) => {
+                  setUploadProgress({
+                    completed: uploaded.length,
+                    currentFile: file.webkitRelativePath || file.name,
+                    currentFilePercent: progress.percent,
+                    currentLoadedBytes: progress.loaded,
+                    currentTotalBytes: progress.total,
+                    failed: failed.length,
+                    status: "uploading",
+                    total: selectedFiles.length
+                  });
+                }
               )
             );
           } catch (reason) {
@@ -415,6 +433,9 @@ function AssetForm({
             completed: uploaded.length,
             currentFile: selectedFiles[index + 1]?.webkitRelativePath || selectedFiles[index + 1]?.name || file.name,
             failed: failed.length,
+            currentFilePercent: 100,
+            currentLoadedBytes: file.size,
+            currentTotalBytes: file.size,
             status: "uploading",
             total: selectedFiles.length
           });
@@ -436,6 +457,9 @@ function AssetForm({
           completed: uploaded.length,
           currentFile: "",
           failed: failed.length,
+          currentFilePercent: failed.length > 0 ? undefined : 100,
+          currentLoadedBytes: undefined,
+          currentTotalBytes: undefined,
           status: failed.length > 0 ? "error" : "complete",
           total: selectedFiles.length
         });
@@ -600,6 +624,9 @@ function AssetForm({
           </div>
         </div>
       )}
+      {uploadProgress && (
+        <UploadProgressPanel progress={uploadProgress} />
+      )}
       <label className="wide">
         R2 folder
         <input
@@ -627,9 +654,6 @@ function AssetForm({
             value={renamePrefix}
           />
         </label>
-      )}
-      {uploadProgress && (
-        <UploadProgressPanel progress={uploadProgress} />
       )}
       <details className="advanced-fields wide">
         <summary>Manual registration fields</summary>
@@ -684,6 +708,7 @@ function AssetForm({
 function UploadProgressPanel({ progress }: { progress: UploadProgress }) {
   const finished = progress.completed + progress.failed;
   const percent = progress.total > 0 ? Math.round((finished / progress.total) * 100) : 0;
+  const currentPercent = progress.status === "uploading" ? progress.currentFilePercent ?? 0 : progress.currentFilePercent ?? percent;
   const statusText =
     progress.status === "complete"
       ? "Upload complete"
@@ -700,11 +725,30 @@ function UploadProgressPanel({ progress }: { progress: UploadProgress }) {
       <div className="progress-track" aria-label="Upload progress" aria-valuemax={100} aria-valuemin={0} aria-valuenow={percent} role="progressbar">
         <span style={{ width: `${percent}%` }} />
       </div>
+      {progress.status === "uploading" && (
+        <div
+          className="progress-track current-file-track"
+          aria-label="Current file upload progress"
+          aria-valuemax={100}
+          aria-valuemin={0}
+          aria-valuenow={currentPercent}
+          role="progressbar"
+        >
+          <span style={{ width: `${currentPercent}%` }} />
+        </div>
+      )}
       <div className="upload-progress-meta">
         <span>{progress.completed} uploaded</span>
         <span>{progress.failed} failed</span>
       </div>
-      {progress.currentFile && <p className="muted-copy">Current: {progress.currentFile}</p>}
+      {progress.currentFile && (
+        <p className="muted-copy">
+          Current: {progress.currentFile}
+          {progress.currentLoadedBytes !== undefined && progress.currentTotalBytes
+            ? ` (${formatBytes(String(progress.currentLoadedBytes))} / ${formatBytes(String(progress.currentTotalBytes))})`
+            : ""}
+        </p>
+      )}
     </div>
   );
 }

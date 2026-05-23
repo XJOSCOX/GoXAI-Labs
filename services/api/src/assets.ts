@@ -9,7 +9,7 @@ import {
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import { getRequestId, saveAuditLog } from "./logging.js";
-import { canManageAssets } from "./permissions.js";
+import { canManageProjectScope } from "./permissions.js";
 
 const router = Router();
 
@@ -169,7 +169,12 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
     select: {
       id: true,
       organizationId: true,
-      projectId: true
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
     }
   });
 
@@ -178,10 +183,10 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const uploadMembership = await prisma.membership.findFirst({
+  const uploadMembership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: dataset.organizationId,
+      projectId: dataset.projectId,
       status: "ACTIVE"
     },
     select: {
@@ -190,9 +195,9 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
     }
   });
 
-  if (!uploadMembership || !canManageAssets(uploadMembership)) {
+  if (dataset.project.createdById !== user.id && (!uploadMembership || !canManageProjectScope(uploadMembership))) {
     response.status(403).json({
-      error: "You need owner, admin, or manager access to upload assets to this dataset."
+      error: "You need project owner or admin access to upload assets to this dataset."
     });
     return;
   }
@@ -362,7 +367,8 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
       project: {
         select: {
           id: true,
-          name: true
+          name: true,
+          createdById: true
         }
       }
     }
@@ -373,10 +379,10 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const membership = await prisma.projectMembership.findFirst({
     where: {
       userId: user.id,
-      organizationId: dataset.organizationId,
+      projectId: dataset.projectId,
       status: "ACTIVE"
     },
     select: {
@@ -385,9 +391,9 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     }
   });
 
-  if (!membership || !canManageAssets(membership)) {
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
     response.status(403).json({
-      error: "You need owner, admin, or manager access to register assets in this dataset."
+      error: "You need project owner or admin access to register assets in this dataset."
     });
     return;
   }
