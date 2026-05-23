@@ -1,6 +1,8 @@
 import {
   getPrismaClient,
   MembershipRole,
+  ProjectAccessMode,
+  ProjectStatus,
   TaskStatus,
   type Task
 } from "@goxai/database";
@@ -24,11 +26,25 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   const datasetId = normalizeId(request.query.datasetId);
   const projectId = normalizeId(request.query.projectId);
   const prisma = getPrismaClient();
-  const memberships = await getActiveMemberships(user.id);
+  const [memberships, projectMemberships] = await Promise.all([
+    getActiveMemberships(user.id),
+    prisma.projectMembership.findMany({
+      where: {
+        userId: user.id,
+        status: "ACTIVE"
+      },
+      select: {
+        projectId: true,
+        role: true
+      }
+    })
+  ]);
   const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))];
   const membershipByOrganizationId = new Map(memberships.map((membership) => [membership.organizationId, membership]));
+  const projectIds = [...new Set(projectMemberships.map((membership) => membership.projectId))];
+  const membershipByProjectId = new Map(projectMemberships.map((membership) => [membership.projectId, membership]));
 
-  if (organizationIds.length === 0) {
+  if (organizationIds.length === 0 && projectIds.length === 0 && !datasetId && !projectId) {
     response.status(200).json({ tasks: [] });
     return;
   }
@@ -37,8 +53,23 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     const dataset = await prisma.dataset.findFirst({
       where: {
         id: datasetId,
-        organizationId: {
-          in: organizationIds
+        project: {
+          OR: [
+            {
+              organizationId: {
+                in: organizationIds
+              }
+            },
+            {
+              id: {
+                in: projectIds
+              }
+            },
+            {
+              accessMode: ProjectAccessMode.PUBLIC,
+              status: ProjectStatus.ACTIVE
+            }
+          ]
         }
       },
       select: {
@@ -56,9 +87,22 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     const project = await prisma.project.findFirst({
       where: {
         id: projectId,
-        organizationId: {
-          in: organizationIds
-        }
+        OR: [
+          {
+            organizationId: {
+              in: organizationIds
+            }
+          },
+          {
+            id: {
+              in: projectIds
+            }
+          },
+          {
+            accessMode: ProjectAccessMode.PUBLIC,
+            status: ProjectStatus.ACTIVE
+          }
+        ]
       },
       select: {
         id: true
@@ -74,9 +118,22 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   const tasks = await prisma.task.findMany({
     where: {
       project: {
-        organizationId: {
-          in: organizationIds
-        }
+        OR: [
+          {
+            organizationId: {
+              in: organizationIds
+            }
+          },
+          {
+            id: {
+              in: projectIds
+            }
+          },
+          {
+            accessMode: ProjectAccessMode.PUBLIC,
+            status: ProjectStatus.ACTIVE
+          }
+        ]
       },
       ...(datasetId ? { datasetId } : {}),
       ...(projectId ? { projectId } : {})
@@ -92,8 +149,18 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     ]
   });
 
+  const visibleTasks = tasks.filter((task) => {
+    const membership = membershipByOrganizationId.get(task.project.organizationId) ?? membershipByProjectId.get(task.projectId);
+    return Boolean(
+      (membership && canGenerateTasks(membership)) ||
+        (task.project.status === ProjectStatus.ACTIVE && task.status !== TaskStatus.ARCHIVED)
+    );
+  });
+
   response.status(200).json({
-    tasks: tasks.map((task) => serializeTask(task, membershipByOrganizationId.get(task.project.organizationId)))
+    tasks: visibleTasks.map((task) =>
+      serializeTask(task, membershipByOrganizationId.get(task.project.organizationId) ?? membershipByProjectId.get(task.projectId))
+    )
   });
 });
 
@@ -443,7 +510,8 @@ const taskIncludes = {
       id: true,
       name: true,
       slug: true,
-      organizationId: true
+      organizationId: true,
+      status: true
     }
   },
   dataset: {
@@ -486,6 +554,7 @@ type TaskWithRelations = Task & {
     name: string;
     slug: string;
     organizationId: string;
+    status: ProjectStatus;
   };
   dataset: {
     id: string;

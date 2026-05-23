@@ -2,6 +2,8 @@ import {
   DatasetStatus,
   getPrismaClient,
   MembershipRole,
+  ProjectAccessMode,
+  ProjectStatus,
   StorageProvider,
   type Dataset
 } from "@goxai/database";
@@ -26,18 +28,30 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
 
   const projectId = normalizeId(request.query.projectId);
   const prisma = getPrismaClient();
-  const memberships = await prisma.membership.findMany({
-    where: {
-      userId: user.id,
-      status: "ACTIVE"
-    },
-    select: {
-      organizationId: true
-    }
-  });
+  const [memberships, projectMemberships] = await Promise.all([
+    prisma.membership.findMany({
+      where: {
+        userId: user.id,
+        status: "ACTIVE"
+      },
+      select: {
+        organizationId: true
+      }
+    }),
+    prisma.projectMembership.findMany({
+      where: {
+        userId: user.id,
+        status: "ACTIVE"
+      },
+      select: {
+        projectId: true
+      }
+    })
+  ]);
   const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))];
+  const projectIds = [...new Set(projectMemberships.map((membership) => membership.projectId))];
 
-  if (organizationIds.length === 0) {
+  if (organizationIds.length === 0 && projectIds.length === 0 && !projectId) {
     response.status(200).json({ datasets: [] });
     return;
   }
@@ -46,9 +60,22 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     const project = await prisma.project.findFirst({
       where: {
         id: projectId,
-        organizationId: {
-          in: organizationIds
-        }
+        OR: [
+          {
+            organizationId: {
+              in: organizationIds
+            }
+          },
+          {
+            id: {
+              in: projectIds
+            }
+          },
+          {
+            accessMode: ProjectAccessMode.PUBLIC,
+            status: ProjectStatus.ACTIVE
+          }
+        ]
       },
       select: {
         id: true
@@ -63,43 +90,38 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
 
   const datasets = await prisma.dataset.findMany({
     where: {
-      organizationId: {
-        in: organizationIds
+      project: {
+        OR: [
+          {
+            organizationId: {
+              in: organizationIds
+            }
+          },
+          {
+            id: {
+              in: projectIds
+            }
+          },
+          {
+            accessMode: ProjectAccessMode.PUBLIC,
+            status: ProjectStatus.ACTIVE
+          }
+        ]
       },
       ...(projectId ? { projectId } : {})
     },
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true
-        }
-      },
-      project: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          dataType: true,
-          createdById: true,
-          projectMemberships: {
-            select: {
-              userId: true,
-              role: true,
-              status: true
-            }
-          }
-        }
-      }
-    },
+    include: datasetIncludes,
     orderBy: {
       updatedAt: "desc"
     }
   });
 
+  const serializedDatasets = datasets
+    .map((dataset) => serializeDataset(dataset, user.id))
+    .filter((dataset) => dataset.canManage || Boolean(projectId && dataset.project.status === ProjectStatus.ACTIVE));
+
   response.status(200).json({
-    datasets: datasets.map((dataset) => serializeDataset(dataset, user.id))
+    datasets: serializedDatasets
   });
 });
 
@@ -122,40 +144,34 @@ router.get("/:datasetId", async (request: AuthenticatedRequest, response) => {
   const dataset = await prisma.dataset.findFirst({
     where: {
       id: datasetId,
-      organization: {
-        memberships: {
-          some: {
-            userId: user.id,
-            status: "ACTIVE"
+      project: {
+        OR: [
+          {
+            organization: {
+              memberships: {
+                some: {
+                  userId: user.id,
+                  status: "ACTIVE"
+                }
+              }
+            }
+          },
+          {
+            projectMemberships: {
+              some: {
+                userId: user.id,
+                status: "ACTIVE"
+              }
+            }
+          },
+          {
+            accessMode: ProjectAccessMode.PUBLIC,
+            status: ProjectStatus.ACTIVE
           }
-        }
+        ]
       }
     },
-    include: {
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          slug: true
-        }
-      },
-      project: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          dataType: true,
-          createdById: true,
-          projectMemberships: {
-            select: {
-              userId: true,
-              role: true,
-              status: true
-            }
-          }
-        }
-      }
-    }
+    include: datasetIncludes
   });
 
   if (!dataset) {
@@ -163,8 +179,17 @@ router.get("/:datasetId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
+  const serializedDataset = serializeDataset(dataset, user.id);
+
+  if (!serializedDataset.canManage) {
+    response.status(403).json({
+      error: "Dataset details are only available to project owners and admins. Open the project tasks instead."
+    });
+    return;
+  }
+
   response.status(200).json({
-    dataset: serializeDataset(dataset, user.id)
+    dataset: serializedDataset
   });
 });
 
@@ -726,6 +751,7 @@ const datasetIncludes = {
       name: true,
       slug: true,
       dataType: true,
+      status: true,
       createdById: true,
       projectMemberships: {
         select: {
@@ -749,6 +775,7 @@ type DatasetWithRelations = Dataset & {
     name: string;
     slug: string;
     dataType: string;
+    status: ProjectStatus;
     createdById: string;
     projectMemberships: {
       userId: string;

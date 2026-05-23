@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth";
 import { assignTaskToSelf, startTask, submitTask, type TaskSummary } from "../../api";
 import { useTasks } from "../../hooks/useResources";
@@ -9,7 +10,10 @@ const taskPageSize = 8;
 
 export function TasksPage() {
   const { session } = useAuth();
-  const { error, loading, reload, setError, tasks } = useTasks(session);
+  const [searchParams] = useSearchParams();
+  const datasetId = searchParams.get("datasetId") ?? undefined;
+  const projectId = searchParams.get("projectId") ?? undefined;
+  const { error, loading, reload, setError, tasks } = useTasks(session, { datasetId, projectId });
 
   return (
     <section className="page-stack">

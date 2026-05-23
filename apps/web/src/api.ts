@@ -267,6 +267,7 @@ export interface DatasetSummary {
     name: string;
     slug: string;
     dataType: string;
+    status: string;
     createdById?: string;
   };
   canManage: boolean;
@@ -379,6 +380,7 @@ export interface TaskSummary {
     name: string;
     slug: string;
     organizationId: string;
+    status: string;
   };
   dataset: {
     id: string;

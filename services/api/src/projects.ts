@@ -73,8 +73,12 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     }
   });
 
+  const serializedProjects = projects
+    .map((project) => serializeProject(project, user.id))
+    .filter((project) => project.canManage || project.status === ProjectStatus.ACTIVE);
+
   response.status(200).json({
-    projects: projects.map((project) => serializeProject(project, user.id))
+    projects: serializedProjects
   });
 });
 
@@ -207,8 +211,15 @@ router.get("/:projectId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
+  const serializedProject = serializeProject(project, user.id);
+
+  if (!serializedProject.canManage && serializedProject.status !== ProjectStatus.ACTIVE) {
+    response.status(404).json({ error: "Project was not found or you do not have access." });
+    return;
+  }
+
   response.status(200).json({
-    project: serializeProject(project, user.id)
+    project: serializedProject
   });
 });
 

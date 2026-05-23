@@ -50,10 +50,12 @@ export function DatasetsTable({
 }
 
 function DatasetRow({ dataset, projectScoped }: { dataset: DatasetSummary; projectScoped: boolean }) {
+  const datasetTarget = dataset.canManage ? `/datasets/${dataset.id}` : `/tasks?datasetId=${dataset.id}`;
+
   return (
     <article className="table-row project-row">
       <span>
-        <Link className="table-link" to={`/datasets/${dataset.id}`}>
+        <Link className="table-link" to={datasetTarget}>
           {dataset.name}
         </Link>
         <small>{dataset.organization.name}</small>

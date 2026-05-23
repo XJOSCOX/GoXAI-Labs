@@ -16,6 +16,9 @@ export function AppShell() {
   const email = dbUser?.email ?? "No email";
   const role = dbUser?.globalRole ?? "USER";
   const ownsOrganization = organizations.some((organization) => organization.role === "OWNER");
+  const canUseDatasetWorkspace =
+    dbUser?.globalRole === "SUPER_ADMIN" ||
+    organizations.some((organization) => ["OWNER", "ADMIN", "MANAGER"].includes(organization.role));
   const accountKind = organizations.length === 0 ? "Simple user" : ownsOrganization ? "Organization owner" : "Organization user";
   const onboardingOrganization = organizations.find(
     (organization) => organization.role === "OWNER" && organization.onboardingComplete === false
@@ -63,10 +66,12 @@ export function AppShell() {
             <FolderKanban size={18} />
             Projects
           </NavLink>
-          <NavLink to="/datasets">
-            <Database size={18} />
-            Datasets
-          </NavLink>
+          {canUseDatasetWorkspace && (
+            <NavLink to="/datasets">
+              <Database size={18} />
+              Datasets
+            </NavLink>
+          )}
           <NavLink to="/tasks">
             <ClipboardList size={18} />
             Tasks
