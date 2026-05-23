@@ -94,6 +94,14 @@ export function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route
+          path="/onboarding"
+          element={
+            <ProtectedRoute>
+              <OnboardingPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/"
           element={
             <ProtectedRoute>
@@ -104,7 +112,6 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="organization" element={<OrganizationSetupPage />} />
           <Route path="organization/:organizationId" element={<OrganizationSetupPage />} />
-          <Route path="onboarding" element={<OnboardingPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
@@ -523,59 +530,62 @@ function OnboardingPage() {
   }
 
   return (
-    <section className="page-stack onboarding-page">
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">Onboarding</p>
-          <h1>Finish {organization.name}</h1>
-        </div>
-      </div>
-      {pageError && <p className="form-error">{pageError}</p>}
-      <form className="panel setup-form onboarding-form" onSubmit={handleSubmit}>
-        <div className="wide">
-          <p className="eyebrow">Required setup</p>
-          <h2>Tell us how this organization should be configured.</h2>
-        </div>
-        <label>
-          Your role or title
-          <input name="jobTitle" placeholder="CEO, Director, Data lead..." required />
-        </label>
-        <label>
-          Organization type
-          <select name="type" defaultValue={organization.type || "COMPANY"}>
-            <option value="COMPANY">Company</option>
-            <option value="ENTERPRISE">Enterprise</option>
-            <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
-            <option value="PERSONAL">Personal</option>
-          </select>
-        </label>
-        <label className="wide">
-          Organization description
-          <textarea
-            name="description"
-            placeholder="What does the organization do, and what kind of AI/data work will it run?"
-            required
-          />
-        </label>
-        <fieldset className="plan-picker wide">
-          <legend>Plan</legend>
-          <div className="plan-option-row">
-            {planOptions.map((plan) => (
-              <label className="plan-option" key={plan.value}>
-                <input name="plan" type="radio" value={plan.value} defaultChecked={plan.value === organization.planTier} />
-                <strong>{plan.label}</strong>
-                <span>{plan.price}</span>
-                <small>{plan.detail}</small>
-              </label>
-            ))}
+    <main className="onboarding-screen">
+      <section className="onboarding-card">
+        <div className="onboarding-card-head">
+          <div>
+            <p className="eyebrow">Onboarding</p>
+            <h1>Finish {organization.name}</h1>
           </div>
-        </fieldset>
-        <button className="primary-button wide" type="submit" disabled={saving}>
-          <CheckCircle2 size={18} />
-          {saving ? "Saving setup" : "Complete onboarding"}
-        </button>
-      </form>
-    </section>
+          <ThemeToggle />
+        </div>
+        {pageError && <p className="form-error">{pageError}</p>}
+        <form className="setup-form onboarding-form" onSubmit={handleSubmit}>
+          <div className="wide">
+            <p className="eyebrow">Required setup</p>
+            <h2>Tell us how this organization should be configured.</h2>
+          </div>
+          <label>
+            Your role or title
+            <input name="jobTitle" placeholder="CEO, Director, Data lead..." required />
+          </label>
+          <label>
+            Organization type
+            <select name="type" defaultValue={organization.type || "COMPANY"}>
+              <option value="COMPANY">Company</option>
+              <option value="ENTERPRISE">Enterprise</option>
+              <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+              <option value="PERSONAL">Personal</option>
+            </select>
+          </label>
+          <label className="wide">
+            Organization description
+            <textarea
+              name="description"
+              placeholder="What does the organization do, and what kind of AI/data work will it run?"
+              required
+            />
+          </label>
+          <fieldset className="plan-picker wide">
+            <legend>Plan</legend>
+            <div className="plan-option-row">
+              {planOptions.map((plan) => (
+                <label className="plan-option" key={plan.value}>
+                  <input name="plan" type="radio" value={plan.value} defaultChecked={plan.value === organization.planTier} />
+                  <strong>{plan.label}</strong>
+                  <span>{plan.price}</span>
+                  <small>{plan.detail}</small>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <button className="primary-button wide" type="submit" disabled={saving}>
+            <CheckCircle2 size={18} />
+            {saving ? "Saving setup" : "Complete onboarding"}
+          </button>
+        </form>
+      </section>
+    </main>
   );
 }
 

@@ -562,6 +562,38 @@ textarea:focus {
   background: #bae6fd;
 }
 
+.onboarding-screen {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 68% 22%, color-mix(in srgb, var(--accent-strong) 18%, transparent), transparent 32%),
+    var(--bg);
+}
+
+.onboarding-card {
+  display: grid;
+  gap: 22px;
+  width: min(920px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+.onboarding-card-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.onboarding-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .form-error,
 .form-success {
   margin: 0;
