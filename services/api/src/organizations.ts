@@ -13,6 +13,7 @@ import {
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import {
+  canCreateOrganizationProjects,
   canDeleteOrganization,
   canGrantOwnerRole,
   canManageMembers,
@@ -144,6 +145,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       joinCodeEnabled: membership.organization.joinCodeEnabled,
       planTier: membership.organization.planTier,
       role: membership.role,
+      capabilities: getOrganizationCapabilities(membership),
       counts: {
         owners: getCount(ownerCounts, membership.organizationId),
         members: getCount(membershipCounts, membership.organizationId),
@@ -407,7 +409,7 @@ router.get("/:organizationId", async (request: AuthenticatedRequest, response) =
   }
 
   response.status(200).json({
-    organization: serializeOrganizationDetail(organization, membership.role)
+    organization: serializeOrganizationDetail(organization, membership)
   });
 });
 
@@ -505,7 +507,7 @@ router.patch("/:organizationId", async (request: AuthenticatedRequest, response)
   });
 
   response.status(200).json({
-    organization: serializeOrganizationDetail(organization, membership.role)
+    organization: serializeOrganizationDetail(organization, membership)
   });
 });
 
@@ -1239,10 +1241,13 @@ type MembershipWithUser = Membership & {
   } | null;
 };
 
-function serializeOrganizationDetail(organization: OrganizationDetail, currentUserRole: MembershipRole) {
+function serializeOrganizationDetail(organization: OrganizationDetail, currentUserMembership: Membership) {
+  const capabilities = getOrganizationCapabilities(currentUserMembership);
+
   return {
     ...serializeOrganization(organization),
-    currentUserRole,
+    currentUserRole: currentUserMembership.role,
+    capabilities,
     counts: {
       owners: organization.memberships.filter((membership) => membership.role === MembershipRole.OWNER).length,
       members: organization._count.memberships,
@@ -1250,7 +1255,18 @@ function serializeOrganizationDetail(organization: OrganizationDetail, currentUs
       datasets: organization._count.datasets
     },
     workspaces: organization.workspaces.map(serializeWorkspace),
-    memberships: organization.memberships.map(serializeMembership)
+    memberships: capabilities.canViewMembers ? organization.memberships.map(serializeMembership) : []
+  };
+}
+
+function getOrganizationCapabilities(membership: Pick<Membership, "role">) {
+  return {
+    canUpdate: canUpdateOrganization(membership),
+    canDelete: canDeleteOrganization(membership),
+    canManageMembers: canManageMembers(membership),
+    canGrantOwnerRole: canGrantOwnerRole(membership),
+    canCreateProjects: canCreateOrganizationProjects(membership),
+    canViewMembers: canManageMembers(membership)
   };
 }
 

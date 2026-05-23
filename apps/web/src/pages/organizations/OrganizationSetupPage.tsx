@@ -452,6 +452,9 @@ function OrganizationManagementPanel({
   const primaryWorkspace = organization.workspaces[0] ?? null;
   const { dbUser } = useAuth();
   const currentUserId = dbUser?.id ?? null;
+  const canManageSettings = organization.capabilities.canUpdate;
+  const canManageMembers = organization.capabilities.canManageMembers;
+  const canShowSideColumn = canManageSettings || canManageMembers;
 
   async function handleUpdate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -542,7 +545,7 @@ function OrganizationManagementPanel({
   }
 
   return (
-    <section className="detail-layout organization-detail-layout">
+    <section className={`detail-layout organization-detail-layout${canShowSideColumn ? "" : " single-pane"}`}>
       <section className="content-column">
         <section className="panel">
           <div className="section-head">
@@ -563,7 +566,7 @@ function OrganizationManagementPanel({
             </div>
             <div>
               <dt>Members</dt>
-              <dd>{organization.memberships.length}</dd>
+              <dd>{organization.counts.members}</dd>
             </div>
             <div>
               <dt>Owners</dt>
@@ -612,14 +615,23 @@ function OrganizationManagementPanel({
           </div>
         </section>
 
-        <MembersTable
-          members={organization.memberships}
-          currentUserId={currentUserId}
-          onChanged={onChanged}
-          organizationId={organization.id}
-          session={session}
-          setPageError={setPageError}
-        />
+        {organization.capabilities.canViewMembers ? (
+          <MembersTable
+            canGrantOwnerRole={organization.capabilities.canGrantOwnerRole}
+            currentUserId={currentUserId}
+            members={organization.memberships}
+            onChanged={onChanged}
+            organizationId={organization.id}
+            session={session}
+            setPageError={setPageError}
+          />
+        ) : (
+          <section className="panel empty-state compact-empty">
+            <UserCheck size={28} />
+            <strong>Member directory hidden</strong>
+            <span>Your current role can view organization details, but member management is limited to owners and admins.</span>
+          </section>
+        )}
 
         <section className="panel">
           <div>
@@ -630,97 +642,107 @@ function OrganizationManagementPanel({
         </section>
       </section>
 
-      <aside className="side-column">
-        {message && <p className="form-success">{message}</p>}
-        <section className="panel management-panel">
-          <div>
-            <p className="eyebrow">Settings</p>
-            <h2>Edit organization</h2>
-          </div>
-          <form className="management-grid" onSubmit={handleUpdate}>
-            <label>
-              Name
-              <input name="name" defaultValue={organization.name} required />
-            </label>
-            <label>
-              Organization email
-              <input name="email" defaultValue={organization.email ?? ""} placeholder="ops@example.com" type="email" />
-            </label>
-            <label>
-              Type
-              <select name="type" defaultValue={organization.type}>
-                <option value="PERSONAL">Personal</option>
-                <option value="COMPANY">Company</option>
-                <option value="ENTERPRISE">Enterprise</option>
-                <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
-              </select>
-            </label>
-            <label>
-              Plan
-              <select name="planTier" defaultValue={organization.planTier}>
-                <option value="FREE">Free</option>
-                <option value="STARTER">Starter</option>
-                <option value="PRO">Pro</option>
-                <option value="BUSINESS">Business</option>
-                <option value="ENTERPRISE">Enterprise</option>
-              </select>
-            </label>
-            <label>
-              Privacy
-              <select name="accessMode" defaultValue={organization.accessMode}>
-                <option value="INVITE_ONLY">Invite only</option>
-                <option value="PUBLIC">Open public</option>
-                <option value="REQUEST_TO_JOIN">Request to join</option>
-                <option value="PRIVATE">Private</option>
-              </select>
-            </label>
-            <label className="check-row">
-              <input name="joinCodeEnabled" type="checkbox" defaultChecked={organization.joinCodeEnabled} />
-              Enable join code
-            </label>
-            <label className="wide">
-              Description
-              <textarea name="description" defaultValue={organization.description ?? ""} />
-            </label>
-            <div className="row-actions wide">
-              <button className="primary-button" type="submit" disabled={saving}>
-                <Save size={18} />
-                {saving ? "Saving" : "Save organization"}
-              </button>
-              <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
-                Delete empty organization
-              </button>
-            </div>
-          </form>
-        </section>
+      {canShowSideColumn ? (
+        <aside className="side-column">
+          {message && <p className="form-success">{message}</p>}
+          {canManageSettings ? (
+            <section className="panel management-panel">
+              <div>
+                <p className="eyebrow">Settings</p>
+                <h2>Edit organization</h2>
+              </div>
+              <form className="management-grid" onSubmit={handleUpdate}>
+                <label>
+                  Name
+                  <input name="name" defaultValue={organization.name} required />
+                </label>
+                <label>
+                  Organization email
+                  <input name="email" defaultValue={organization.email ?? ""} placeholder="ops@example.com" type="email" />
+                </label>
+                <label>
+                  Type
+                  <select name="type" defaultValue={organization.type}>
+                    <option value="PERSONAL">Personal</option>
+                    <option value="COMPANY">Company</option>
+                    <option value="ENTERPRISE">Enterprise</option>
+                    <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+                  </select>
+                </label>
+                <label>
+                  Plan
+                  <select name="planTier" defaultValue={organization.planTier}>
+                    <option value="FREE">Free</option>
+                    <option value="STARTER">Starter</option>
+                    <option value="PRO">Pro</option>
+                    <option value="BUSINESS">Business</option>
+                    <option value="ENTERPRISE">Enterprise</option>
+                  </select>
+                </label>
+                <label>
+                  Privacy
+                  <select name="accessMode" defaultValue={organization.accessMode}>
+                    <option value="INVITE_ONLY">Invite only</option>
+                    <option value="PUBLIC">Open public</option>
+                    <option value="REQUEST_TO_JOIN">Request to join</option>
+                    <option value="PRIVATE">Private</option>
+                  </select>
+                </label>
+                <label className="check-row">
+                  <input name="joinCodeEnabled" type="checkbox" defaultChecked={organization.joinCodeEnabled} />
+                  Enable join code
+                </label>
+                <label className="wide">
+                  Description
+                  <textarea name="description" defaultValue={organization.description ?? ""} />
+                </label>
+                <div className="row-actions wide">
+                  <button className="primary-button" type="submit" disabled={saving}>
+                    <Save size={18} />
+                    {saving ? "Saving" : "Save organization"}
+                  </button>
+                  {organization.capabilities.canDelete && (
+                    <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
+                      Delete empty organization
+                    </button>
+                  )}
+                </div>
+              </form>
+            </section>
+          ) : null}
 
-        <section className="panel management-panel">
-          <div>
-            <p className="eyebrow">Members</p>
-            <h2>Add member</h2>
-          </div>
-          <form className="management-grid" onSubmit={handleAddMember}>
-            <label>
-              Member email
-              <input name="email" placeholder="teammate@example.com" type="email" required />
-            </label>
-            <label>
-              Role
-              <select name="role" defaultValue="ANNOTATOR">
-                {memberRoles.map((role) => (
-                  <option key={role} value={role}>
-                    {formatEnum(role)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button className="secondary-button" type="submit" disabled={memberSaving}>
-              <UserRoundPlus size={18} />
-              {memberSaving ? "Adding" : "Add member"}
-            </button>
-          </form>
-        </section>
-      </aside>
+          {canManageMembers ? (
+            <section className="panel management-panel">
+              <div>
+                <p className="eyebrow">Members</p>
+                <h2>Add member</h2>
+              </div>
+              <form className="management-grid" onSubmit={handleAddMember}>
+                <label>
+                  Member email
+                  <input name="email" placeholder="teammate@example.com" type="email" required />
+                </label>
+                <label>
+                  Role
+                  <select name="role" defaultValue="ANNOTATOR">
+                    {memberRoles
+                      .filter((role) => organization.capabilities.canGrantOwnerRole || role !== "OWNER")
+                      .map((role) => (
+                        <option key={role} value={role}>
+                          {formatEnum(role)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button className="secondary-button" type="submit" disabled={memberSaving}>
+                  <UserRoundPlus size={18} />
+                  {memberSaving ? "Adding" : "Add member"}
+                </button>
+              </form>
+            </section>
+          ) : null}
+        </aside>
+      ) : null}
     </section>
   );
 }
@@ -743,6 +765,7 @@ function RolePrivilegesPanel() {
 }
 
 function MembersTable({
+  canGrantOwnerRole,
   currentUserId,
   members,
   onChanged,
@@ -750,6 +773,7 @@ function MembersTable({
   session,
   setPageError
 }: {
+  canGrantOwnerRole: boolean;
   currentUserId: string | null;
   members: MembershipSummary[];
   onChanged: () => Promise<void>;
@@ -767,6 +791,7 @@ function MembersTable({
       </div>
       {members.map((member) => (
         <MemberRow
+          canGrantOwnerRole={canGrantOwnerRole}
           key={member.id}
           currentUserId={currentUserId}
           member={member}
@@ -781,6 +806,7 @@ function MembersTable({
 }
 
 function MemberRow({
+  canGrantOwnerRole,
   currentUserId,
   member,
   onChanged,
@@ -788,6 +814,7 @@ function MemberRow({
   session,
   setPageError
 }: {
+  canGrantOwnerRole: boolean;
   currentUserId: string | null;
   member: MembershipSummary;
   onChanged: () => Promise<void>;
@@ -798,6 +825,7 @@ function MemberRow({
   const [saving, setSaving] = useState(false);
   const [role, setRole] = useState(member.role);
   const isCurrentUser = currentUserId === member.user.id;
+  const roleOptions = memberRoles.filter((item) => canGrantOwnerRole || item !== "OWNER" || member.role === "OWNER");
 
   async function saveRole() {
     if (isCurrentUser) {
@@ -852,8 +880,8 @@ function MemberRow({
         <small>{member.user.email}</small>
       </span>
       <span>
-        <select value={role} onChange={(event) => setRole(event.target.value)} disabled={isCurrentUser}>
-          {memberRoles.map((item) => (
+        <select value={role} onChange={(event) => setRole(event.target.value)} disabled={isCurrentUser || (!canGrantOwnerRole && member.role === "OWNER")}>
+          {roleOptions.map((item) => (
             <option key={item} value={item}>
               {formatEnum(item)}
             </option>

@@ -28,6 +28,7 @@ import { TasksTable } from "../tasks/TasksPage";
 const assetPageSize = 12;
 
 function DatasetTasksPanel({
+  canGenerateTasks,
   dataset,
   loading,
   onGenerated,
@@ -35,6 +36,7 @@ function DatasetTasksPanel({
   setPageError,
   tasks
 }: {
+  canGenerateTasks: boolean;
   dataset: DatasetSummary;
   loading: boolean;
   onGenerated: () => Promise<void>;
@@ -92,40 +94,42 @@ function DatasetTasksPanel({
           <h2>Dataset tasks</h2>
           <span>{tasks.length} task records for this dataset</span>
         </div>
-        <div className="task-generator">
-          <div className="task-generator-options" aria-label="Task generation quantity">
-            <button
-              className={generationMode === "all" ? "option-chip active" : "option-chip"}
-              onClick={() => setGenerationMode("all")}
-              type="button"
-            >
-              All
+        {canGenerateTasks ? (
+          <div className="task-generator">
+            <div className="task-generator-options" aria-label="Task generation quantity">
+              <button
+                className={generationMode === "all" ? "option-chip active" : "option-chip"}
+                onClick={() => setGenerationMode("all")}
+                type="button"
+              >
+                All
+              </button>
+              <button
+                className={generationMode === "custom" ? "option-chip active" : "option-chip"}
+                onClick={() => setGenerationMode("custom")}
+                type="button"
+              >
+                Custom
+              </button>
+              {generationMode === "custom" && (
+                <label className="task-quantity-field">
+                  <span>Qty</span>
+                  <input
+                    min="1"
+                    onChange={(event) => setTaskQuantity(event.currentTarget.value)}
+                    step="1"
+                    type="number"
+                    value={taskQuantity}
+                  />
+                </label>
+              )}
+            </div>
+            <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating}>
+              <ClipboardList size={18} />
+              {generating ? "Generating" : "Generate tasks"}
             </button>
-            <button
-              className={generationMode === "custom" ? "option-chip active" : "option-chip"}
-              onClick={() => setGenerationMode("custom")}
-              type="button"
-            >
-              Custom
-            </button>
-            {generationMode === "custom" && (
-              <label className="task-quantity-field">
-                <span>Qty</span>
-                <input
-                  min="1"
-                  onChange={(event) => setTaskQuantity(event.currentTarget.value)}
-                  step="1"
-                  type="number"
-                  value={taskQuantity}
-                />
-              </label>
-            )}
           </div>
-          <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating}>
-            <ClipboardList size={18} />
-            {generating ? "Generating" : "Generate tasks"}
-          </button>
-        </div>
+        ) : null}
       </div>
       {message && <p className="form-success">{message}</p>}
       <TasksTable loading={loading} onChanged={onGenerated} session={session} setPageError={setPageError} tasks={tasks} />
@@ -456,10 +460,12 @@ export function DatasetDetailPage() {
                     <p className="eyebrow">Dataset</p>
                     <h2>{dataset.name}</h2>
                   </div>
-                  <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
-                    <Edit3 size={16} />
-                    Edit dataset
-                  </button>
+                  {dataset.canManage ? (
+                    <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
+                      <Edit3 size={16} />
+                      Edit dataset
+                    </button>
+                  ) : null}
                 </div>
                 <dl className="detail-list">
                   <div>
@@ -483,6 +489,7 @@ export function DatasetDetailPage() {
                 </dl>
               </section>
               <DatasetTasksPanel
+                canGenerateTasks={dataset.canGenerateTasks}
                 dataset={dataset}
                 loading={tasksLoading}
                 onGenerated={reloadTasks}
@@ -492,6 +499,7 @@ export function DatasetDetailPage() {
               />
               <AssetsTable
                 assets={assets}
+                canManageAssets={dataset.canManageAssets}
                 datasetId={dataset.id}
                 loading={assetsLoading}
                 onChanged={reloadAssets}
@@ -516,22 +524,24 @@ export function DatasetDetailPage() {
                   onClose={clearAssetPreview}
                 />
               )}
-              <AssetForm
-                dataset={dataset}
-                onCreated={async () => {
-                  await reloadAssets();
-                  await reloadTasks();
-                }}
-                session={session}
-                setPageError={setAssetsError}
-              />
+              {dataset.canManageAssets ? (
+                <AssetForm
+                  dataset={dataset}
+                  onCreated={async () => {
+                    await reloadAssets();
+                    await reloadTasks();
+                  }}
+                  session={session}
+                  setPageError={setAssetsError}
+                />
+              ) : null}
             </aside>
           </div>
         ) : !datasetError ? (
           <p className="muted-copy">Dataset was not found.</p>
         ) : null}
       </section>
-      {dataset && showEditModal && (
+      {dataset && dataset.canManage && showEditModal && (
         <DatasetEditModal
           dataset={dataset}
           onClose={() => setShowEditModal(false)}
@@ -1034,6 +1044,7 @@ function UploadProgressPanel({ progress }: { progress: UploadProgress }) {
 
 function AssetsTable({
   assets,
+  canManageAssets,
   datasetId,
   loading,
   onChanged,
@@ -1044,6 +1055,7 @@ function AssetsTable({
   setPageError
 }: {
   assets: AssetSummary[];
+  canManageAssets: boolean;
   datasetId: string;
   loading: boolean;
   onChanged: () => Promise<void>;
@@ -1092,12 +1104,20 @@ function AssetsTable({
   }, [currentPage, pageCount]);
 
   function toggleAsset(assetId: string, checked: boolean) {
+    if (!canManageAssets) {
+      return;
+    }
+
     setSelectedAssetIds((current) =>
       checked ? [...new Set([...current, assetId])] : current.filter((selectedId) => selectedId !== assetId)
     );
   }
 
   function toggleVisibleAssets(checked: boolean) {
+    if (!canManageAssets) {
+      return;
+    }
+
     const visibleIds = pageAssets.map((asset) => asset.id);
 
     setSelectedAssetIds((current) =>
@@ -1216,7 +1236,7 @@ function AssetsTable({
           <span>{formatBytes(String(totalBytes))} across this dataset</span>
         </div>
         <div className="asset-toolbar-actions">
-          {selectedAssetIds.length > 0 && (
+          {canManageAssets && selectedAssetIds.length > 0 && (
             <button className="ghost-button danger-button compact-button" type="button" onClick={handleDeleteSelected} disabled={deleting}>
               <Trash2 size={16} />
               Delete selected ({selectedAssetIds.length})
@@ -1232,7 +1252,7 @@ function AssetsTable({
           </label>
         </div>
       </div>
-      {folderOptions.length > 0 && (
+      {canManageAssets && folderOptions.length > 0 && (
         <div className="folder-delete-bar">
           <label>
             Delete registered folder
@@ -1255,13 +1275,15 @@ function AssetsTable({
       <section className="table-panel">
         <div className="table-row assets-head table-head">
           <span>
-            <input
-              aria-label="Select assets on this page"
-              checked={allPageSelected}
-              disabled={pageAssets.length === 0}
-              onChange={(event) => toggleVisibleAssets(event.currentTarget.checked)}
-              type="checkbox"
-            />
+            {canManageAssets ? (
+              <input
+                aria-label="Select assets on this page"
+                checked={allPageSelected}
+                disabled={pageAssets.length === 0}
+                onChange={(event) => toggleVisibleAssets(event.currentTarget.checked)}
+                type="checkbox"
+              />
+            ) : null}
           </span>
           <span>File</span>
           <span>Type</span>
@@ -1283,6 +1305,7 @@ function AssetsTable({
           pageAssets.map((asset) => (
             <AssetRow
               asset={asset}
+              canManageAssets={canManageAssets}
               checked={selectedAssetIds.includes(asset.id)}
               key={asset.id}
               onDelete={() => {
@@ -1345,6 +1368,7 @@ function AssetsTable({
 
 function AssetRow({
   asset,
+  canManageAssets,
   checked,
   onDelete,
   onInspect,
@@ -1352,6 +1376,7 @@ function AssetRow({
   onToggle
 }: {
   asset: AssetSummary;
+  canManageAssets: boolean;
   checked: boolean;
   onDelete: () => void;
   onInspect: () => void;
@@ -1361,12 +1386,14 @@ function AssetRow({
   return (
     <article className="table-row assets-head project-row">
       <span>
-        <input
-          aria-label={`Select ${asset.fileName}`}
-          checked={checked}
-          onChange={(event) => onToggle(event.currentTarget.checked)}
-          type="checkbox"
-        />
+        {canManageAssets ? (
+          <input
+            aria-label={`Select ${asset.fileName}`}
+            checked={checked}
+            onChange={(event) => onToggle(event.currentTarget.checked)}
+            type="checkbox"
+          />
+        ) : null}
       </span>
       <span>
         <button className="link-button" type="button" onClick={onInspect}>
@@ -1387,9 +1414,11 @@ function AssetRow({
           <button className="icon-button asset-action-button" type="button" onClick={onPreview} aria-label="Preview" title="Preview">
             <Maximize2 size={16} />
           </button>
-          <button className="icon-button asset-action-button danger-action-button" type="button" onClick={onDelete} aria-label="Delete" title="Delete">
-            <Trash2 size={16} />
-          </button>
+          {canManageAssets ? (
+            <button className="icon-button asset-action-button danger-action-button" type="button" onClick={onDelete} aria-label="Delete" title="Delete">
+              <Trash2 size={16} />
+            </button>
+          ) : null}
         </div>
       </span>
     </article>

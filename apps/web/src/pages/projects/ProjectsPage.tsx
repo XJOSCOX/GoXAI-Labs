@@ -24,7 +24,9 @@ export function ProjectsPage() {
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const projectDraft = useFormDraft("goxai-draft-project");
   const canCreateProjects = dbUser?.globalRole === "SUPER_ADMIN" || dbUser?.creatorStatus === "APPROVED";
-  const creatableOrganizations = canCreateProjects ? organizations.filter((organization) => organization.role === "OWNER") : [];
+  const creatableOrganizations = canCreateProjects
+    ? organizations.filter((organization) => organization.capabilities.canCreateProjects)
+    : [];
   const defaultOrganization = creatableOrganizations[0];
   const userCreatedProjects = projects.filter((project) => project.createdById === dbUser?.id);
 

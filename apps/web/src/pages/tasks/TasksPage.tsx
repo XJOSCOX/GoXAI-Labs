@@ -158,11 +158,13 @@ function TaskRow({
       </span>
       <span>{task.assignedTo?.name ?? "Unassigned"}</span>
       <span>
-        {action ? (
+        {task.canWork && action ? (
           <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
             {action.kind === "assign" ? <UserCheck size={16} /> : action.kind === "start" ? <Eye size={16} /> : <Send size={16} />}
             {saving ? "Saving" : action.label}
           </button>
+        ) : !task.canWork ? (
+          <span className="muted-copy">Read only</span>
         ) : (
           <span className="muted-copy">Waiting</span>
         )}

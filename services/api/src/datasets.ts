@@ -1,6 +1,7 @@
 import {
   DatasetStatus,
   getPrismaClient,
+  MembershipRole,
   StorageProvider,
   type Dataset
 } from "@goxai/database";
@@ -80,7 +81,15 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
           id: true,
           name: true,
           slug: true,
-          dataType: true
+          dataType: true,
+          createdById: true,
+          projectMemberships: {
+            select: {
+              userId: true,
+              role: true,
+              status: true
+            }
+          }
         }
       }
     },
@@ -90,7 +99,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(200).json({
-    datasets: datasets.map(serializeDataset)
+    datasets: datasets.map((dataset) => serializeDataset(dataset, user.id))
   });
 });
 
@@ -135,7 +144,15 @@ router.get("/:datasetId", async (request: AuthenticatedRequest, response) => {
           id: true,
           name: true,
           slug: true,
-          dataType: true
+          dataType: true,
+          createdById: true,
+          projectMemberships: {
+            select: {
+              userId: true,
+              role: true,
+              status: true
+            }
+          }
         }
       }
     }
@@ -147,7 +164,7 @@ router.get("/:datasetId", async (request: AuthenticatedRequest, response) => {
   }
 
   response.status(200).json({
-    dataset: serializeDataset(dataset)
+    dataset: serializeDataset(dataset, user.id)
   });
 });
 
@@ -209,23 +226,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         status: DatasetStatus.DRAFT,
         createdById: user.id
       },
-      include: {
-        organization: {
-          select: {
-            id: true,
-            name: true,
-            slug: true
-          }
-        },
-        project: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            dataType: true
-          }
-        }
-      }
+      include: datasetIncludes
     });
 
     await tx.auditLog.create({
@@ -247,7 +248,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(201).json({
-    dataset: serializeDataset(dataset)
+    dataset: serializeDataset(dataset, user.id)
   });
 });
 
@@ -333,7 +334,7 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(200).json({
-    dataset: serializeDataset(updatedDataset)
+    dataset: serializeDataset(updatedDataset, user.id)
   });
 });
 
@@ -398,7 +399,7 @@ router.post("/:datasetId/archive", async (request: AuthenticatedRequest, respons
   });
 
   response.status(200).json({
-    dataset: serializeDataset(archivedDataset)
+    dataset: serializeDataset(archivedDataset, user.id)
   });
 });
 
@@ -463,7 +464,7 @@ router.post("/:datasetId/restore", async (request: AuthenticatedRequest, respons
   });
 
   response.status(200).json({
-    dataset: serializeDataset(restoredDataset)
+    dataset: serializeDataset(restoredDataset, user.id)
   });
 });
 
@@ -724,7 +725,15 @@ const datasetIncludes = {
       id: true,
       name: true,
       slug: true,
-      dataType: true
+      dataType: true,
+      createdById: true,
+      projectMemberships: {
+        select: {
+          userId: true,
+          role: true,
+          status: true
+        }
+      }
     }
   }
 } as const;
@@ -740,10 +749,24 @@ type DatasetWithRelations = Dataset & {
     name: string;
     slug: string;
     dataType: string;
+    createdById: string;
+    projectMemberships: {
+      userId: string;
+      role: MembershipRole;
+      status: string;
+    }[];
   };
 };
 
-function serializeDataset(dataset: DatasetWithRelations) {
+function serializeDataset(dataset: DatasetWithRelations, currentUserId?: string) {
+  const membership = currentUserId
+    ? dataset.project.projectMemberships.find((item) => item.userId === currentUserId && item.status === "ACTIVE")
+    : undefined;
+  const canManage = Boolean(
+    currentUserId && (dataset.project.createdById === currentUserId || (membership && canManageProjectScope(membership)))
+  );
+  const { projectMemberships: _projectMemberships, ...project } = dataset.project;
+
   return {
     id: dataset.id,
     organizationId: dataset.organizationId,
@@ -754,7 +777,10 @@ function serializeDataset(dataset: DatasetWithRelations) {
     status: dataset.status,
     metadata: dataset.metadata,
     organization: dataset.organization,
-    project: dataset.project,
+    project,
+    canManage,
+    canManageAssets: canManage,
+    canGenerateTasks: canManage,
     createdAt: dataset.createdAt,
     updatedAt: dataset.updatedAt
   };

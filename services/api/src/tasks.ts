@@ -1,5 +1,6 @@
 import {
   getPrismaClient,
+  MembershipRole,
   TaskStatus,
   type Task
 } from "@goxai/database";
@@ -23,7 +24,9 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   const datasetId = normalizeId(request.query.datasetId);
   const projectId = normalizeId(request.query.projectId);
   const prisma = getPrismaClient();
-  const organizationIds = await getAccessibleOrganizationIds(user.id);
+  const memberships = await getActiveMemberships(user.id);
+  const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))];
+  const membershipByOrganizationId = new Map(memberships.map((membership) => [membership.organizationId, membership]));
 
   if (organizationIds.length === 0) {
     response.status(200).json({ tasks: [] });
@@ -90,7 +93,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(200).json({
-    tasks: tasks.map(serializeTask)
+    tasks: tasks.map((task) => serializeTask(task, membershipByOrganizationId.get(task.project.organizationId)))
   });
 });
 
@@ -244,7 +247,7 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
     createdCount: assetsToCreate.length,
     remainingCount,
     skippedCount: existingAssetIds.size,
-    tasks: tasks.map(serializeTask)
+    tasks: tasks.map((task) => serializeTask(task, membership))
   });
 });
 
@@ -362,7 +365,7 @@ async function updateTaskForUser(
   });
 
   response.status(200).json({
-    task: serializeTask(updatedTask)
+    task: serializeTask(updatedTask, membership)
   });
 }
 
@@ -420,19 +423,18 @@ function getTaskActionUpdate(task: Task, action: TaskAction, userId: string):
   };
 }
 
-async function getAccessibleOrganizationIds(userId: string) {
+async function getActiveMemberships(userId: string) {
   const prisma = getPrismaClient();
-  const memberships = await prisma.membership.findMany({
+  return prisma.membership.findMany({
     where: {
       userId,
       status: "ACTIVE"
     },
     select: {
-      organizationId: true
+      organizationId: true,
+      role: true
     }
   });
-
-  return [...new Set(memberships.map((membership) => membership.organizationId))];
 }
 
 const taskIncludes = {
@@ -511,7 +513,7 @@ type TaskWithRelations = Task & {
   } | null;
 };
 
-function serializeTask(task: TaskWithRelations) {
+function serializeTask(task: TaskWithRelations, membership?: { role: MembershipRole }) {
   return {
     id: task.id,
     projectId: task.projectId,
@@ -533,6 +535,7 @@ function serializeTask(task: TaskWithRelations) {
       : null,
     assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,
     reviewer: task.reviewer ? serializeUserName(task.reviewer) : null,
+    canWork: membership ? canWorkTasks(membership) : false,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt
   };

@@ -94,6 +94,7 @@ export interface OrganizationSummary {
   joinCodeEnabled: boolean;
   planTier: string;
   role: string;
+  capabilities: OrganizationCapabilities;
   counts: {
     owners: number;
     members: number;
@@ -107,6 +108,15 @@ export interface OrganizationSummary {
   } | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OrganizationCapabilities {
+  canUpdate: boolean;
+  canDelete: boolean;
+  canManageMembers: boolean;
+  canGrantOwnerRole: boolean;
+  canCreateProjects: boolean;
+  canViewMembers: boolean;
 }
 
 export interface MembershipSummary {
@@ -250,7 +260,11 @@ export interface DatasetSummary {
     name: string;
     slug: string;
     dataType: string;
+    createdById?: string;
   };
+  canManage: boolean;
+  canManageAssets: boolean;
+  canGenerateTasks: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -381,6 +395,7 @@ export interface TaskSummary {
     email: string;
     name: string;
   } | null;
+  canWork: boolean;
   createdAt: string;
   updatedAt: string;
 }
