@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Save, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Maximize2, Save, Search, Trash2, X } from "lucide-react";
 import {
   archiveDataset,
   createAsset,
@@ -342,6 +342,10 @@ export function DatasetDetailPage() {
   const [previewAccessUrl, setPreviewAccessUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [largePreviewAsset, setLargePreviewAsset] = useState<AssetSummary | null>(null);
+  const [largePreviewAccessUrl, setLargePreviewAccessUrl] = useState<string | null>(null);
+  const [largePreviewError, setLargePreviewError] = useState<string | null>(null);
+  const [largePreviewLoading, setLargePreviewLoading] = useState(false);
   const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
   const {
     assets,
@@ -381,19 +385,51 @@ export function DatasetDetailPage() {
     }
   }
 
+  async function handleLargePreviewAsset(asset: AssetSummary) {
+    setLargePreviewAsset(asset);
+    setLargePreviewAccessUrl(null);
+    setLargePreviewError(null);
+    setAssetsError(null);
+
+    if (!session) {
+      setLargePreviewError("Authentication required.");
+      return;
+    }
+
+    setLargePreviewLoading(true);
+
+    try {
+      const result = await getAssetAccessUrl(session, asset.id);
+      setLargePreviewAccessUrl(result.accessUrl);
+    } catch (reason) {
+      setLargePreviewError(reason instanceof Error ? reason.message : "Unable to create asset preview URL.");
+    } finally {
+      setLargePreviewLoading(false);
+    }
+  }
+
   function clearAssetPreview() {
     setPreviewAsset(null);
     setPreviewAccessUrl(null);
     setPreviewError(null);
   }
 
+  function clearLargeAssetPreview() {
+    setLargePreviewAsset(null);
+    setLargePreviewAccessUrl(null);
+    setLargePreviewError(null);
+  }
+
   function handleAssetsDeleted(input: { assetIds?: string[]; folderPrefix?: string }) {
-    if (!previewAsset) {
-      return;
+    if (previewAsset && (input.assetIds?.includes(previewAsset.id) || (input.folderPrefix && previewAsset.objectKey.startsWith(input.folderPrefix)))) {
+      clearAssetPreview();
     }
 
-    if (input.assetIds?.includes(previewAsset.id) || (input.folderPrefix && previewAsset.objectKey.startsWith(input.folderPrefix))) {
-      clearAssetPreview();
+    if (
+      largePreviewAsset &&
+      (input.assetIds?.includes(largePreviewAsset.id) || (input.folderPrefix && largePreviewAsset.objectKey.startsWith(input.folderPrefix)))
+    ) {
+      clearLargeAssetPreview();
     }
   }
 
@@ -457,6 +493,9 @@ export function DatasetDetailPage() {
                 onInspectAsset={(asset) => {
                   void handleInspectAsset(asset);
                 }}
+                onPreviewAsset={(asset) => {
+                  void handleLargePreviewAsset(asset);
+                }}
                 session={session}
                 setPageError={setAssetsError}
               />
@@ -494,6 +533,15 @@ export function DatasetDetailPage() {
           onDeleted={() => navigate(`/projects/${dataset.projectId}`)}
           session={session}
           setPageError={setTasksError}
+        />
+      )}
+      {largePreviewAsset && (
+        <LargeAssetPreviewModal
+          accessError={largePreviewError}
+          accessLoading={largePreviewLoading}
+          accessUrl={largePreviewAccessUrl}
+          asset={largePreviewAsset}
+          onClose={clearLargeAssetPreview}
         />
       )}
     </section>
@@ -985,6 +1033,7 @@ function AssetsTable({
   onChanged,
   onDeleted,
   onInspectAsset,
+  onPreviewAsset,
   session,
   setPageError
 }: {
@@ -994,6 +1043,7 @@ function AssetsTable({
   onChanged: () => Promise<void>;
   onDeleted: (input: { assetIds?: string[]; folderPrefix?: string }) => void;
   onInspectAsset: (asset: AssetSummary) => void;
+  onPreviewAsset: (asset: AssetSummary) => void;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
 }) {
@@ -1235,6 +1285,9 @@ function AssetsTable({
               onInspect={() => {
                 onInspectAsset(asset);
               }}
+              onPreview={() => {
+                onPreviewAsset(asset);
+              }}
               onToggle={(checked) => toggleAsset(asset.id, checked)}
             />
           ))
@@ -1289,12 +1342,14 @@ function AssetRow({
   checked,
   onDelete,
   onInspect,
+  onPreview,
   onToggle
 }: {
   asset: AssetSummary;
   checked: boolean;
   onDelete: () => void;
   onInspect: () => void;
+  onPreview: () => void;
   onToggle: (checked: boolean) => void;
 }) {
   return (
@@ -1320,10 +1375,16 @@ function AssetRow({
       <span>{formatBytes(asset.fileSize)}</span>
       <span>
         <div className="asset-row-actions">
-          <button className="secondary-button compact-button" type="button" onClick={onInspect}>
-            <Eye size={16} />
-            Preview
-          </button>
+          <div className="asset-row-preview-actions">
+            <button className="secondary-button compact-button" type="button" onClick={onInspect}>
+              <Eye size={16} />
+              Quick preview
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={onPreview}>
+              <Maximize2 size={16} />
+              Preview
+            </button>
+          </div>
           <button className="ghost-button danger-button compact-button" type="button" onClick={onDelete}>
             <Trash2 size={16} />
             Delete
@@ -1414,5 +1475,61 @@ function AssetPreview({
         )}
       </div>
     </section>
+  );
+}
+
+function LargeAssetPreviewModal({
+  accessError,
+  accessLoading,
+  accessUrl,
+  asset,
+  onClose
+}: {
+  accessError: string | null;
+  accessLoading: boolean;
+  accessUrl: string | null;
+  asset: AssetSummary;
+  onClose: () => void;
+}) {
+  const isImage = asset.mimeType.startsWith("image/");
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop image-preview-backdrop" onMouseDown={onClose}>
+      <section
+        aria-label={`${asset.fileName} preview`}
+        aria-modal="true"
+        className="modal-panel image-preview-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <button className="icon-button image-preview-close" type="button" onClick={onClose} aria-label="Close preview">
+          <X size={20} />
+        </button>
+        {accessLoading ? (
+          <span className="muted-copy">Creating signed preview URL.</span>
+        ) : accessError ? (
+          <p className="form-error">{accessError}</p>
+        ) : accessUrl && isImage ? (
+          <img alt={asset.fileName} src={accessUrl} />
+        ) : (
+          <div className="empty-state">
+            <FileText size={28} />
+            <strong>Image preview unavailable</strong>
+            <span>This preview modal is built for image files.</span>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }

@@ -1935,6 +1935,13 @@ textarea:focus {
   width: 100%;
 }
 
+.asset-row-preview-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .asset-row-actions .ghost-button {
   width: auto;
 }
@@ -2008,6 +2015,35 @@ textarea:focus {
 .side-column .asset-preview-stage img,
 .side-column .asset-preview-stage video {
   max-height: 320px;
+}
+
+.image-preview-backdrop {
+  background: rgba(0, 0, 0, 0.78);
+}
+
+.image-preview-modal {
+  position: relative;
+  place-items: center;
+  width: min(1240px, calc(100vw - 48px));
+  min-height: min(780px, calc(100vh - 48px));
+  padding: 18px;
+  background: #080808;
+}
+
+.image-preview-modal img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 104px);
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.image-preview-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
 }
 
 .empty-state {
@@ -2171,6 +2207,15 @@ textarea:focus {
   .pagination-bar > div {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .asset-row-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .asset-row-preview-actions {
+    width: 100%;
   }
 
   .folder-delete-bar {
