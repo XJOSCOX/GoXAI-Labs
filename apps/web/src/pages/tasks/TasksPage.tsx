@@ -19,17 +19,19 @@ export function TasksPage() {
   return (
     <section className="page-stack">
       {error && <p className="form-error">{error}</p>}
-      {isFiltered ? (
-        <>
-          <Link className="secondary-button compact-button task-back-button" to="/tasks">
-            <ArrowLeft size={16} />
-            Back to task folders
-          </Link>
-          <TasksTable loading={loading} onChanged={reload} session={session} setPageError={setError} tasks={tasks} />
-        </>
-      ) : (
-        <TaskProjectFolders loading={loading} tasks={tasks} />
-      )}
+      <section className="panel task-page-frame">
+        {isFiltered ? (
+          <>
+            <Link className="secondary-button compact-button task-back-button" to="/tasks">
+              <ArrowLeft size={16} />
+              Back to task folders
+            </Link>
+            <TasksTable loading={loading} onChanged={reload} session={session} setPageError={setError} tasks={tasks} />
+          </>
+        ) : (
+          <TaskProjectFolders loading={loading} tasks={tasks} />
+        )}
+      </section>
     </section>
   );
 }
@@ -38,7 +40,7 @@ function TaskProjectFolders({ loading, tasks }: { loading: boolean; tasks: TaskS
   const folders = useMemo(() => buildProjectFolders(tasks), [tasks]);
 
   return (
-    <section className="panel task-folder-panel">
+    <section className="task-folder-panel">
       <div className="section-actions">
         <div>
           <p className="eyebrow">Task folders</p>

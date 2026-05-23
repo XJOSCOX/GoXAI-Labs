@@ -2013,7 +2013,14 @@ textarea:focus {
   justify-self: start;
 }
 
+.task-page-frame {
+  gap: 18px;
+  width: 100%;
+}
+
 .task-folder-panel {
+  display: grid;
+  gap: 16px;
   width: 100%;
 }
 
