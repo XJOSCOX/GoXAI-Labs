@@ -500,15 +500,19 @@ function OnboardingPage() {
     }
 
     setSaving(true);
+    const jobTitle = getFormValue(event, "jobTitle");
+    const description = getFormValue(event, "description");
+    const organizationType = getFormValue(event, "type");
+    const planTier = getFormValue(event, "plan");
 
     try {
       await updateUserProfile(session, {
-        jobTitle: getFormValue(event, "jobTitle")
+        jobTitle
       });
       await updateOrganization(session, organization.id, {
-        description: getFormValue(event, "description"),
-        type: getFormValue(event, "type"),
-        planTier: getFormValue(event, "plan"),
+        description,
+        type: organizationType,
+        planTier,
         completeOnboarding: true
       });
       window.location.assign(`/organization/${organization.id}`);
