@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 const envFilePath = findEnvFile(process.cwd());
 const workspaceRoot = dirname(envFilePath);
 const requireFromApi = createRequire(resolve(workspaceRoot, "services/api/package.json"));
-const { S3Client, PutObjectCommand } = requireFromApi("@aws-sdk/client-s3");
+const { DeleteObjectCommand, S3Client, PutObjectCommand } = requireFromApi("@aws-sdk/client-s3");
 const { getSignedUrl } = requireFromApi("@aws-sdk/s3-request-presigner");
 
 const env = loadEnv(envFilePath);
@@ -36,11 +36,12 @@ const client = new S3Client({
   }
 });
 
+const diagnosticKey = `cors-check/${Date.now()}-test.txt`;
 const uploadUrl = await getSignedUrl(
   client,
   new PutObjectCommand({
     Bucket: env.R2_BUCKET,
-    Key: `cors-check/${Date.now()}-test.txt`,
+    Key: diagnosticKey,
     ContentType: "text/plain"
   }),
   { expiresIn: 60 }
@@ -55,6 +56,29 @@ const response = await fetch(uploadUrl, {
   }
 });
 
+const putResponse = await fetch(uploadUrl, {
+  method: "PUT",
+  headers: {
+    "Content-Type": "text/plain"
+  },
+  body: "GoXAI R2 diagnostic upload"
+});
+let cleanupStatus = "skipped";
+
+if (putResponse.ok) {
+  try {
+    await client.send(
+      new DeleteObjectCommand({
+        Bucket: env.R2_BUCKET,
+        Key: diagnosticKey
+      })
+    );
+    cleanupStatus = "deleted";
+  } catch (error) {
+    cleanupStatus = error instanceof Error ? `failed: ${error.message}` : "failed";
+  }
+}
+
 const headers = {
   allowOrigin: response.headers.get("access-control-allow-origin") ?? "",
   allowMethods: response.headers.get("access-control-allow-methods") ?? "",
@@ -68,6 +92,8 @@ console.log(
       signedUrlHost: new URL(uploadUrl).host,
       origin,
       preflightStatus: response.status,
+      signedPutStatus: putResponse.status,
+      cleanupStatus,
       ...headers,
       ok:
         response.ok &&
