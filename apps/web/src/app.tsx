@@ -208,6 +208,11 @@ function RegisterPage() {
 function AppShell() {
   const { dbUser, logout } = useAuth();
   const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email;
+  const initials =
+    [dbUser?.firstName, dbUser?.lastName]
+      .filter(Boolean)
+      .map((part) => part?.[0])
+      .join("") || "GX";
 
   return (
     <main className="app-shell">
@@ -254,6 +259,25 @@ function AppShell() {
         </header>
         <Outlet />
       </section>
+      <aside className="context-rail">
+        <div className="profile-block">
+          <div className="avatar compact-avatar">{initials}</div>
+          <div>
+            <strong>{name}</strong>
+            <span>{dbUser?.globalRole}</span>
+          </div>
+        </div>
+        <div className="rail-section">
+          <p className="eyebrow">Build phase</p>
+          <strong>Phase 1</strong>
+          <span>Authentication, organizations, RBAC, audit logs.</span>
+        </div>
+        <div className="rail-section">
+          <p className="eyebrow">Next</p>
+          <strong>Projects</strong>
+          <span>Create project records before dataset ingestion.</span>
+        </div>
+      </aside>
     </main>
   );
 }
