@@ -2288,29 +2288,400 @@ textarea:focus {
   background: color-mix(in srgb, var(--accent) 18%, var(--surface-soft));
 }
 
-.annotation-tool-picker {
+.labeling-config-builder {
+  display: grid;
+  gap: 14px;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px;
+  background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+  padding: 14px;
 }
 
-.annotation-tool-picker legend {
-  padding: 0 6px;
+.labeling-config-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.labeling-config-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.row-actions.compact {
+  align-items: center;
+}
+
+.segmented-control {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 3px;
+}
+
+.segmented-control button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.segmented-control button.active {
+  background: var(--accent);
+  color: #06131a;
+}
+
+.template-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 10px;
+}
+
+.template-card {
+  display: grid;
+  grid-template-rows: 92px auto auto;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+}
+
+.template-card:hover,
+.template-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.template-card strong,
+.template-card small {
+  display: block;
+}
+
+.template-card strong {
+  margin-bottom: 3px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.template-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.template-preview {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 55%),
+    repeating-linear-gradient(90deg, transparent 0 21px, color-mix(in srgb, var(--border) 54%, transparent) 22px 23px),
+    var(--surface-soft);
+}
+
+.template-preview > svg {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  color: var(--accent);
+}
+
+.label-config-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(300px, 1.15fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.label-config-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.configure-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 8px 10px;
   font-size: 12px;
   font-weight: 700;
 }
 
-.annotation-tool-picker .check-row {
-  align-items: flex-start;
+.configure-source code {
+  margin-left: auto;
+  color: var(--accent);
+  font: inherit;
 }
 
-.annotation-tool-picker small {
+.field-help {
   display: block;
+  margin-top: 3px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
+}
+
+.label-list-preview {
+  display: grid;
+  gap: 7px;
+}
+
+.label-list-preview > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.label-list-preview p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.label-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  padding: 6px 8px;
+}
+
+.label-row i {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.label-row strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label-row kbd {
+  min-width: 22px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 2px 5px;
+  font: inherit;
+  font-size: 11px;
+  text-align: center;
+}
+
+.visual-config-preview {
+  display: grid;
+  min-height: 190px;
+}
+
+.visual-canvas {
+  position: relative;
+  overflow: hidden;
+  min-height: 190px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 65%),
+    radial-gradient(circle at 72% 34%, color-mix(in srgb, var(--text) 7%, transparent) 0 46px, transparent 47px),
+    repeating-linear-gradient(0deg, transparent 0 29px, color-mix(in srgb, var(--border) 52%, transparent) 30px 31px),
+    var(--surface-soft);
+}
+
+.visual-canvas > span {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bbox-demo,
+.polygon-demo,
+.keypoint-demo,
+.text-demo,
+.class-demo,
+.brush-demo {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.bbox-demo {
+  border: 1px solid #f87171;
+  background: color-mix(in srgb, #f87171 12%, transparent);
+}
+
+.bbox-demo.demo-one {
+  left: 16%;
+  top: 32%;
+  width: 22%;
+  height: 24%;
+}
+
+.bbox-demo.demo-two {
+  right: 18%;
+  bottom: 18%;
+  width: 18%;
+  height: 20%;
+  border-color: #7dd3fc;
+}
+
+.polygon-demo {
+  left: 46%;
+  top: 30%;
+  width: 112px;
+  height: 82px;
+  clip-path: polygon(12% 26%, 62% 8%, 94% 45%, 72% 92%, 20% 76%);
+  border: 1px solid #c084fc;
+  background: color-mix(in srgb, #c084fc 18%, transparent);
+}
+
+.keypoint-demo {
+  right: 26%;
+  top: 30%;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #facc15;
+  border-radius: 999px;
+}
+
+.text-demo {
+  left: 18%;
+  bottom: 22%;
+  width: 54%;
+  height: 16px;
+  border-radius: 4px;
+  background: color-mix(in srgb, #f9a8d4 32%, transparent);
+}
+
+.class-demo {
+  right: 12px;
+  top: 12px;
+  width: 64px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #86efac 26%, transparent);
+}
+
+.brush-demo {
+  left: 28%;
+  bottom: 20%;
+  width: 32%;
+  height: 28%;
+  border-radius: 60% 40% 54% 46%;
+  background: color-mix(in srgb, #fdba74 24%, transparent);
+}
+
+.tool-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
+  gap: 8px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.tool-option-grid legend {
+  grid-column: 1 / -1;
+  margin-bottom: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tool-option-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-height: 58px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 9px;
+}
+
+.tool-option-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+}
+
+.tool-option-card input {
+  margin-top: 2px;
+}
+
+.tool-option-card strong,
+.tool-option-card small {
+  display: block;
+}
+
+.tool-option-card strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tool-option-card small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.tool-option-card svg {
+  color: var(--accent);
+}
+
+.code-preview-wrap {
+  gap: 8px;
+}
+
+.config-code-preview {
+  min-height: 330px;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.label-config-page,
+.labeling-config-form {
+  display: grid;
+  gap: 14px;
 }
 
 .label-option {
@@ -2569,6 +2940,7 @@ textarea:focus {
   .organization-layout,
   .project-workspace-layout,
   .dataset-detail-layout,
+  .label-config-layout,
   .task-detail-layout,
   .admin-user-row {
     grid-template-columns: 1fr;
@@ -2618,6 +2990,7 @@ textarea:focus {
   .plan-option-row,
   .management-split,
   .management-grid,
+  .label-config-layout,
   .role-grid,
   .table-row.assets-head,
   .table-row.member-head,

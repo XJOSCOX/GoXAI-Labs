@@ -1,7 +1,9 @@
 import {
+  AnnotationTool,
   DatasetStatus,
   getPrismaClient,
   MembershipRole,
+  Prisma,
   ProjectAccessMode,
   ProjectStatus,
   StorageProvider,
@@ -312,6 +314,20 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
       id: true,
       organizationId: true,
       projectId: true,
+      labelingConfig: true,
+      labels: {
+        select: {
+          id: true
+        }
+      },
+      tools: {
+        where: {
+          enabled: true
+        },
+        select: {
+          id: true
+        }
+      },
       project: {
         select: {
           createdById: true
@@ -338,14 +354,37 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
+  if (
+    parsed.value.status === DatasetStatus.READY &&
+    !hasDatasetLabelConfig({
+      labelsCount: parsed.value.labels?.length ?? dataset.labels.length,
+      toolsCount: parsed.value.tools?.filter((tool) => tool.enabled).length ?? dataset.tools.length,
+      labelingConfig: parsed.value.labelingConfig ?? dataset.labelingConfig
+    })
+  ) {
+    response.status(400).json({
+      error: "Set this dataset's labeling configuration before making it ready."
+    });
+    return;
+  }
+
   const updatedDataset = await prisma.$transaction(async (tx) => {
+    const { labels, tools, ...datasetValues } = parsed.value;
     const saved = await tx.dataset.update({
       where: {
         id: dataset.id
       },
-      data: parsed.value,
+      data: datasetValues,
       include: datasetIncludes
     });
+
+    if (labels) {
+      await syncDatasetLabels(tx, saved.id, labels);
+    }
+
+    if (tools) {
+      await syncDatasetTools(tx, saved.id, tools);
+    }
 
     await tx.auditLog.create({
       data: {
@@ -355,11 +394,16 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
         action: "dataset.updated",
         entityType: "dataset",
         entityId: saved.id,
-        metadata: parsed.value
+        metadata: datasetValues
       }
     });
 
-    return saved;
+    return tx.dataset.findUniqueOrThrow({
+      where: {
+        id: saved.id
+      },
+      include: datasetIncludes
+    });
   });
 
   response.status(200).json({
@@ -662,8 +706,24 @@ type UpdateDatasetBody =
       name?: unknown;
       description?: unknown;
       status?: unknown;
+      labelingConfig?: unknown;
+      labels?: unknown;
+      tools?: unknown;
     }
   | undefined;
+
+type ParsedDatasetLabel = {
+  color: string;
+  metadata?: Prisma.InputJsonObject;
+  name: string;
+  shortcutKey?: string;
+};
+
+type ParsedDatasetTool = {
+  configJson?: Prisma.InputJsonObject;
+  enabled: boolean;
+  tool: AnnotationTool;
+};
 
 function parseCreateDatasetBody(body: CreateDatasetBody):
   | {
@@ -712,12 +772,17 @@ function parseUpdateDatasetBody(body: UpdateDatasetBody):
         name?: string;
         description?: string | null;
         status?: DatasetStatus;
+        labelingConfig?: Prisma.InputJsonObject;
+        labels?: ParsedDatasetLabel[];
+        tools?: ParsedDatasetTool[];
       };
     }
   | { ok: false; error: string } {
   const name = normalizeText(body?.name);
   const description = normalizeNullableText(body?.description);
   const status = parseEnumValue(DatasetStatus, body?.status);
+  const labelingConfig = parseLabelingConfig(body?.labelingConfig);
+  const annotationConfig = parseDatasetAnnotationConfig(body?.labels, body?.tools, body?.labelingConfig);
 
   if (name && name.length > 120) {
     return { ok: false, error: "Dataset name must be 120 characters or fewer." };
@@ -731,17 +796,60 @@ function parseUpdateDatasetBody(body: UpdateDatasetBody):
     return { ok: false, error: "Choose a valid dataset status." };
   }
 
+  if (!labelingConfig.ok) {
+    return { ok: false, error: labelingConfig.error };
+  }
+
+  if (!annotationConfig.ok) {
+    return { ok: false, error: annotationConfig.error };
+  }
+
   return {
     ok: true,
     value: {
       ...(name ? { name } : {}),
       ...(body?.description !== undefined ? { description } : {}),
-      ...(status ? { status } : {})
+      ...(status ? { status } : {}),
+      ...(labelingConfig.value ? { labelingConfig: labelingConfig.value } : {}),
+      ...(body?.labels !== undefined ? { labels: annotationConfig.labels } : {}),
+      ...(body?.tools !== undefined ? { tools: annotationConfig.tools } : {})
     }
   };
 }
 
 const datasetIncludes = {
+  annotationTemplate: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      dataType: true,
+      configJson: true
+    }
+  },
+  labels: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      shortcutKey: true,
+      metadata: true
+    }
+  },
+  tools: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      tool: true,
+      enabled: true,
+      configJson: true
+    }
+  },
   organization: {
     select: {
       id: true,
@@ -784,9 +892,29 @@ type DatasetWithRelations = Dataset & {
     projectMemberships: {
       userId: string;
       role: MembershipRole;
-      status: string;
+    status: string;
     }[];
   };
+  annotationTemplate: {
+    id: string;
+    name: string;
+    description: string | null;
+    dataType: string;
+    configJson: unknown;
+  } | null;
+  labels: {
+    id: string;
+    name: string;
+    color: string;
+    shortcutKey: string | null;
+    metadata: unknown;
+  }[];
+  tools: {
+    id: string;
+    tool: AnnotationTool;
+    enabled: boolean;
+    configJson: unknown;
+  }[];
 };
 
 function serializeDataset(dataset: DatasetWithRelations, currentUserId?: string) {
@@ -806,7 +934,12 @@ function serializeDataset(dataset: DatasetWithRelations, currentUserId?: string)
     description: dataset.description,
     version: dataset.version,
     status: dataset.status,
+    annotationTemplateId: dataset.annotationTemplateId,
+    labelingConfig: dataset.labelingConfig,
     metadata: dataset.metadata,
+    annotationTemplate: dataset.annotationTemplate,
+    labels: dataset.labels,
+    tools: dataset.tools,
     organization: dataset.organization,
     project,
     canManage,
@@ -834,6 +967,236 @@ function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: 
     ? (value as T[keyof T])
     : undefined;
 }
+
+function parseLabelingConfig(value: unknown): { ok: true; value?: Prisma.InputJsonObject } | { ok: false; error: string } {
+  if (value === undefined || value === null) {
+    return { ok: true };
+  }
+
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "Labeling config must be an object." };
+  }
+
+  return { ok: true, value: value as Prisma.InputJsonObject };
+}
+
+function parseDatasetAnnotationConfig(
+  labelsInput: unknown,
+  toolsInput: unknown,
+  labelingConfigInput: unknown
+):
+  | {
+      ok: true;
+      labels: ParsedDatasetLabel[];
+      tools: ParsedDatasetTool[];
+    }
+  | { ok: false; error: string } {
+  const labels = labelsInput === undefined ? parseLabelsFromLabelingConfig(labelingConfigInput) : parseDatasetLabels(labelsInput);
+  const tools = toolsInput === undefined ? parseToolsFromLabelingConfig(labelingConfigInput) : parseDatasetTools(toolsInput);
+
+  if (!labels.ok) {
+    return labels;
+  }
+
+  if (!tools.ok) {
+    return tools;
+  }
+
+  return {
+    ok: true,
+    labels: labels.labels,
+    tools: tools.tools
+  };
+}
+
+function parseDatasetLabels(value: unknown): { ok: true; labels: ParsedDatasetLabel[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) {
+    return { ok: false, error: "Labels must be an array." };
+  }
+
+  if (value.length > 100) {
+    return { ok: false, error: "A dataset can have up to 100 labels." };
+  }
+
+  const labels: ParsedDatasetLabel[] = [];
+  const names = new Set<string>();
+  const shortcuts = new Set<string>();
+
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { ok: false, error: "Each label must be an object." };
+    }
+
+    const label = item as Record<string, unknown>;
+    const name = normalizeText(label.name);
+    const color = normalizeText(label.color) ?? fallbackLabelColors[index % fallbackLabelColors.length];
+    const shortcutKey = normalizeText(label.shortcutKey);
+
+    if (!name) {
+      return { ok: false, error: "Every label needs a name." };
+    }
+
+    if (name.length > 80) {
+      return { ok: false, error: "Label names must be 80 characters or fewer." };
+    }
+
+    if (names.has(name.toLowerCase())) {
+      return { ok: false, error: `Duplicate label: ${name}.` };
+    }
+
+    if (shortcutKey) {
+      if (!/^[A-Za-z0-9]$/.test(shortcutKey)) {
+        return { ok: false, error: "Label shortcuts must be one letter or number." };
+      }
+
+      if (shortcuts.has(shortcutKey.toLowerCase())) {
+        return { ok: false, error: `Duplicate shortcut: ${shortcutKey}.` };
+      }
+
+      shortcuts.add(shortcutKey.toLowerCase());
+    }
+
+    names.add(name.toLowerCase());
+    labels.push({
+      color,
+      name,
+      ...(shortcutKey ? { shortcutKey } : {}),
+      ...(isPlainJsonObject(label.metadata) ? { metadata: label.metadata as Prisma.InputJsonObject } : {})
+    });
+  }
+
+  return { ok: true, labels };
+}
+
+function parseDatasetTools(value: unknown): { ok: true; tools: ParsedDatasetTool[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) {
+    return { ok: false, error: "Annotation tools must be an array." };
+  }
+
+  const tools: ParsedDatasetTool[] = [];
+  const seen = new Set<AnnotationTool>();
+
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { ok: false, error: "Each annotation tool must be an object." };
+    }
+
+    const toolConfig = item as Record<string, unknown>;
+    const tool = parseEnumValue(AnnotationTool, toolConfig.tool);
+
+    if (!tool) {
+      return { ok: false, error: "Choose a valid annotation tool." };
+    }
+
+    if (seen.has(tool)) {
+      continue;
+    }
+
+    seen.add(tool);
+    tools.push({
+      tool,
+      enabled: normalizeBoolean(toolConfig.enabled) ?? true,
+      ...(isPlainJsonObject(toolConfig.configJson) ? { configJson: toolConfig.configJson as Prisma.InputJsonObject } : {})
+    });
+  }
+
+  return { ok: true, tools };
+}
+
+function parseLabelsFromLabelingConfig(value: unknown): { ok: true; labels: ParsedDatasetLabel[] } | { ok: false; error: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("labels" in value)) {
+    return { ok: true, labels: [] };
+  }
+
+  return parseDatasetLabels((value as { labels?: unknown }).labels);
+}
+
+function parseToolsFromLabelingConfig(value: unknown): { ok: true; tools: ParsedDatasetTool[] } | { ok: false; error: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("tools" in value)) {
+    return { ok: true, tools: [] };
+  }
+
+  return parseDatasetTools((value as { tools?: unknown }).tools);
+}
+
+function hasDatasetLabelConfig({
+  labelingConfig,
+  labelsCount,
+  toolsCount
+}: {
+  labelingConfig: unknown;
+  labelsCount: number;
+  toolsCount: number;
+}) {
+  return labelsCount > 0 && toolsCount > 0 && Boolean(labelingConfig && typeof labelingConfig === "object");
+}
+
+async function syncDatasetLabels(tx: Prisma.TransactionClient, datasetId: string, labels: ParsedDatasetLabel[]) {
+  await tx.datasetLabel.deleteMany({
+    where: {
+      datasetId
+    }
+  });
+
+  if (labels.length === 0) {
+    return;
+  }
+
+  await tx.datasetLabel.createMany({
+    data: labels.map((label) => ({
+      datasetId,
+      name: label.name,
+      color: label.color,
+      shortcutKey: label.shortcutKey,
+      metadata: label.metadata
+    }))
+  });
+}
+
+async function syncDatasetTools(tx: Prisma.TransactionClient, datasetId: string, tools: ParsedDatasetTool[]) {
+  await tx.datasetTool.deleteMany({
+    where: {
+      datasetId
+    }
+  });
+
+  if (tools.length === 0) {
+    return;
+  }
+
+  await tx.datasetTool.createMany({
+    data: tools.map((tool) => ({
+      datasetId,
+      tool: tool.tool,
+      enabled: tool.enabled,
+      configJson: tool.configJson
+    }))
+  });
+}
+
+function normalizeBoolean(value: unknown) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    if (["true", "1", "on"].includes(value.toLowerCase())) {
+      return true;
+    }
+
+    if (["false", "0", "off"].includes(value.toLowerCase())) {
+      return false;
+    }
+  }
+
+  return undefined;
+}
+
+function isPlainJsonObject(value: unknown): value is Prisma.InputJsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+const fallbackLabelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
 
 function chunkArray<T>(items: T[], size: number) {
   const chunks: T[][] = [];

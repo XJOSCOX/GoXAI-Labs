@@ -201,12 +201,7 @@ export interface ProjectSummary {
   allowExternalMembers: boolean;
   joinCode: string | null;
   joinCodeEnabled: boolean;
-  annotationTemplateId: string | null;
   instructions: string | null;
-  labelingConfig: Record<string, unknown> | null;
-  annotationTemplate: AnnotationTemplateSummary | null;
-  labels: ProjectLabelSummary[];
-  tools: ProjectToolSummary[];
   currentUserRole: string | null;
   canManage: boolean;
   canCreateDataset: boolean;
@@ -232,7 +227,6 @@ export interface ProjectSummary {
 export interface CreateProjectInput {
   organizationId: string;
   workspaceId?: string;
-  annotationTemplateId?: string;
   name: string;
   description?: string;
   dataType: string;
@@ -241,9 +235,6 @@ export interface CreateProjectInput {
   allowExternalMembers?: boolean;
   joinCodeEnabled?: boolean;
   instructions?: string;
-  labelingConfig?: Record<string, unknown> | null;
-  labels?: ProjectLabelInput[];
-  tools?: ProjectToolInput[];
 }
 
 export interface UpdateProjectInput {
@@ -255,9 +246,6 @@ export interface UpdateProjectInput {
   allowExternalMembers?: boolean;
   joinCodeEnabled?: boolean;
   instructions?: string;
-  labelingConfig?: Record<string, unknown> | null;
-  labels?: ProjectLabelInput[];
-  tools?: ProjectToolInput[];
 }
 
 export interface AnnotationTemplateSummary {
@@ -268,7 +256,7 @@ export interface AnnotationTemplateSummary {
   configJson: Record<string, unknown>;
 }
 
-export interface ProjectLabelSummary {
+export interface DatasetLabelSummary {
   id: string;
   name: string;
   color: string;
@@ -278,7 +266,7 @@ export interface ProjectLabelSummary {
   updatedAt: string;
 }
 
-export interface ProjectToolSummary {
+export interface DatasetToolSummary {
   id: string;
   tool: string;
   enabled: boolean;
@@ -287,13 +275,13 @@ export interface ProjectToolSummary {
   updatedAt: string;
 }
 
-export interface ProjectLabelInput {
+export interface DatasetLabelInput {
   color?: string;
   name: string;
   shortcutKey?: string;
 }
 
-export interface ProjectToolInput {
+export interface DatasetToolInput {
   configJson?: Record<string, unknown>;
   enabled?: boolean;
   tool: string;
@@ -307,7 +295,12 @@ export interface DatasetSummary {
   description: string | null;
   version: number;
   status: string;
+  annotationTemplateId: string | null;
+  labelingConfig: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
+  annotationTemplate: AnnotationTemplateSummary | null;
+  labels: DatasetLabelSummary[];
+  tools: DatasetToolSummary[];
   organization: {
     id: string;
     name: string;
@@ -338,6 +331,9 @@ export interface UpdateDatasetInput {
   name?: string;
   description?: string;
   status?: string;
+  labelingConfig?: Record<string, unknown> | null;
+  labels?: DatasetLabelInput[];
+  tools?: DatasetToolInput[];
 }
 
 export interface AssetSummary {
@@ -370,6 +366,9 @@ export interface AssetSummary {
     id: string;
     name: string;
     version: number;
+    labelingConfig: Record<string, unknown> | null;
+    labels: DatasetLabelSummary[];
+    tools: DatasetToolSummary[];
   } | null;
   createdAt: string;
   updatedAt: string;
@@ -432,14 +431,14 @@ export interface TaskSummary {
     slug: string;
     organizationId: string;
     status: string;
-    labelingConfig: Record<string, unknown> | null;
-    labels: ProjectLabelSummary[];
-    tools: ProjectToolSummary[];
   };
   dataset: {
     id: string;
     name: string;
     version: number;
+    labelingConfig: Record<string, unknown> | null;
+    labels: DatasetLabelSummary[];
+    tools: DatasetToolSummary[];
   } | null;
   asset: {
     id: string;

@@ -54,8 +54,8 @@ export function TaskDetailPage() {
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
   const pageTitle = task?.asset?.fileName ?? "Task workspace";
-  const labelOptions = useMemo(() => getLabelOptions(task?.project.labels, task?.project.labelingConfig), [task?.project.labels, task?.project.labelingConfig]);
-  const toolOptions = useMemo(() => getToolOptions(task?.project.tools), [task?.project.tools]);
+  const labelOptions = useMemo(() => getLabelOptions(task?.dataset?.labels, task?.dataset?.labelingConfig), [task?.dataset?.labels, task?.dataset?.labelingConfig]);
+  const toolOptions = useMemo(() => getToolOptions(task?.dataset?.tools), [task?.dataset?.tools]);
   const supportsBbox = toolOptions.includes("BBOX");
   const supportsPolygon = toolOptions.includes("POLYGON");
 
@@ -695,11 +695,11 @@ function clamp(value: number) {
 }
 
 function getLabelOptions(
-  projectLabels: { color: string; name: string; shortcutKey: string | null }[] | undefined,
+  datasetLabels: { color: string; name: string; shortcutKey: string | null }[] | undefined,
   config: Record<string, unknown> | null | undefined
 ): LabelOption[] {
-  if (projectLabels && projectLabels.length > 0) {
-    return projectLabels.map((label, index) => ({
+  if (datasetLabels && datasetLabels.length > 0) {
+    return datasetLabels.map((label, index) => ({
       color: label.color || labelColors[index % labelColors.length],
       name: label.name,
       shortcutKey: label.shortcutKey
@@ -746,8 +746,8 @@ function getLabelColor(labelName: string, options: LabelOption[]) {
   return options.find((option) => option.name === labelName)?.color ?? labelColors[0];
 }
 
-function getToolOptions(projectTools: { enabled: boolean; tool: string }[] | undefined): Array<"BBOX" | "POLYGON"> {
-  const enabledTools = (projectTools ?? []).filter((tool) => tool.enabled).map((tool) => tool.tool);
+function getToolOptions(datasetTools: { enabled: boolean; tool: string }[] | undefined): Array<"BBOX" | "POLYGON"> {
+  const enabledTools = (datasetTools ?? []).filter((tool) => tool.enabled).map((tool) => tool.tool);
   const supported = enabledTools.filter((tool): tool is "BBOX" | "POLYGON" => tool === "BBOX" || tool === "POLYGON");
 
   return supported.length > 0 ? supported : ["BBOX"];

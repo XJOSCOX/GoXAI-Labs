@@ -777,7 +777,14 @@ const taskIncludes = {
       slug: true,
       organizationId: true,
       status: true,
-      accessMode: true,
+      accessMode: true
+    }
+  },
+  dataset: {
+    select: {
+      id: true,
+      name: true,
+      version: true,
       labelingConfig: true,
       labels: {
         orderBy: {
@@ -802,13 +809,6 @@ const taskIncludes = {
           configJson: true
         }
       }
-    }
-  },
-  dataset: {
-    select: {
-      id: true,
-      name: true,
-      version: true
     }
   },
   asset: {
@@ -884,6 +884,11 @@ type TaskWithRelations = Task & {
     organizationId: string;
     status: ProjectStatus;
     accessMode: ProjectAccessMode;
+  };
+  dataset: {
+    id: string;
+    name: string;
+    version: number;
     labelingConfig: unknown;
     labels: {
       id: string;
@@ -898,11 +903,6 @@ type TaskWithRelations = Task & {
       enabled: boolean;
       configJson: unknown;
     }[];
-  };
-  dataset: {
-    id: string;
-    name: string;
-    version: number;
   } | null;
   asset: {
     id: string;

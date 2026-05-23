@@ -533,17 +533,12 @@ model Project {
   allowExternalMembers Boolean  @default(false) @map("allow_external_members")
   joinCode        String?       @unique @map("join_code")
   joinCodeEnabled Boolean       @default(false) @map("join_code_enabled")
-  annotationTemplateId String?  @map("annotation_template_id")
-  labelingConfig  Json?         @map("labeling_config")
   instructions    String?
   createdById     String        @map("created_by_id")
 
   organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   workspace    Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   createdBy    User            @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  annotationTemplate AnnotationTemplate? @relation(fields: [annotationTemplateId], references: [id], onDelete: SetNull)
-  labels       ProjectLabel[]
-  tools        ProjectTool[]
   datasets     Dataset[]
   assets       StorageAsset[]
   tasks        Task[]
@@ -561,7 +556,6 @@ model Project {
 
   @@index([organizationId])
   @@index([workspaceId])
-  @@index([annotationTemplateId])
   @@index([createdById])
   @@index([status])
   @@index([dataType])
@@ -582,7 +576,7 @@ model AnnotationTemplate {
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   createdBy    User?         @relation("AnnotationTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  projects     Project[]
+  datasets     Dataset[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -592,45 +586,6 @@ model AnnotationTemplate {
   @@index([dataType])
   @@unique([organizationId, name])
   @@map("annotation_templates")
-}
-
-model ProjectLabel {
-  id          String  @id @default(cuid())
-  projectId   String  @map("project_id")
-  name        String
-  color       String
-  shortcutKey String? @map("shortcut_key")
-  metadata    Json?
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  @@index([projectId])
-  @@index([name])
-  @@unique([projectId, name])
-  @@unique([projectId, shortcutKey])
-  @@map("project_labels")
-}
-
-model ProjectTool {
-  id         String         @id @default(cuid())
-  projectId  String         @map("project_id")
-  tool       AnnotationTool
-  enabled    Boolean        @default(true)
-  configJson Json?          @map("config_json")
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  @@index([projectId])
-  @@index([tool])
-  @@index([enabled])
-  @@unique([projectId, tool])
-  @@map("project_tools")
 }
 
 model ProjectMembership {
@@ -665,12 +620,17 @@ model Dataset {
   description    String?
   version        Int           @default(1)
   status         DatasetStatus @default(DRAFT)
+  annotationTemplateId String?  @map("annotation_template_id")
+  labelingConfig Json?          @map("labeling_config")
   createdById    String        @map("created_by_id")
   metadata       Json?
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  annotationTemplate AnnotationTemplate? @relation(fields: [annotationTemplateId], references: [id], onDelete: SetNull)
   createdBy    User             @relation("DatasetCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  labels       DatasetLabel[]
+  tools        DatasetTool[]
   versions     DatasetVersion[]
   assets       StorageAsset[]
   tasks        Task[]
@@ -682,9 +642,49 @@ model Dataset {
 
   @@index([organizationId])
   @@index([projectId])
+  @@index([annotationTemplateId])
   @@index([createdById])
   @@index([status])
   @@map("datasets")
+}
+
+model DatasetLabel {
+  id          String  @id @default(cuid())
+  datasetId   String  @map("dataset_id")
+  name        String
+  color       String
+  shortcutKey String? @map("shortcut_key")
+  metadata    Json?
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([datasetId])
+  @@index([name])
+  @@unique([datasetId, name])
+  @@unique([datasetId, shortcutKey])
+  @@map("dataset_labels")
+}
+
+model DatasetTool {
+  id         String         @id @default(cuid())
+  datasetId  String         @map("dataset_id")
+  tool       AnnotationTool
+  enabled    Boolean        @default(true)
+  configJson Json?          @map("config_json")
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([datasetId])
+  @@index([tool])
+  @@index([enabled])
+  @@unique([datasetId, tool])
+  @@map("dataset_tools")
 }
 
 model DatasetVersion {

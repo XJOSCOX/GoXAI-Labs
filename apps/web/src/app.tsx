@@ -10,6 +10,7 @@ import { RegisterPage } from "./pages/auth/RegisterPage";
 import { AccountPage } from "./pages/account/AccountPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { DatasetDetailPage } from "./pages/datasets/DatasetDetailPage";
+import { DatasetLabelConfigPage } from "./pages/datasets/DatasetLabelConfigPage";
 import { DatasetsPage } from "./pages/datasets/DatasetsPage";
 import { OrganizationSetupPage } from "./pages/organizations/OrganizationSetupPage";
 import { ProjectDetailPage, ProjectsPage } from "./pages/projects/ProjectsPage";
@@ -56,6 +57,14 @@ export function App() {
             element={
               <DatasetWorkspaceRoute>
                 <DatasetDetailPage />
+              </DatasetWorkspaceRoute>
+            }
+          />
+          <Route
+            path="datasets/:datasetId/label-config"
+            element={
+              <DatasetWorkspaceRoute>
+                <DatasetLabelConfigPage />
               </DatasetWorkspaceRoute>
             }
           />

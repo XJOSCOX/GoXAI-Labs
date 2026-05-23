@@ -62,10 +62,7 @@ export function ProjectsPage() {
         memberLimit: parseOptionalInteger(getFormValue(event, "memberLimit")),
         allowExternalMembers: new FormData(event.currentTarget).get("allowExternalMembers") === "on",
         joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
-        instructions: getFormValue(event, "instructions"),
-        labelingConfig: parseLabelingConfigFromText(getFormValue(event, "labelNames")),
-        labels: parseProjectLabelsFromText(getFormValue(event, "labelNames")),
-        tools: parseProjectToolsFromForm(event.currentTarget)
+        instructions: getFormValue(event, "instructions")
       });
 
       form.reset();
@@ -269,16 +266,6 @@ function ProjectCreateForm({
         <textarea name="description" placeholder="Short internal summary" rows={3} disabled={creatableOrganizations.length === 0} />
       </label>
       <label className="wide">
-        Labels
-        <textarea
-          name="labelNames"
-          placeholder="One label per line, for example: Vehicle, Damage, License plate"
-          rows={3}
-          disabled={creatableOrganizations.length === 0}
-        />
-      </label>
-      <AnnotationToolPicker disabled={creatableOrganizations.length === 0} />
-      <label className="wide">
         Instructions
         <textarea
           name="instructions"
@@ -320,37 +307,6 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
   );
 }
 
-function AnnotationToolPicker({
-  disabled = false,
-  selectedTools = ["BBOX"]
-}: {
-  disabled?: boolean;
-  selectedTools?: string[];
-}) {
-  return (
-    <fieldset className="wide annotation-tool-picker">
-      <legend>Annotation tools</legend>
-      <div className="annotation-tool-grid">
-        {annotationToolOptions.map((tool) => (
-          <label className="check-row" key={tool.value}>
-            <input
-              defaultChecked={selectedTools.includes(tool.value)}
-              disabled={disabled}
-              name="annotationTools"
-              type="checkbox"
-              value={tool.value}
-            />
-            <span>
-              {tool.label}
-              <small>{tool.description}</small>
-            </span>
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  );
-}
-
 function ProjectSettingsPanel({
   onChanged,
   onDeleted,
@@ -388,10 +344,7 @@ function ProjectSettingsPanel({
         memberLimit: parseNullableInteger(getFormValue(event, "memberLimit")),
         allowExternalMembers: new FormData(event.currentTarget).get("allowExternalMembers") === "on",
         joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
-        instructions: getFormValue(event, "instructions"),
-        labelingConfig: parseLabelingConfigFromText(getFormValue(event, "labelNames")),
-        labels: parseProjectLabelsFromText(getFormValue(event, "labelNames")),
-        tools: parseProjectToolsFromForm(event.currentTarget)
+        instructions: getFormValue(event, "instructions")
       });
       setMessage("Project updated.");
       await onChanged();
@@ -524,11 +477,6 @@ function ProjectSettingsPanel({
         Description
         <textarea name="description" defaultValue={project.description ?? ""} rows={3} />
       </label>
-      <label className="wide">
-        Labels
-        <textarea name="labelNames" defaultValue={projectLabelsToText(project)} rows={3} />
-      </label>
-      <AnnotationToolPicker selectedTools={project.tools.filter((tool) => tool.enabled).map((tool) => tool.tool)} />
       <label className="wide">
         Instructions
         <textarea name="instructions" defaultValue={project.instructions ?? ""} rows={4} />
@@ -678,95 +626,3 @@ function parseOptionalInteger(value: string) {
 function parseNullableInteger(value: string) {
   return value ? Number(value) : null;
 }
-
-function parseLabelingConfigFromText(value: string) {
-  return {
-    labels: parseProjectLabelsFromText(value),
-    tools: []
-  };
-}
-
-function parseProjectLabelsFromText(value: string) {
-  return value
-    .split(/[\n,]/)
-    .map((label) => label.trim())
-    .filter(Boolean)
-    .slice(0, 50)
-    .map((name, index) => ({
-      color: annotationLabelColors[index % annotationLabelColors.length],
-      name,
-      shortcutKey: index < 9 ? String(index + 1) : undefined
-    }));
-}
-
-function parseProjectToolsFromForm(form: HTMLFormElement) {
-  const selected = new FormData(form).getAll("annotationTools").map(String);
-  const tools = selected.length > 0 ? selected : ["BBOX"];
-
-  return tools.map((tool) => ({
-    enabled: true,
-    tool
-  }));
-}
-
-function projectLabelsToText(project: ProjectSummary) {
-  if (project.labels.length > 0) {
-    return project.labels.map((label) => label.name).join("\n");
-  }
-
-  const config = project.labelingConfig;
-
-  if (!config || !Array.isArray(config.labels)) {
-    return "";
-  }
-
-  return config.labels
-    .map((label) => {
-      if (typeof label === "string") {
-        return label;
-      }
-
-      if (label && typeof label === "object" && "name" in label && typeof label.name === "string") {
-        return label.name;
-      }
-
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
-const annotationLabelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
-
-const annotationToolOptions = [
-  {
-    description: "Object detection boxes",
-    label: "Bounding box",
-    value: "BBOX"
-  },
-  {
-    description: "Precise object outlines",
-    label: "Polygon",
-    value: "POLYGON"
-  },
-  {
-    description: "Dense mask painting",
-    label: "Brush",
-    value: "BRUSH"
-  },
-  {
-    description: "Named text ranges",
-    label: "Text span",
-    value: "TEXT_SPAN"
-  },
-  {
-    description: "Pose or landmark points",
-    label: "Keypoint",
-    value: "KEYPOINT"
-  },
-  {
-    description: "Whole asset labels",
-    label: "Classification",
-    value: "CLASSIFICATION"
-  }
-];

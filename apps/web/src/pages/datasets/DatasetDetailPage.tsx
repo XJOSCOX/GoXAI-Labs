@@ -461,10 +461,16 @@ export function DatasetDetailPage() {
                     <h2>{dataset.name}</h2>
                   </div>
                   {dataset.canManage ? (
-                    <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
-                      <Edit3 size={16} />
-                      Edit dataset
-                    </button>
+                    <div className="row-actions compact">
+                      <Link className="secondary-button compact-button" to={`/datasets/${dataset.id}/label-config`}>
+                        <ClipboardList size={16} />
+                        Label config
+                      </Link>
+                      <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
+                        <Edit3 size={16} />
+                        Edit dataset
+                      </button>
+                    </div>
                   ) : null}
                 </div>
                 <dl className="detail-list">
@@ -485,6 +491,10 @@ export function DatasetDetailPage() {
                     <dd>
                       {tasks.length} / {assets.length}
                     </dd>
+                  </div>
+                  <div>
+                    <dt>Label config</dt>
+                    <dd>{dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) ? "Configured" : "Required"}</dd>
                   </div>
                 </dl>
               </section>
