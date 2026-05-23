@@ -3,6 +3,7 @@ import express from "express";
 import { getSupabaseConfig } from "@goxai/database";
 import { getBearerToken, syncUserFromAccessToken } from "./auth.js";
 import { organizationsRouter } from "./organizations.js";
+import { projectsRouter } from "./projects.js";
 
 export const app = express();
 
@@ -89,3 +90,23 @@ app.post("/api/auth/sync", async (request, response) => {
 });
 
 app.use("/api/organizations", organizationsRouter);
+app.use("/api/projects", projectsRouter);
+
+app.use(
+  (
+    error: unknown,
+    _request: express.Request,
+    response: express.Response,
+    _next: express.NextFunction
+  ) => {
+    console.error(error);
+
+    if (response.headersSent) {
+      return;
+    }
+
+    response.status(500).json({
+      error: "Something went wrong while processing the request."
+    });
+  }
+);

@@ -45,6 +45,39 @@ export interface CreateOrganizationInput {
   planTier: string;
 }
 
+export interface ProjectSummary {
+  id: string;
+  organizationId: string;
+  workspaceId: string | null;
+  name: string;
+  slug: string;
+  description: string | null;
+  dataType: string;
+  status: string;
+  instructions: string | null;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateProjectInput {
+  organizationId: string;
+  workspaceId?: string;
+  name: string;
+  description?: string;
+  dataType: string;
+  instructions?: string;
+}
+
 export async function createSupabaseBrowserClient() {
   const response = await fetch(`${apiUrl}/api/config`);
 
@@ -112,6 +145,29 @@ export async function createOrganization(session: Session, input: CreateOrganiza
   };
 }
 
+export async function listProjects(session: Session) {
+  const response = await authenticatedFetch(session, "/api/projects");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load projects."));
+  }
+
+  return ((await response.json()) as { projects: ProjectSummary[] }).projects;
+}
+
+export async function createProject(session: Session, input: CreateProjectInput) {
+  const response = await authenticatedFetch(session, "/api/projects", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create project."));
+  }
+
+  return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
 function authenticatedFetch(session: Session, path: string, init: RequestInit = {}) {
   return fetch(`${apiUrl}${path}`, {
     ...init,
@@ -121,6 +177,12 @@ function authenticatedFetch(session: Session, path: string, init: RequestInit = 
       ...init.headers
     }
   });
+}
+
+async function getApiError(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => ({}))) as { error?: string };
+
+  return payload.error ?? fallback;
 }
 
 export type { SupabaseClient };

@@ -15,8 +15,11 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import {
   createOrganization,
+  createProject,
   listOrganizations,
-  type OrganizationSummary
+  listProjects,
+  type OrganizationSummary,
+  type ProjectSummary
 } from "./api";
 import { AuthProvider, getFormValue, useAuth } from "./auth";
 import { useTheme } from "./theme";
@@ -277,6 +280,7 @@ function ThemeToggle() {
 function DashboardPage() {
   const { dbUser, session } = useAuth();
   const { organizations } = useOrganizations(session);
+  const { projects } = useProjects(session);
   const primaryMembership = organizations[0]?.role ?? "Not assigned";
 
   return (
@@ -296,7 +300,7 @@ function DashboardPage() {
         <article className="stat-card">
           <FolderKanban size={20} />
           <span>Projects</span>
-          <strong>0</strong>
+          <strong>{projects.length}</strong>
         </article>
         <article className="stat-card">
           <BriefcaseBusiness size={20} />
@@ -438,7 +442,60 @@ function OrganizationSetupPage() {
 
 function ProjectsPage() {
   const { session } = useAuth();
-  const { organizations } = useOrganizations(session);
+  const { error: organizationError, loading: organizationsLoading, organizations } = useOrganizations(session);
+  const {
+    error: projectsError,
+    loading: projectsLoading,
+    projects,
+    reload: reloadProjects,
+    setError: setProjectsError
+  } = useProjects(session);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const defaultOrganization = organizations[0];
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setSavedMessage(null);
+    setProjectsError(null);
+
+    if (!session) {
+      setProjectsError("Authentication required.");
+      return;
+    }
+
+    const organizationId = getFormValue(event, "organizationId");
+    const organization = organizations.find((item) => item.id === organizationId);
+
+    if (!organization) {
+      setProjectsError("Choose an organization before creating a project.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const project = await createProject(session, {
+        organizationId,
+        workspaceId: organization.workspace?.id,
+        name: getFormValue(event, "name"),
+        description: getFormValue(event, "description"),
+        dataType: getFormValue(event, "dataType"),
+        instructions: getFormValue(event, "instructions")
+      });
+
+      form.reset();
+      setSavedMessage(`${project.name} was created as a draft.`);
+      setShowForm(false);
+      await reloadProjects();
+    } catch (reason) {
+      setProjectsError(reason instanceof Error ? reason.message : "Unable to create project.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <section className="page-stack">
@@ -447,11 +504,62 @@ function ProjectsPage() {
           <p className="eyebrow">Projects</p>
           <h1>Projects list</h1>
         </div>
-        <button className="primary-button" type="button">
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => setShowForm((value) => !value)}
+          disabled={organizations.length === 0 || organizationsLoading}
+        >
           <FolderKanban size={18} />
-          New project
+          {showForm ? "Close" : "New project"}
         </button>
       </div>
+      {(organizationError ?? projectsError) && (
+        <p className="form-error">{organizationError ?? projectsError}</p>
+      )}
+      {savedMessage && <p className="form-success">{savedMessage}</p>}
+      {showForm && (
+        <form className="panel project-form" onSubmit={handleSubmit}>
+          <label>
+            Organization
+            <select name="organizationId" defaultValue={defaultOrganization?.id ?? ""} required>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Data type
+            <select name="dataType" defaultValue="IMAGE">
+              <option value="IMAGE">Image</option>
+              <option value="VIDEO">Video</option>
+              <option value="AUDIO">Audio</option>
+              <option value="TEXT">Text</option>
+              <option value="PDF">PDF</option>
+              <option value="TIME_SERIES">Time series</option>
+              <option value="MULTIMODAL">Multimodal</option>
+            </select>
+          </label>
+          <label className="wide">
+            Project name
+            <input name="name" placeholder="Vehicle damage labeling" required />
+          </label>
+          <label className="wide">
+            Description
+            <textarea name="description" placeholder="Short internal summary" rows={3} />
+          </label>
+          <label className="wide">
+            Instructions
+            <textarea name="instructions" placeholder="Labeling rules, review expectations, or QA notes" rows={4} />
+          </label>
+          <button className="primary-button wide" type="submit" disabled={saving}>
+            <FolderKanban size={18} />
+            {saving ? "Creating" : "Create draft project"}
+          </button>
+        </form>
+      )}
       <section className="table-panel">
         <div className="table-row table-head">
           <span>Name</span>
@@ -459,17 +567,43 @@ function ProjectsPage() {
           <span>Status</span>
           <span>Updated</span>
         </div>
-        <div className="empty-state">
-          <FolderKanban size={28} />
-          <strong>No projects yet</strong>
-          <span>
-            {organizations.length > 0
-              ? "Organization foundation is ready. Project creation is the next backend step."
-              : "Create an organization first, then projects and datasets come next."}
-          </span>
-        </div>
+        {projectsLoading || organizationsLoading ? (
+          <div className="empty-state">
+            <FolderKanban size={28} />
+            <strong>Loading projects</strong>
+            <span>Checking your organization access and project records.</span>
+          </div>
+        ) : projects.length > 0 ? (
+          projects.map((project) => <ProjectRow key={project.id} project={project} />)
+        ) : (
+          <div className="empty-state">
+            <FolderKanban size={28} />
+            <strong>No projects yet</strong>
+            <span>
+              {organizations.length > 0
+                ? "Create the first draft project to prepare dataset ingestion."
+                : "Create an organization first, then projects and datasets come next."}
+            </span>
+          </div>
+        )}
       </section>
     </section>
+  );
+}
+
+function ProjectRow({ project }: { project: ProjectSummary }) {
+  return (
+    <article className="table-row project-row">
+      <span>
+        <strong>{project.name}</strong>
+        <small>{project.organization.name}</small>
+      </span>
+      <span>{formatEnum(project.dataType)}</span>
+      <span>
+        <span className="status-pill compact">{formatEnum(project.status)}</span>
+      </span>
+      <span>{formatDate(project.updatedAt)}</span>
+    </article>
   );
 }
 
@@ -507,6 +641,58 @@ function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
     reload,
     setError
   };
+}
+
+function useProjects(session: ReturnType<typeof useAuth>["session"]) {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!session) {
+      setProjects([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setProjects(await listProjects(session));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load projects.");
+    } finally {
+      setLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    projects,
+    reload,
+    setError
+  };
+}
+
+function formatEnum(value: string) {
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric"
+  }).format(new Date(value));
 }
 
 function LoadingScreen() {
