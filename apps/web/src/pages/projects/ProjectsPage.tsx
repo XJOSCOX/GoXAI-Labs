@@ -70,18 +70,6 @@ export function ProjectsPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-actions">
-        <span />
-        <button
-          className="primary-button"
-          type="button"
-          onClick={() => setShowForm((value) => !value)}
-          disabled={organizations.length === 0 || organizationsLoading}
-        >
-          <FolderKanban size={18} />
-          {showForm ? "Close" : "New project"}
-        </button>
-      </div>
       {(organizationError ?? projectsError) && (
         <p className="form-error">{organizationError ?? projectsError}</p>
       )}
@@ -134,6 +122,21 @@ export function ProjectsPage() {
         </form>
       )}
       <section className="table-panel">
+        <div className="table-toolbar">
+          <div>
+            <p className="eyebrow">Projects</p>
+            <h2>Project records</h2>
+          </div>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => setShowForm((value) => !value)}
+            disabled={organizations.length === 0 || organizationsLoading}
+          >
+            <FolderKanban size={18} />
+            {showForm ? "Close" : "New project"}
+          </button>
+        </div>
         <div className="table-row table-head">
           <span>Name</span>
           <span>Data type</span>
@@ -307,12 +310,6 @@ export function ProjectDetailPage() {
         <Link className="back-link" to="/projects">
           Projects
         </Link>
-        {project && (
-          <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
-            <Database size={18} />
-            New dataset
-          </button>
-        )}
       </div>
       {(projectError ?? datasetsError) && <p className="form-error">{projectError ?? datasetsError}</p>}
       {projectLoading ? (
@@ -342,7 +339,17 @@ export function ProjectDetailPage() {
                 </div>
               </dl>
             </section>
-            <DatasetsTable datasets={datasets} loading={datasetsLoading} projectScoped />
+            <DatasetsTable
+              action={
+                <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
+                  <Database size={18} />
+                  New dataset
+                </button>
+              }
+              datasets={datasets}
+              loading={datasetsLoading}
+              projectScoped
+            />
           </section>
           <aside className="side-column">
             <ProjectSettingsPanel

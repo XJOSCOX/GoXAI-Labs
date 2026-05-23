@@ -32,15 +32,11 @@ export function OrganizationSetupPage() {
 
   return (
     <section className="page-stack organization-page">
-      {(organizationId || organizations.length > 0) && (
+      {organizationId && (
         <div className="page-actions">
-          {organizationId ? (
-            <Link className="back-link" to="/organization">
-              All organizations
-            </Link>
-          ) : (
-            <span />
-          )}
+          <Link className="back-link" to="/organization">
+            All organizations
+          </Link>
           {organizations.length > 0 && (
             <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
               <Building2 size={18} />
@@ -64,7 +60,13 @@ export function OrganizationSetupPage() {
                 <p className="eyebrow">Existing organizations</p>
                 <h2>{organizations.length} organization{organizations.length === 1 ? "" : "s"}</h2>
               </div>
-              <span className="muted-copy">Select one to manage settings and members.</span>
+              <div className="section-actions">
+                <span className="muted-copy">Select one to manage settings and members.</span>
+                <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+                  <Building2 size={18} />
+                  New organization
+                </button>
+              </div>
             </div>
             <div className="org-card-grid">
               {organizations.map((organization) => (

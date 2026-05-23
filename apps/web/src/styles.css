@@ -808,6 +808,7 @@ textarea:focus {
   gap: 16px;
   min-height: calc(100vh - 66px);
   width: 100%;
+  max-width: min(1400px, calc(100vw - 48px));
   padding: 20px 24px 28px;
 }
 
@@ -823,6 +824,38 @@ textarea:focus {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
+}
+
+.section-actions,
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.section-actions {
+  justify-content: flex-end;
+}
+
+.table-toolbar {
+  padding: 16px 18px;
+}
+
+.section-actions .muted-copy,
+.table-toolbar .muted-copy {
+  margin-bottom: 0;
+}
+
+.table-toolbar h2 {
+  margin-bottom: 0;
+}
+
+.section-actions .primary-button,
+.table-toolbar .primary-button {
+  flex: 0 0 auto;
 }
 
 .modal-backdrop {
@@ -1704,6 +1737,10 @@ textarea:focus {
     padding: 16px;
   }
 
+  .page-stack {
+    max-width: 100%;
+  }
+
   .auth-form.two-column,
   .signup-type-picker,
   .stat-grid,
@@ -1731,10 +1768,24 @@ textarea:focus {
   .page-actions,
   .asset-toolbar,
   .asset-preview-head,
+  .section-actions,
+  .section-head,
+  .table-toolbar,
   .task-panel-head,
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .section-actions,
+  .table-toolbar {
+    width: 100%;
+  }
+
+  .section-actions .primary-button,
+  .table-toolbar .primary-button {
+    width: 100%;
+    justify-content: center;
   }
 
   .topbar-actions {

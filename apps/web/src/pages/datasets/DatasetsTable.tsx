@@ -1,19 +1,29 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Database } from "lucide-react";
 import type { DatasetSummary } from "../../api";
 import { formatDate, formatEnum } from "../../utils/format";
 
 export function DatasetsTable({
+  action,
   datasets,
   loading,
   projectScoped = false
 }: {
+  action?: ReactNode;
   datasets: DatasetSummary[];
   loading: boolean;
   projectScoped?: boolean;
 }) {
   return (
     <section className="table-panel">
+      <div className="table-toolbar">
+        <div>
+          <p className="eyebrow">Datasets</p>
+          <h2>{projectScoped ? "Project datasets" : "Dataset records"}</h2>
+        </div>
+        {action}
+      </div>
       <div className="table-row table-head">
         <span>Name</span>
         <span>{projectScoped ? "Version" : "Project"}</span>

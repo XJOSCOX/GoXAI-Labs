@@ -19,18 +19,6 @@ export function DatasetsPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-actions">
-        <span />
-        <button
-          className="primary-button"
-          type="button"
-          onClick={() => setShowDatasetModal(true)}
-          disabled={projects.length === 0 || projectsLoading}
-        >
-          <Database size={18} />
-          New dataset
-        </button>
-      </div>
       {(projectsError ?? datasetsError) && <p className="form-error">{projectsError ?? datasetsError}</p>}
       {showDatasetModal && (
         <DatasetCreateModal
@@ -41,7 +29,21 @@ export function DatasetsPage() {
           setPageError={setDatasetsError}
         />
       )}
-      <DatasetsTable datasets={datasets} loading={datasetsLoading || projectsLoading} />
+      <DatasetsTable
+        action={
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => setShowDatasetModal(true)}
+            disabled={projects.length === 0 || projectsLoading}
+          >
+            <Database size={18} />
+            New dataset
+          </button>
+        }
+        datasets={datasets}
+        loading={datasetsLoading || projectsLoading}
+      />
     </section>
   );
 }
