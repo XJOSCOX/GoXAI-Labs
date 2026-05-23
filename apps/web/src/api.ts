@@ -202,6 +202,7 @@ export interface ProjectSummary {
   joinCode: string | null;
   joinCodeEnabled: boolean;
   instructions: string | null;
+  labelingConfig: Record<string, unknown> | null;
   currentUserRole: string | null;
   canManage: boolean;
   canCreateDataset: boolean;
@@ -235,6 +236,7 @@ export interface CreateProjectInput {
   allowExternalMembers?: boolean;
   joinCodeEnabled?: boolean;
   instructions?: string;
+  labelingConfig?: Record<string, unknown> | null;
 }
 
 export interface UpdateProjectInput {
@@ -246,6 +248,7 @@ export interface UpdateProjectInput {
   allowExternalMembers?: boolean;
   joinCodeEnabled?: boolean;
   instructions?: string;
+  labelingConfig?: Record<string, unknown> | null;
 }
 
 export interface DatasetSummary {
@@ -381,6 +384,7 @@ export interface TaskSummary {
     slug: string;
     organizationId: string;
     status: string;
+    labelingConfig: Record<string, unknown> | null;
   };
   dataset: {
     id: string;

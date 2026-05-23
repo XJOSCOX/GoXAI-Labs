@@ -1,7 +1,7 @@
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Eye, Save, Send, SquareDashedMousePointer, UserCheck } from "lucide-react";
-import { assignTaskToSelf, getAssetAccessUrl, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary } from "../../api";
+import { ArrowLeft, Eye, Minus, Plus, RotateCcw, Save, Send, SquareDashedMousePointer } from "lucide-react";
+import { getAssetAccessUrl, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary } from "../../api";
 import { useAuth } from "../../auth";
 import { useTask } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
@@ -15,7 +15,14 @@ interface BBox {
   y: number;
 }
 
+interface LabelOption {
+  color: string;
+  name: string;
+}
+
 const defaultLabel = "Object";
+const labelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
+const zoomStep = 0.25;
 
 export function TaskDetailPage() {
   const { taskId = "" } = useParams();
@@ -27,19 +34,76 @@ export function TaskDetailPage() {
   const [boxes, setBoxes] = useState<BBox[]>([]);
   const [draftBox, setDraftBox] = useState<BBox | null>(null);
   const [activeLabel, setActiveLabel] = useState(defaultLabel);
+  const [zoom, setZoom] = useState(1);
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
-  const imageFrameRef = useRef<HTMLDivElement | null>(null);
+  const annotationCanvasRef = useRef<HTMLDivElement | null>(null);
   const isImage = task?.asset?.mimeType.startsWith("image/") ?? false;
   const canAnnotate = Boolean(task?.canWork && task.status !== "SUBMITTED" && task.status !== "APPROVED");
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
   const pageTitle = task?.asset?.fileName ?? "Task workspace";
+  const labelOptions = useMemo(() => getLabelOptions(task?.project.labelingConfig), [task?.project.labelingConfig]);
 
   useEffect(() => {
     setBoxes(annotationToBoxes(annotation));
   }, [annotation?.id, annotation?.updatedAt]);
+
+  useEffect(() => {
+    if (labelOptions.length > 0 && (activeLabel === defaultLabel || activeLabel.trim().length === 0)) {
+      setActiveLabel(labelOptions[0].name);
+    }
+  }, [activeLabel, labelOptions]);
+
+  useEffect(() => {
+    function handleKeyboard(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+
+      if (target?.closest("input, textarea, select, button")) {
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void handleSaveDraft();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        void handleSubmitAnnotation();
+        return;
+      }
+
+      if ((event.key === "Backspace" || event.key === "Delete") && canAnnotate) {
+        event.preventDefault();
+        setBoxes((current) => current.slice(0, -1));
+        return;
+      }
+
+      if (event.key >= "1" && event.key <= "9") {
+        const option = labelOptions[Number(event.key) - 1];
+
+        if (option) {
+          setActiveLabel(option.name);
+        }
+        return;
+      }
+
+      if (event.key === "+" || event.key === "=") {
+        setZoom((current) => Math.min(3, current + zoomStep));
+      } else if (event.key === "-" || event.key === "_") {
+        setZoom((current) => Math.max(1, current - zoomStep));
+      } else if (event.key === "0") {
+        setZoom(1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyboard);
+
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, [canAnnotate, handleSaveDraft, handleSubmitAnnotation, labelOptions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +157,7 @@ export function TaskDetailPage() {
   );
 
   function getPoint(event: PointerEvent<HTMLDivElement>) {
-    const frame = imageFrameRef.current;
+    const frame = annotationCanvasRef.current;
 
     if (!frame) {
       return null;
@@ -118,6 +182,7 @@ export function TaskDetailPage() {
     }
 
     drawStartRef.current = point;
+    event.currentTarget.setPointerCapture(event.pointerId);
     setDraftBox({
       height: 0,
       id: `draft-${Date.now()}`,
@@ -160,6 +225,14 @@ export function TaskDetailPage() {
     setBoxes((current) => current.filter((box) => box.id !== boxId));
   }
 
+  function zoomIn() {
+    setZoom((current) => Math.min(3, current + zoomStep));
+  }
+
+  function zoomOut() {
+    setZoom((current) => Math.max(1, current - zoomStep));
+  }
+
   async function handleTaskAction() {
     if (!session || !task || !nextAction) {
       return;
@@ -169,14 +242,8 @@ export function TaskDetailPage() {
     setError(null);
 
     try {
-      const updatedTask =
-        nextAction === "assign" ? await assignTaskToSelf(session, task.id) : nextAction === "start" ? await startTask(session, task.id) : null;
-
-      if (updatedTask) {
-        setTask(updatedTask);
-      } else {
-        await handleSubmitAnnotation();
-      }
+      const updatedTask = await startTask(session, task.id);
+      setTask(updatedTask);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to update task.");
     } finally {
@@ -253,32 +320,45 @@ export function TaskDetailPage() {
                     <p className="eyebrow">Task asset</p>
                     <h2>{pageTitle}</h2>
                   </div>
-                  <span className="status-pill compact">{formatEnum(task.status)}</span>
+                  <div className="annotation-toolbar">
+                    <button className="icon-button" type="button" onClick={zoomOut} disabled={zoom <= 1} aria-label="Zoom out" title="Zoom out">
+                      <Minus size={16} />
+                    </button>
+                    <span>{Math.round(zoom * 100)}%</span>
+                    <button className="icon-button" type="button" onClick={zoomIn} disabled={zoom >= 3} aria-label="Zoom in" title="Zoom in">
+                      <Plus size={16} />
+                    </button>
+                    <button className="icon-button" type="button" onClick={() => setZoom(1)} aria-label="Reset zoom" title="Reset zoom">
+                      <RotateCcw size={16} />
+                    </button>
+                    <span className="status-pill compact">{formatEnum(task.status)}</span>
+                  </div>
                 </div>
-                <div
-                  className={`annotation-stage${canAnnotate && isImage ? " drawing-enabled" : ""}`}
-                  onPointerDown={handlePointerDown}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                  onPointerLeave={handlePointerUp}
-                  ref={imageFrameRef}
-                >
+                <div className={`annotation-stage${canAnnotate && isImage ? " drawing-enabled" : ""}`}>
                   {assetLoading ? (
                     <span className="muted-copy">Preparing preview.</span>
                   ) : accessUrl && isImage ? (
-                    <>
+                    <div
+                      className="annotation-canvas"
+                      onPointerDown={handlePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                      onPointerLeave={handlePointerUp}
+                      ref={annotationCanvasRef}
+                      style={{ width: `${zoom * 100}%` }}
+                    >
                       <img alt={task.asset?.fileName ?? "Task asset"} draggable={false} src={accessUrl} />
                       <svg className="annotation-overlay" preserveAspectRatio="none" viewBox="0 0 1 1">
                         {[...boxes, ...(draftBox ? [draftBox] : [])].map((box) => (
                           <g key={box.id}>
-                            <rect height={box.height} width={box.width} x={box.x} y={box.y} />
-                            <text x={box.x} y={Math.max(0.03, box.y - 0.01)}>
+                            <rect height={box.height} width={box.width} x={box.x} y={box.y} style={{ stroke: getLabelColor(box.label, labelOptions) }} />
+                            <text fill={getLabelColor(box.label, labelOptions)} x={box.x} y={Math.max(0.03, box.y - 0.01)}>
                               {box.label}
                             </text>
                           </g>
                         ))}
                       </svg>
-                    </>
+                    </div>
                   ) : accessUrl ? (
                     <div className="empty-state compact-empty">
                       <Eye size={24} />
@@ -294,6 +374,12 @@ export function TaskDetailPage() {
                       <span>This task has no registered image asset.</span>
                     </div>
                   )}
+                </div>
+                <div className="annotation-shortcuts">
+                  <span>1-9 labels</span>
+                  <span>Delete removes last box</span>
+                  <span>Ctrl+S saves</span>
+                  <span>Ctrl+Enter submits</span>
                 </div>
               </section>
             </section>
@@ -321,10 +407,28 @@ export function TaskDetailPage() {
               </section>
               <section className="panel">
                 <p className="eyebrow">Bounding boxes</p>
-                <label>
-                  Label
-                  <input value={activeLabel} onChange={(event) => setActiveLabel(event.target.value)} disabled={!canAnnotate} />
-                </label>
+                {labelOptions.length > 0 ? (
+                  <div className="label-picker">
+                    {labelOptions.map((label, index) => (
+                      <button
+                        className={activeLabel === label.name ? "label-option active" : "label-option"}
+                        key={label.name}
+                        onClick={() => setActiveLabel(label.name)}
+                        style={{ ["--label-color" as string]: label.color }}
+                        type="button"
+                        disabled={!canAnnotate}
+                      >
+                        <span>{index + 1}</span>
+                        {label.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <label>
+                    Label
+                    <input value={activeLabel} onChange={(event) => setActiveLabel(event.target.value)} disabled={!canAnnotate} />
+                  </label>
+                )}
                 <div className="annotation-region-list">
                   {boxes.length > 0 ? (
                     boxes.map((box, index) => (
@@ -344,8 +448,8 @@ export function TaskDetailPage() {
                   <div className="task-action-stack">
                     {nextAction && (
                       <button className="secondary-button" type="button" onClick={handleTaskAction} disabled={saving}>
-                        {nextAction === "assign" ? <UserCheck size={17} /> : nextAction === "start" ? <Eye size={17} /> : <Send size={17} />}
-                        {saving ? "Saving" : formatTaskAction(nextAction)}
+                        <Eye size={17} />
+                        {saving ? "Saving" : "Start task"}
                       </button>
                     )}
                     <button className="secondary-button" type="button" onClick={handleSaveDraft} disabled={!canAnnotate || saving}>
@@ -425,18 +529,46 @@ function clamp(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-function getNextTaskAction(status: string) {
-  if (status === "PENDING") {
-    return "assign";
+function getLabelOptions(config: Record<string, unknown> | null | undefined): LabelOption[] {
+  if (!config || !Array.isArray(config.labels)) {
+    return [];
   }
 
-  if (status === "ASSIGNED") {
+  return config.labels
+    .map((label, index) => {
+      if (typeof label === "string") {
+        return {
+          color: labelColors[index % labelColors.length],
+          name: label
+        };
+      }
+
+      if (!label || typeof label !== "object") {
+        return null;
+      }
+
+      const record = label as Record<string, unknown>;
+      const name = typeof record.name === "string" ? record.name.trim() : "";
+      const color = typeof record.color === "string" && record.color.trim().length > 0 ? record.color.trim() : labelColors[index % labelColors.length];
+
+      return name
+        ? {
+            color,
+            name
+          }
+        : null;
+    })
+    .filter((label): label is LabelOption => Boolean(label));
+}
+
+function getLabelColor(labelName: string, options: LabelOption[]) {
+  return options.find((option) => option.name === labelName)?.color ?? labelColors[0];
+}
+
+function getNextTaskAction(status: string) {
+  if (status === "PENDING" || status === "ASSIGNED") {
     return "start";
   }
 
   return null;
-}
-
-function formatTaskAction(action: "assign" | "start") {
-  return action === "assign" ? "Assign to me" : "Start task";
 }

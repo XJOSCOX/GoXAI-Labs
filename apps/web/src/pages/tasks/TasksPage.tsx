@@ -4,7 +4,7 @@ import { useAuth } from "../../auth";
 import { assignTaskToSelf, startTask, type TaskSummary } from "../../api";
 import { useTasks } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
-import { ArrowLeft, ClipboardList, Eye, FolderKanban, UserCheck } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FolderKanban } from "lucide-react";
 
 const taskPageSize = 8;
 
@@ -215,10 +215,10 @@ function TaskRow({
     setPageError(null);
 
     try {
-      if (action.kind === "assign") {
-        await assignTaskToSelf(session, task.id);
-      } else {
+      if (action.kind === "start") {
         await startTask(session, task.id);
+      } else {
+        await assignTaskToSelf(session, task.id);
       }
 
       await onChanged();
@@ -244,7 +244,7 @@ function TaskRow({
       <span>
         {task.canWork && action ? (
           <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
-            {action.kind === "assign" ? <UserCheck size={16} /> : <Eye size={16} />}
+            <Eye size={16} />
             {saving ? "Saving" : action.label}
           </button>
         ) : !task.canWork ? (
@@ -258,11 +258,7 @@ function TaskRow({
 }
 
 function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start"; label: string } | null {
-  if (task.status === "PENDING") {
-    return { kind: "assign", label: "Assign" };
-  }
-
-  if (task.status === "ASSIGNED") {
+  if (task.status === "PENDING" || task.status === "ASSIGNED") {
     return { kind: "start", label: "Start" };
   }
 

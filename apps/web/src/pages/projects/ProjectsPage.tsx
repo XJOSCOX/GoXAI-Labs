@@ -62,7 +62,8 @@ export function ProjectsPage() {
         memberLimit: parseOptionalInteger(getFormValue(event, "memberLimit")),
         allowExternalMembers: new FormData(event.currentTarget).get("allowExternalMembers") === "on",
         joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
-        instructions: getFormValue(event, "instructions")
+        instructions: getFormValue(event, "instructions"),
+        labelingConfig: parseLabelingConfigFromText(getFormValue(event, "labelNames"))
       });
 
       form.reset();
@@ -266,6 +267,15 @@ function ProjectCreateForm({
         <textarea name="description" placeholder="Short internal summary" rows={3} disabled={creatableOrganizations.length === 0} />
       </label>
       <label className="wide">
+        Labels
+        <textarea
+          name="labelNames"
+          placeholder="One label per line, for example: Vehicle, Damage, License plate"
+          rows={3}
+          disabled={creatableOrganizations.length === 0}
+        />
+      </label>
+      <label className="wide">
         Instructions
         <textarea
           name="instructions"
@@ -344,7 +354,8 @@ function ProjectSettingsPanel({
         memberLimit: parseNullableInteger(getFormValue(event, "memberLimit")),
         allowExternalMembers: new FormData(event.currentTarget).get("allowExternalMembers") === "on",
         joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
-        instructions: getFormValue(event, "instructions")
+        instructions: getFormValue(event, "instructions"),
+        labelingConfig: parseLabelingConfigFromText(getFormValue(event, "labelNames"))
       });
       setMessage("Project updated.");
       await onChanged();
@@ -476,6 +487,10 @@ function ProjectSettingsPanel({
       <label className="wide">
         Description
         <textarea name="description" defaultValue={project.description ?? ""} rows={3} />
+      </label>
+      <label className="wide">
+        Labels
+        <textarea name="labelNames" defaultValue={labelingConfigToText(project.labelingConfig)} rows={3} />
       </label>
       <label className="wide">
         Instructions
@@ -625,4 +640,38 @@ function parseOptionalInteger(value: string) {
 
 function parseNullableInteger(value: string) {
   return value ? Number(value) : null;
+}
+
+function parseLabelingConfigFromText(value: string) {
+  const labels = value
+    .split(/[\n,]/)
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .slice(0, 50)
+    .map((name) => ({ name }));
+
+  return {
+    labels
+  };
+}
+
+function labelingConfigToText(config: Record<string, unknown> | null) {
+  if (!config || !Array.isArray(config.labels)) {
+    return "";
+  }
+
+  return config.labels
+    .map((label) => {
+      if (typeof label === "string") {
+        return label;
+      }
+
+      if (label && typeof label === "object" && "name" in label && typeof label.name === "string") {
+        return label.name;
+      }
+
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }

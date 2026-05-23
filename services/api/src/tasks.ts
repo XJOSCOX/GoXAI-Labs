@@ -610,6 +610,7 @@ async function updateTaskForUser(
     include: {
       project: {
         select: {
+          id: true,
           organizationId: true
         }
       }
@@ -621,19 +622,33 @@ async function updateTaskForUser(
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
-    where: {
-      userId: user.id,
-      organizationId: task.project.organizationId,
-      status: "ACTIVE"
-    },
-    select: {
-      id: true,
-      role: true
-    }
-  });
+  const [membership, projectMembership] = await Promise.all([
+    prisma.membership.findFirst({
+      where: {
+        userId: user.id,
+        organizationId: task.project.organizationId,
+        status: "ACTIVE"
+      },
+      select: {
+        id: true,
+        role: true
+      }
+    }),
+    prisma.projectMembership.findFirst({
+      where: {
+        userId: user.id,
+        projectId: task.project.id,
+        status: "ACTIVE"
+      },
+      select: {
+        id: true,
+        role: true
+      }
+    })
+  ]);
+  const effectiveMembership = membership ?? projectMembership;
 
-  if (!membership || !canWorkTasks(membership)) {
+  if (!effectiveMembership || !canWorkTasks(effectiveMembership)) {
     response.status(403).json({ error: "You do not have access to this task." });
     return;
   }
@@ -681,7 +696,7 @@ async function updateTaskForUser(
   });
 
   response.status(200).json({
-    task: serializeTask(updatedTask, membership)
+    task: serializeTask(updatedTask, effectiveMembership)
   });
 }
 
@@ -761,7 +776,8 @@ const taskIncludes = {
       slug: true,
       organizationId: true,
       status: true,
-      accessMode: true
+      accessMode: true,
+      labelingConfig: true
     }
   },
   dataset: {
@@ -844,6 +860,7 @@ type TaskWithRelations = Task & {
     organizationId: string;
     status: ProjectStatus;
     accessMode: ProjectAccessMode;
+    labelingConfig: unknown;
   };
   dataset: {
     id: string;

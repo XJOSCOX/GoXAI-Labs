@@ -4,6 +4,7 @@ import {
   getPrismaClient,
   GlobalRole,
   MembershipRole,
+  Prisma,
   ProjectAccessMode,
   ProjectStatus,
   type Project
@@ -295,6 +296,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         joinCode: parsed.value.joinCodeEnabled ? await getUniqueProjectJoinCode() : null,
         joinCodeEnabled: parsed.value.joinCodeEnabled,
         instructions: parsed.value.instructions,
+        labelingConfig: parsed.value.labelingConfig,
         createdById: user.id
       },
       include: projectIncludes
@@ -781,6 +783,7 @@ type CreateProjectBody =
       allowExternalMembers?: unknown;
       joinCodeEnabled?: unknown;
       instructions?: unknown;
+      labelingConfig?: unknown;
     }
   | undefined;
 
@@ -794,6 +797,7 @@ type UpdateProjectBody =
       allowExternalMembers?: unknown;
       joinCodeEnabled?: unknown;
       instructions?: unknown;
+      labelingConfig?: unknown;
     }
   | undefined;
 
@@ -818,6 +822,7 @@ function parseCreateProjectBody(body: CreateProjectBody):
         allowExternalMembers: boolean;
         joinCodeEnabled: boolean;
         instructions?: string;
+        labelingConfig?: Prisma.InputJsonObject;
       };
     }
   | { ok: false; error: string } {
@@ -831,6 +836,7 @@ function parseCreateProjectBody(body: CreateProjectBody):
   const allowExternalMembers = normalizeBoolean(body?.allowExternalMembers) ?? false;
   const joinCodeEnabled = normalizeBoolean(body?.joinCodeEnabled) ?? false;
   const instructions = normalizeText(body?.instructions);
+  const labelingConfig = parseLabelingConfig(body?.labelingConfig, false);
 
   if (!organizationId) {
     return { ok: false, error: "Organization is required." };
@@ -860,6 +866,10 @@ function parseCreateProjectBody(body: CreateProjectBody):
     return { ok: false, error: "Instructions must be 4000 characters or fewer." };
   }
 
+  if (!labelingConfig.ok) {
+    return { ok: false, error: labelingConfig.error };
+  }
+
   return {
     ok: true,
     value: {
@@ -872,7 +882,8 @@ function parseCreateProjectBody(body: CreateProjectBody):
       memberLimit,
       allowExternalMembers,
       joinCodeEnabled,
-      instructions
+      instructions,
+      labelingConfig: labelingConfig.value ?? undefined
     }
   };
 }
@@ -889,6 +900,7 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
         allowExternalMembers?: boolean;
         joinCodeEnabled?: boolean;
         instructions?: string | null;
+        labelingConfig?: Prisma.InputJsonObject;
       };
     }
   | { ok: false; error: string } {
@@ -900,6 +912,7 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
   const memberLimit = normalizeNullablePositiveInteger(body?.memberLimit);
   const allowExternalMembers = normalizeBoolean(body?.allowExternalMembers);
   const joinCodeEnabled = normalizeBoolean(body?.joinCodeEnabled);
+  const labelingConfig = parseLabelingConfig(body?.labelingConfig, true);
 
   if (name && name.length > 120) {
     return { ok: false, error: "Project name must be 120 characters or fewer." };
@@ -929,6 +942,10 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
     return { ok: false, error: "Project access toggles must be true or false." };
   }
 
+  if (!labelingConfig.ok) {
+    return { ok: false, error: labelingConfig.error };
+  }
+
   return {
     ok: true,
     value: {
@@ -939,7 +956,8 @@ function parseUpdateProjectBody(body: UpdateProjectBody):
       ...(body?.memberLimit !== undefined ? { memberLimit } : {}),
       ...(allowExternalMembers !== undefined ? { allowExternalMembers } : {}),
       ...(joinCodeEnabled !== undefined ? { joinCodeEnabled } : {}),
-      ...(body?.instructions !== undefined ? { instructions } : {})
+      ...(body?.instructions !== undefined ? { instructions } : {}),
+      ...(body?.labelingConfig !== undefined ? { labelingConfig: labelingConfig.value } : {})
     }
   };
 }
@@ -969,6 +987,62 @@ function parseProjectMemberBody(body: ProjectMemberBody):
     value: {
       email,
       role
+    }
+  };
+}
+
+function parseLabelingConfig(value: unknown, nullable: boolean):
+  | { ok: true; value?: Prisma.InputJsonObject }
+  | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+
+  if (value === null) {
+    return nullable ? { ok: true, value: { labels: [] } } : { ok: true, value: undefined };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false, error: "Labeling config must be an object." };
+  }
+
+  const labels = Array.isArray(value.labels) ? value.labels : [];
+  const parsedLabels = labels
+    .map((label) => {
+      if (typeof label === "string") {
+        return {
+          name: label.trim()
+        };
+      }
+
+      if (!isRecord(label)) {
+        return null;
+      }
+
+      const name = normalizeText(label.name);
+      const color = normalizeText(label.color);
+
+      return name
+        ? {
+            name,
+            ...(color ? { color } : {})
+          }
+        : null;
+    })
+    .filter((label): label is { color?: string; name: string } => Boolean(label));
+
+  if (parsedLabels.length > 50) {
+    return { ok: false, error: "A project can have up to 50 labels." };
+  }
+
+  if (parsedLabels.some((label) => label.name.length > 60)) {
+    return { ok: false, error: "Label names must be 60 characters or fewer." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      labels: parsedLabels
     }
   };
 }
@@ -1091,6 +1165,7 @@ function serializeProject(project: ProjectWithRelations, currentUserId?: string)
     joinCode: project.joinCode,
     joinCodeEnabled: project.joinCodeEnabled,
     instructions: project.instructions,
+    labelingConfig: project.labelingConfig as Record<string, unknown> | null,
     currentUserRole: currentMembership?.role ?? null,
     canManage,
     canCreateDataset: canManage,
@@ -1124,6 +1199,10 @@ function normalizeEmail(value: unknown) {
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function normalizeBoolean(value: unknown) {
