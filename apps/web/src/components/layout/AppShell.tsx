@@ -115,43 +115,45 @@ export function AppShell() {
 }
 
 function getTopbarTitle(pathname: string) {
-  if (pathname === "/") {
+  const normalizedPathname = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+
+  if (normalizedPathname === "/") {
     return { eyebrow: "Dashboard", title: "Operations overview" };
   }
 
-  if (pathname === "/organization") {
+  if (normalizedPathname === "/organization") {
     return { eyebrow: "Organization", title: "Organizations" };
   }
 
-  if (pathname.startsWith("/organization/")) {
+  if (normalizedPathname.startsWith("/organization/")) {
     return { eyebrow: "Organization", title: "Organization details" };
   }
 
-  if (pathname === "/projects") {
+  if (normalizedPathname === "/projects") {
     return { eyebrow: "Projects", title: "Projects list" };
   }
 
-  if (pathname.startsWith("/projects/")) {
+  if (normalizedPathname.startsWith("/projects/")) {
     return { eyebrow: "Projects", title: "Project detail" };
   }
 
-  if (pathname === "/datasets") {
+  if (normalizedPathname === "/datasets") {
     return { eyebrow: "Datasets", title: "Datasets list" };
   }
 
-  if (pathname.startsWith("/datasets/")) {
+  if (normalizedPathname.startsWith("/datasets/")) {
     return { eyebrow: "Datasets", title: "Dataset detail" };
   }
 
-  if (pathname === "/tasks") {
+  if (normalizedPathname === "/tasks") {
     return { eyebrow: "Tasks", title: "Labeling tasks" };
   }
 
-  if (pathname === "/account") {
+  if (normalizedPathname === "/account") {
     return { eyebrow: "Account", title: "My Account" };
   }
 
-  if (pathname === "/admin") {
+  if (normalizedPathname === "/admin") {
     return { eyebrow: "Admin", title: "Control panel" };
   }
 

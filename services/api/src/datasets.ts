@@ -118,7 +118,11 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
 
   const serializedDatasets = datasets
     .map((dataset) => serializeDataset(dataset, user.id))
-    .filter((dataset) => dataset.canManage || Boolean(projectId && dataset.project.status === ProjectStatus.ACTIVE));
+    .filter(
+      (dataset) =>
+        dataset.canManage ||
+        Boolean(projectId && dataset.project.status === ProjectStatus.ACTIVE && dataset.status === DatasetStatus.READY)
+    );
 
   response.status(200).json({
     datasets: serializedDatasets

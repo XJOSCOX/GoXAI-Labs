@@ -15,6 +15,10 @@ export function DatasetsTable({
   loading: boolean;
   projectScoped?: boolean;
 }) {
+  const visibleDatasets = projectScoped
+    ? datasets.filter((dataset) => dataset.canManage || dataset.status === "READY")
+    : datasets;
+
   return (
     <section className="table-panel">
       <div className="table-toolbar">
@@ -36,8 +40,8 @@ export function DatasetsTable({
           <strong>Loading datasets</strong>
           <span>Checking dataset records and project access.</span>
         </div>
-      ) : datasets.length > 0 ? (
-        datasets.map((dataset) => <DatasetRow dataset={dataset} key={dataset.id} projectScoped={projectScoped} />)
+      ) : visibleDatasets.length > 0 ? (
+        visibleDatasets.map((dataset) => <DatasetRow dataset={dataset} key={dataset.id} projectScoped={projectScoped} />)
       ) : (
         <div className="empty-state">
           <Database size={28} />
