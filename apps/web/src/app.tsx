@@ -146,17 +146,14 @@ function AuthFrame({ children, title, subtitle }: { children: React.ReactNode; t
         {children}
       </section>
       <aside className="auth-aside">
-        <div className="metric-strip">
-          <span>Auth</span>
-          <strong>Supabase</strong>
-        </div>
-        <div className="metric-strip">
-          <span>Database</span>
-          <strong>Postgres + Prisma</strong>
-        </div>
-        <div className="metric-strip">
-          <span>Workflow</span>
-          <strong>Labeling studio</strong>
+        <div className="auth-visual-copy">
+          <p className="eyebrow">Studio operations</p>
+          <h2>Organize identity, data, and review work from one calm workspace.</h2>
+          <div className="auth-visual-metrics" aria-label="Platform foundations">
+            <span>Supabase Auth</span>
+            <span>Prisma Postgres</span>
+            <span>R2 assets</span>
+          </div>
         </div>
       </aside>
     </main>

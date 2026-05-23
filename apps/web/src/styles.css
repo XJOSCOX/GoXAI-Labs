@@ -88,8 +88,9 @@ a {
 
 .auth-screen {
   display: grid;
-  grid-template-columns: minmax(320px, 520px) minmax(280px, 1fr);
+  grid-template-columns: minmax(360px, 40fr) minmax(0, 60fr);
   min-height: 100vh;
+  background: var(--surface);
 }
 
 .auth-panel {
@@ -97,23 +98,81 @@ a {
   flex-direction: column;
   justify-content: center;
   gap: 20px;
-  padding: 40px;
+  width: 100%;
+  padding: 48px clamp(28px, 4vw, 56px);
   background: var(--surface);
-  border-right: 1px solid var(--border);
+}
+
+.auth-panel > .brand-row,
+.auth-panel > .auth-copy,
+.auth-panel > .auth-form,
+.auth-panel > .auth-switch,
+.auth-panel > .utility-row {
+  width: min(100%, 420px);
 }
 
 .auth-aside {
+  position: relative;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 12px;
+  min-height: 100vh;
   padding: 40px;
   background:
-    linear-gradient(135deg, rgba(26, 26, 26, 0.7), rgba(34, 34, 34, 0.92)),
-    url("https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1600&q=80");
+    linear-gradient(120deg, rgba(26, 26, 26, 0.82), rgba(26, 26, 26, 0.18) 52%, rgba(125, 211, 252, 0.14)),
+    url("https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1800&q=85");
   background-position: center;
   background-size: cover;
   color: #f6fbff;
+  overflow: hidden;
+}
+
+.auth-aside::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(26, 26, 26, 0.04), rgba(26, 26, 26, 0.62)),
+    radial-gradient(circle at 74% 22%, rgba(125, 211, 252, 0.34), transparent 28%);
+  pointer-events: none;
+}
+
+.auth-visual-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 18px;
+  width: min(620px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 24px;
+  background: rgba(26, 26, 26, 0.58);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(14px);
+}
+
+.auth-visual-copy h2 {
+  max-width: 560px;
+  color: #f8fafc;
+  font-size: clamp(24px, 3vw, 38px);
+  font-weight: 500;
+  line-height: 1.12;
+}
+
+.auth-visual-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.auth-visual-metrics span {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(248, 250, 252, 0.82);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .utility-row {
@@ -386,18 +445,6 @@ textarea:focus {
 .auth-switch a {
   color: var(--accent-deep);
   font-weight: 600;
-}
-
-.metric-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  max-width: 520px;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 8px;
-  padding: 14px 16px;
-  background: rgba(8, 21, 33, 0.44);
 }
 
 .app-shell {
