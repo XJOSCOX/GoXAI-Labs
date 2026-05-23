@@ -18,8 +18,8 @@ import { getFormValue, useAuth } from "../../auth";
 import { datasetStatuses, folderInputAttributes, maxBulkUploadBytes, maxBulkUploadFiles } from "../../constants/options";
 import { useAssets, useDataset, useFormDraft, useTasks } from "../../hooks/useResources";
 import type { UploadProgress } from "../../types/upload";
-import { formatAssetKind, formatBytes, formatDate, formatEnum, getFormFile, getUrlHost } from "../../utils/format";
-import { buildUploadObjectKey, getFileKey, joinObjectKeyParts, mergeFiles, toSafeObjectKeyPart } from "../../utils/upload";
+import { formatAssetKind, formatBytes, formatDate, formatEnum, getUrlHost } from "../../utils/format";
+import { buildUploadObjectKey, getFileKey, mergeFiles, toSafeObjectKeyPart } from "../../utils/upload";
 import { TasksTable } from "../tasks/TasksPage";
 
 function DatasetTasksPanel({
@@ -85,27 +85,42 @@ function DatasetTasksPanel({
   );
 }
 
-function DatasetSettingsPanel({
+function DatasetEditModal({
   dataset,
+  onClose,
   onChanged,
   session,
   setPageError
 }: {
   dataset: DatasetSummary;
+  onClose: () => void;
   onChanged: () => Promise<void>;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   async function handleUpdate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage(null);
+    setModalError(null);
     setPageError(null);
 
     if (!session) {
-      setPageError("Authentication required.");
+      setModalError("Authentication required.");
       return;
     }
 
@@ -119,8 +134,9 @@ function DatasetSettingsPanel({
       });
       setMessage("Dataset updated.");
       await onChanged();
+      onClose();
     } catch (reason) {
-      setPageError(reason instanceof Error ? reason.message : "Unable to update dataset.");
+      setModalError(reason instanceof Error ? reason.message : "Unable to update dataset.");
     } finally {
       setSaving(false);
     }
@@ -128,10 +144,11 @@ function DatasetSettingsPanel({
 
   async function handleArchive() {
     setMessage(null);
+    setModalError(null);
     setPageError(null);
 
     if (!session) {
-      setPageError("Authentication required.");
+      setModalError("Authentication required.");
       return;
     }
 
@@ -141,54 +158,72 @@ function DatasetSettingsPanel({
       await archiveDataset(session, dataset.id);
       setMessage("Dataset archived.");
       await onChanged();
+      onClose();
     } catch (reason) {
-      setPageError(reason instanceof Error ? reason.message : "Unable to archive dataset.");
+      setModalError(reason instanceof Error ? reason.message : "Unable to archive dataset.");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <form className="panel management-grid" onSubmit={handleUpdate}>
-      <div className="wide">
-        <p className="eyebrow">Manage</p>
-        <h2>Dataset settings</h2>
-      </div>
-      <label>
-        Name
-        <input name="name" defaultValue={dataset.name} required />
-      </label>
-      <label>
-        Status
-        <select name="status" defaultValue={dataset.status}>
-          {datasetStatuses.map((status) => (
-            <option key={status} value={status}>
-              {formatEnum(status)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="wide">
-        Description
-        <textarea name="description" defaultValue={dataset.description ?? ""} rows={3} />
-      </label>
-      {message && <p className="form-success wide">{message}</p>}
-      <div className="row-actions wide">
-        <button className="primary-button" type="submit" disabled={saving}>
-          <Save size={18} />
-          {saving ? "Saving" : "Save dataset"}
-        </button>
-        <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
-          Archive dataset
-        </button>
-      </div>
-    </form>
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="dataset-edit-title"
+        aria-modal="true"
+        className="modal-panel dataset-edit-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Dataset</p>
+            <h2 id="dataset-edit-title">Edit dataset</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close dataset edit form">
+            <X size={17} />
+          </button>
+        </div>
+        {modalError && <p className="form-error">{modalError}</p>}
+        <form className="dataset-form dataset-edit-form" onSubmit={handleUpdate}>
+          <label>
+            Name
+            <input name="name" defaultValue={dataset.name} required />
+          </label>
+          <label>
+            Status
+            <select name="status" defaultValue={dataset.status}>
+              {datasetStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {formatEnum(status)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="wide">
+            Description
+            <textarea name="description" defaultValue={dataset.description ?? ""} rows={4} />
+          </label>
+          {message && <p className="form-success wide">{message}</p>}
+          <div className="row-actions wide">
+            <button className="primary-button" type="submit" disabled={saving}>
+              <Save size={18} />
+              {saving ? "Saving" : "Save dataset"}
+            </button>
+            <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
+              Archive dataset
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 
 export function DatasetDetailPage() {
   const { datasetId = "" } = useParams();
   const { session } = useAuth();
+  const [showEditModal, setShowEditModal] = useState(false);
   const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
   const {
     assets,
@@ -223,9 +258,15 @@ export function DatasetDetailPage() {
           <div className="dataset-detail-layout">
             <section className="content-column">
               <section className="panel">
-                <div>
-                  <p className="eyebrow">Dataset</p>
-                  <h2>{dataset.name}</h2>
+                <div className="dataset-summary-head">
+                  <div>
+                    <p className="eyebrow">Dataset</p>
+                    <h2>{dataset.name}</h2>
+                  </div>
+                  <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
+                    <Edit3 size={16} />
+                    Edit dataset
+                  </button>
                 </div>
                 <dl className="detail-list">
                   <div>
@@ -253,12 +294,6 @@ export function DatasetDetailPage() {
               <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
             </section>
             <aside className="side-column">
-              <DatasetSettingsPanel
-                dataset={dataset}
-                onChanged={reloadDataset}
-                session={session}
-                setPageError={setTasksError}
-              />
               <AssetForm
                 dataset={dataset}
                 onCreated={async () => {
@@ -274,6 +309,15 @@ export function DatasetDetailPage() {
           <p className="muted-copy">Dataset was not found.</p>
         ) : null}
       </section>
+      {dataset && showEditModal && (
+        <DatasetEditModal
+          dataset={dataset}
+          onClose={() => setShowEditModal(false)}
+          onChanged={reloadDataset}
+          session={session}
+          setPageError={setTasksError}
+        />
+      )}
     </section>
   );
 }
