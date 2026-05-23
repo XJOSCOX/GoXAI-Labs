@@ -1,11 +1,15 @@
 import {
   DatasetStatus,
   getPrismaClient,
+  StorageProvider,
   type Dataset
 } from "@goxai/database";
+import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { getRequestId } from "./logging.js";
 import { canManageProjectScope } from "./permissions.js";
+import { createR2Client, getR2Config } from "./r2.js";
 
 const router = Router();
 
@@ -398,6 +402,221 @@ router.post("/:datasetId/archive", async (request: AuthenticatedRequest, respons
   });
 });
 
+router.post("/:datasetId/restore", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.projectMembership.findFirst({
+    where: {
+      userId: user.id,
+      projectId: dataset.projectId,
+      status: "ACTIVE"
+    }
+  });
+
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to restore this dataset." });
+    return;
+  }
+
+  const restoredDataset = await prisma.dataset.update({
+    where: {
+      id: dataset.id
+    },
+    data: {
+      status: DatasetStatus.DRAFT
+    },
+    include: datasetIncludes
+  });
+
+  response.status(200).json({
+    dataset: serializeDataset(restoredDataset)
+  });
+});
+
+router.delete("/:datasetId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      name: true,
+      organizationId: true,
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.projectMembership.findFirst({
+    where: {
+      userId: user.id,
+      projectId: dataset.projectId,
+      status: "ACTIVE"
+    }
+  });
+
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to delete this dataset." });
+    return;
+  }
+
+  const assets = await prisma.storageAsset.findMany({
+    where: {
+      datasetId: dataset.id
+    },
+    select: {
+      id: true,
+      provider: true,
+      bucket: true,
+      objectKey: true
+    }
+  });
+  const r2Assets = assets.filter((asset) => asset.provider === StorageProvider.R2);
+
+  if (r2Assets.length > 0) {
+    const config = getR2Config();
+
+    if (!config.ok) {
+      response.status(503).json({ error: config.error });
+      return;
+    }
+
+    const client = createR2Client(config.value);
+    const buckets = [...new Set(r2Assets.map((asset) => asset.bucket))];
+
+    for (const bucket of buckets) {
+      const bucketAssets = r2Assets.filter((asset) => asset.bucket === bucket);
+
+      for (const batch of chunkArray(bucketAssets, 1000)) {
+        const result = await client.send(
+          new DeleteObjectsCommand({
+            Bucket: bucket,
+            Delete: {
+              Objects: batch.map((asset) => ({
+                Key: asset.objectKey
+              })),
+              Quiet: true
+            }
+          })
+        );
+
+        if (result.Errors && result.Errors.length > 0) {
+          response.status(502).json({
+            error: `R2 refused to delete ${result.Errors.length} object${result.Errors.length === 1 ? "" : "s"}.`
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const deletedTasks = await tx.task.deleteMany({
+      where: {
+        datasetId: dataset.id
+      }
+    });
+
+    const deletedAssets = await tx.storageAsset.deleteMany({
+      where: {
+        datasetId: dataset.id
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: dataset.organizationId,
+        projectId: dataset.projectId,
+        userId: user.id,
+        action: "dataset.deleted",
+        entityType: "dataset",
+        entityId: dataset.id,
+        metadata: {
+          requestId: getRequestId(request),
+          name: dataset.name,
+          deletedAssetCount: deletedAssets.count,
+          deletedTaskCount: deletedTasks.count,
+          r2ObjectCount: r2Assets.length
+        }
+      }
+    });
+
+    await tx.dataset.delete({
+      where: {
+        id: dataset.id
+      }
+    });
+
+    return {
+      deletedAssetCount: deletedAssets.count,
+      deletedTaskCount: deletedTasks.count
+    };
+  });
+
+  response.status(200).json({
+    deleted: true,
+    ...result
+  });
+});
+
 export { router as datasetsRouter };
 
 type CreateDatasetBody =
@@ -557,4 +776,14 @@ function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: 
   return typeof value === "string" && Object.values(enumValues).includes(value)
     ? (value as T[keyof T])
     : undefined;
+}
+
+function chunkArray<T>(items: T[], size: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+
+  return chunks;
 }

@@ -8,6 +8,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { getRequestId } from "./logging.js";
 import { canCreateOrganizationProjects, canManageProjectScope } from "./permissions.js";
 
 const router = Router();
@@ -587,6 +588,162 @@ router.post("/:projectId/archive", async (request: AuthenticatedRequest, respons
 
   response.status(200).json({
     project: serializeProject(archivedProject)
+  });
+});
+
+router.post("/:projectId/restore", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.params.projectId);
+
+  if (!projectId) {
+    response.status(400).json({ error: "Project is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const project = await prisma.project.findUnique({
+    where: {
+      id: projectId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      createdById: true
+    }
+  });
+
+  if (!project) {
+    response.status(404).json({ error: "Project was not found." });
+    return;
+  }
+
+  const membership = await prisma.projectMembership.findFirst({
+    where: {
+      userId: user.id,
+      projectId: project.id,
+      status: "ACTIVE"
+    }
+  });
+
+  if (project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to restore this project." });
+    return;
+  }
+
+  const restoredProject = await prisma.project.update({
+    where: {
+      id: project.id
+    },
+    data: {
+      status: ProjectStatus.DRAFT
+    },
+    include: projectIncludes
+  });
+
+  response.status(200).json({
+    project: serializeProject(restoredProject)
+  });
+});
+
+router.delete("/:projectId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.params.projectId);
+
+  if (!projectId) {
+    response.status(400).json({ error: "Project is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const project = await prisma.project.findUnique({
+    where: {
+      id: projectId
+    },
+    select: {
+      id: true,
+      name: true,
+      organizationId: true,
+      workspaceId: true,
+      createdById: true,
+      _count: {
+        select: {
+          datasets: true,
+          assets: true
+        }
+      }
+    }
+  });
+
+  if (!project) {
+    response.status(404).json({ error: "Project was not found." });
+    return;
+  }
+
+  const membership = await prisma.projectMembership.findFirst({
+    where: {
+      userId: user.id,
+      projectId: project.id,
+      status: "ACTIVE"
+    }
+  });
+
+  if (project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to delete this project." });
+    return;
+  }
+
+  if (project._count.datasets > 0) {
+    response.status(409).json({
+      error: "Delete this project's datasets before deleting the project."
+    });
+    return;
+  }
+
+  if (project._count.assets > 0) {
+    response.status(409).json({
+      error: "Delete this project's registered files before deleting the project."
+    });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.auditLog.create({
+      data: {
+        organizationId: project.organizationId,
+        workspaceId: project.workspaceId,
+        projectId: project.id,
+        userId: user.id,
+        action: "project.deleted",
+        entityType: "project",
+        entityId: project.id,
+        metadata: {
+          requestId: getRequestId(request),
+          name: project.name
+        }
+      }
+    });
+
+    await tx.project.delete({
+      where: {
+        id: project.id
+      }
+    });
+  });
+
+  response.status(200).json({
+    deleted: true
   });
 });
 

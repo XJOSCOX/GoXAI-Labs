@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Database, FolderKanban, Save } from "lucide-react";
-import { createProject, archiveProject, updateProject, type ProjectSummary } from "../../api";
+import { ArrowLeft, Database, FolderKanban, Save, Trash2 } from "lucide-react";
+import { createProject, archiveProject, deleteProject, restoreProject, updateProject, type ProjectSummary } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
 import { projectAccessModes, projectStatuses } from "../../constants/options";
 import { useDatasets, useFormDraft, useOrganizations, useProject, useProjects } from "../../hooks/useResources";
@@ -304,11 +304,13 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
 
 function ProjectSettingsPanel({
   onChanged,
+  onDeleted,
   project,
   session,
   setPageError
 }: {
   onChanged: () => Promise<void>;
+  onDeleted: () => void;
   project: ProjectSummary;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
@@ -366,6 +368,56 @@ function ProjectSettingsPanel({
     } catch (reason) {
       setPageError(reason instanceof Error ? reason.message : "Unable to archive project.");
     } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRestore() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await restoreProject(session, project.id);
+      setMessage("Project restored.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to restore project.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Delete this project permanently? You must delete every dataset and registered project file first."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await deleteProject(session, project.id);
+      onDeleted();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to delete project.");
       setSaving(false);
     }
   }
@@ -430,8 +482,18 @@ function ProjectSettingsPanel({
           <Save size={18} />
           {saving ? "Saving" : "Save project"}
         </button>
-        <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
-          Archive project
+        {project.status === "ARCHIVED" ? (
+          <button className="secondary-button" type="button" onClick={handleRestore} disabled={saving}>
+            Restore project
+          </button>
+        ) : (
+          <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
+            Archive project
+          </button>
+        )}
+        <button className="ghost-button danger-button" type="button" onClick={handleDelete} disabled={saving}>
+          <Trash2 size={17} />
+          Delete project
         </button>
       </div>
     </form>
@@ -440,6 +502,7 @@ function ProjectSettingsPanel({
 
 export function ProjectDetailPage() {
   const { projectId = "" } = useParams();
+  const navigate = useNavigate();
   const { session } = useAuth();
   const [showDatasetModal, setShowDatasetModal] = useState(false);
   const { error: projectError, loading: projectLoading, project, reload: reloadProject } = useProject(session, projectId);
@@ -521,6 +584,7 @@ export function ProjectDetailPage() {
           <aside className="side-column">
             <ProjectSettingsPanel
               onChanged={reloadProject}
+              onDeleted={() => navigate("/projects")}
               project={project}
               session={session}
               setPageError={setDatasetsError}

@@ -1,14 +1,16 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Save, Search, Trash2, X } from "lucide-react";
 import {
   archiveDataset,
   createAsset,
   createAssetUploadUrl,
   deleteAssets,
+  deleteDataset,
   generateTasksFromDataset,
   getAssetAccessUrl,
   logClientEvent,
+  restoreDataset,
   updateDataset,
   uploadFileToSignedUrl,
   type AssetSummary,
@@ -90,12 +92,14 @@ function DatasetEditModal({
   dataset,
   onClose,
   onChanged,
+  onDeleted,
   session,
   setPageError
 }: {
   dataset: DatasetSummary;
   onClose: () => void;
   onChanged: () => Promise<void>;
+  onDeleted: () => void;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
 }) {
@@ -167,6 +171,59 @@ function DatasetEditModal({
     }
   }
 
+  async function handleRestore() {
+    setMessage(null);
+    setModalError(null);
+    setPageError(null);
+
+    if (!session) {
+      setModalError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await restoreDataset(session, dataset.id);
+      setMessage("Dataset restored.");
+      await onChanged();
+      onClose();
+    } catch (reason) {
+      setModalError(reason instanceof Error ? reason.message : "Unable to restore dataset.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    setMessage(null);
+    setModalError(null);
+    setPageError(null);
+
+    if (!session) {
+      setModalError("Authentication required.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Delete this whole dataset? This permanently deletes its registered files and dataset tasks. This cannot be undone."
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await deleteDataset(session, dataset.id);
+      onDeleted();
+    } catch (reason) {
+      setModalError(reason instanceof Error ? reason.message : "Unable to delete dataset.");
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section
@@ -211,8 +268,18 @@ function DatasetEditModal({
               <Save size={18} />
               {saving ? "Saving" : "Save dataset"}
             </button>
-            <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
-              Archive dataset
+            {dataset.status === "ARCHIVED" ? (
+              <button className="secondary-button" type="button" onClick={handleRestore} disabled={saving}>
+                Restore dataset
+              </button>
+            ) : (
+              <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
+                Archive dataset
+              </button>
+            )}
+            <button className="ghost-button danger-button" type="button" onClick={handleDelete} disabled={saving}>
+              <Trash2 size={17} />
+              Delete dataset
             </button>
           </div>
         </form>
@@ -223,6 +290,7 @@ function DatasetEditModal({
 
 export function DatasetDetailPage() {
   const { datasetId = "" } = useParams();
+  const navigate = useNavigate();
   const { session } = useAuth();
   const [showEditModal, setShowEditModal] = useState(false);
   const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
@@ -322,6 +390,7 @@ export function DatasetDetailPage() {
           dataset={dataset}
           onClose={() => setShowEditModal(false)}
           onChanged={reloadDataset}
+          onDeleted={() => navigate(`/projects/${dataset.projectId}`)}
           session={session}
           setPageError={setTasksError}
         />

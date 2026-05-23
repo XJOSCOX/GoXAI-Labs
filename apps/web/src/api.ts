@@ -601,6 +601,30 @@ export async function archiveProject(session: Session, projectId: string) {
   return ((await response.json()) as { project: ProjectSummary }).project;
 }
 
+export async function restoreProject(session: Session, projectId: string) {
+  const response = await authenticatedFetch(session, `/api/projects/${encodeURIComponent(projectId)}/restore`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to restore project."));
+  }
+
+  return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
+export async function deleteProject(session: Session, projectId: string) {
+  const response = await authenticatedFetch(session, `/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to delete project."));
+  }
+
+  return (await response.json()) as { deleted: boolean };
+}
+
 export async function listDatasets(session: Session, projectId?: string) {
   const params = new URLSearchParams();
 
@@ -664,6 +688,34 @@ export async function archiveDataset(session: Session, datasetId: string) {
   }
 
   return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
+export async function restoreDataset(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}/restore`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to restore dataset."));
+  }
+
+  return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
+export async function deleteDataset(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to delete dataset."));
+  }
+
+  return (await response.json()) as {
+    deleted: boolean;
+    deletedAssetCount: number;
+    deletedTaskCount: number;
+  };
 }
 
 export async function listAssets(session: Session, input: { datasetId?: string; projectId?: string } = {}) {
