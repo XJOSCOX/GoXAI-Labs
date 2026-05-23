@@ -6,13 +6,16 @@ import {
   Database,
   FolderKanban,
   LogOut,
+  Moon,
   ShieldCheck,
   Sparkles,
+  Sun,
   UserRoundPlus
 } from "lucide-react";
 import { type FormEvent, useMemo, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { AuthProvider, getFormValue, useAuth } from "./auth";
+import { useTheme } from "./theme";
 
 export function App() {
   return (
@@ -55,6 +58,9 @@ function AuthFrame({ children, title, subtitle }: { children: React.ReactNode; t
   return (
     <main className="auth-screen">
       <section className="auth-panel">
+        <div className="utility-row">
+          <ThemeToggle />
+        </div>
         <div className="brand-row">
           <div className="brand-mark">GX</div>
           <div>
@@ -233,14 +239,34 @@ function AppShell() {
             <p className="eyebrow">Signed in</p>
             <h2>{name}</h2>
           </div>
-          <span className="status-pill">
-            <CheckCircle2 size={16} />
-            Synced
-          </span>
+          <div className="topbar-actions">
+            <ThemeToggle />
+            <span className="status-pill">
+              <CheckCircle2 size={16} />
+              Synced
+            </span>
+          </div>
         </header>
         <Outlet />
       </section>
     </main>
+  );
+}
+
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === "dark";
+
+  return (
+    <button
+      className="icon-button"
+      type="button"
+      onClick={toggleTheme}
+      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+      title={isDark ? "Light theme" : "Dark theme"}
+    >
+      {isDark ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
   );
 }
 
