@@ -122,6 +122,7 @@ export interface ProjectSummary {
   id: string;
   organizationId: string;
   workspaceId: string | null;
+  createdById: string;
   name: string;
   slug: string;
   description: string | null;

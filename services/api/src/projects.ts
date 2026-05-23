@@ -866,6 +866,7 @@ function serializeProject(project: ProjectWithRelations) {
     id: project.id,
     organizationId: project.organizationId,
     workspaceId: project.workspaceId,
+    createdById: project.createdById,
     name: project.name,
     slug: project.slug,
     description: project.description,

@@ -10,7 +10,7 @@ import { DatasetsTable } from "../datasets/DatasetsTable";
 import { formatDate, formatEnum } from "../../utils/format";
 
 export function ProjectsPage() {
-  const { session } = useAuth();
+  const { dbUser, session } = useAuth();
   const { error: organizationError, loading: organizationsLoading, organizations } = useOrganizations(session);
   const {
     error: projectsError,
@@ -19,6 +19,7 @@ export function ProjectsPage() {
     reload: reloadProjects,
     setError: setProjectsError
   } = useProjects(session);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const projectDraft = useFormDraft("goxai-draft-project");
@@ -26,6 +27,7 @@ export function ProjectsPage() {
     ["OWNER", "ADMIN", "MANAGER"].includes(organization.role)
   );
   const defaultOrganization = creatableOrganizations[0];
+  const userCreatedProjects = projects.filter((project) => project.createdById === dbUser?.id);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -79,120 +81,201 @@ export function ProjectsPage() {
         <p className="form-error">{organizationError ?? projectsError}</p>
       )}
       {savedMessage && <p className="form-success">{savedMessage}</p>}
-      <section className="project-workspace-layout">
-        <section className="table-panel">
-          <div className="table-toolbar">
-            <div>
-              <p className="eyebrow">Projects</p>
-              <h2>Project records</h2>
-              <p className="muted-copy">Your accessible records plus projects public to signed-in users.</p>
-            </div>
+      {showCreateWorkspace ? (
+        <section className="panel project-create-frame">
+          <div className="organization-detail-nav">
+            <button className="secondary-button compact-button" type="button" onClick={() => setShowCreateWorkspace(false)}>
+              <ArrowLeft size={16} />
+              Back to projects
+            </button>
           </div>
-          <div className="table-row project-head table-head">
-            <span>Name</span>
-            <span>Access</span>
-            <span>Status</span>
-            <span>Members</span>
-            <span>Updated</span>
-          </div>
-          {projectsLoading || organizationsLoading ? (
-            <div className="empty-state">
-              <FolderKanban size={28} />
-              <strong>Loading projects</strong>
-              <span>Checking your organization access and project records.</span>
-            </div>
-          ) : projects.length > 0 ? (
-            projects.map((project) => <ProjectRow key={project.id} project={project} />)
-          ) : (
-            <div className="empty-state">
-              <FolderKanban size={28} />
-              <strong>No projects yet</strong>
-              <span>
-                {creatableOrganizations.length > 0
-                  ? "Create the first draft project to prepare dataset ingestion."
-                  : "You can view signed-in public projects, but need owner, admin, or manager access to create one."}
-              </span>
-            </div>
-          )}
-        </section>
-        <form
-          className="panel project-form compact-project-form"
-          onChange={projectDraft.saveDraft}
-          onSubmit={handleSubmit}
-          ref={projectDraft.formRef}
-        >
-          <div className="wide">
-            <p className="eyebrow">Create</p>
-            <h2>New project</h2>
-          </div>
-          <label>
-            Organization
-            <select name="organizationId" defaultValue={defaultOrganization?.id ?? ""} required disabled={creatableOrganizations.length === 0}>
-              {creatableOrganizations.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Data type
-            <select name="dataType" defaultValue="IMAGE" disabled={creatableOrganizations.length === 0}>
-              <option value="IMAGE">Image</option>
-              <option value="VIDEO">Video</option>
-              <option value="AUDIO">Audio</option>
-              <option value="TEXT">Text</option>
-              <option value="PDF">PDF</option>
-              <option value="TIME_SERIES">Time series</option>
-              <option value="MULTIMODAL">Multimodal</option>
-            </select>
-          </label>
-          <label className="wide">
-            Project name
-            <input name="name" placeholder="Vehicle damage labeling" required disabled={creatableOrganizations.length === 0} />
-          </label>
-          <label>
-            Privacy
-            <select name="accessMode" defaultValue="ORGANIZATION" disabled={creatableOrganizations.length === 0}>
-              {projectAccessModes.map((mode) => (
-                <option key={mode} value={mode}>
-                  {formatEnum(mode)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Member limit
-            <input name="memberLimit" min={1} placeholder="No limit" type="number" disabled={creatableOrganizations.length === 0} />
-          </label>
-          <label className="check-row wide">
-            <input name="allowExternalMembers" type="checkbox" disabled={creatableOrganizations.length === 0} />
-            Allow members outside the organization
-          </label>
-          <label className="check-row wide">
-            <input name="joinCodeEnabled" type="checkbox" disabled={creatableOrganizations.length === 0} />
-            Enable join code
-          </label>
-          <label className="wide">
-            Description
-            <textarea name="description" placeholder="Short internal summary" rows={3} disabled={creatableOrganizations.length === 0} />
-          </label>
-          <label className="wide">
-            Instructions
-            <textarea
-              name="instructions"
-              placeholder="Labeling rules, review expectations, or QA notes"
-              rows={4}
-              disabled={creatableOrganizations.length === 0}
+          <section className="project-workspace-layout">
+            <ProjectRecordsTable
+              emptyCopy="Create your first project record from the form."
+              loading={projectsLoading || organizationsLoading}
+              projects={userCreatedProjects}
+              subtitle="Projects created by your account."
+              title="Your project records"
             />
-          </label>
-          <button className="primary-button wide" type="submit" disabled={saving || creatableOrganizations.length === 0}>
-            <FolderKanban size={18} />
-            {saving ? "Creating" : "Create draft project"}
-          </button>
-        </form>
-      </section>
+            <ProjectCreateForm
+              creatableOrganizations={creatableOrganizations}
+              defaultOrganizationId={defaultOrganization?.id ?? ""}
+              draft={projectDraft}
+              onSubmit={handleSubmit}
+              saving={saving}
+            />
+          </section>
+        </section>
+      ) : (
+        <section className="panel project-directory-frame">
+          <div className="section-actions">
+            {creatableOrganizations.length > 0 && (
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => setShowCreateWorkspace(true)}
+                disabled={organizationsLoading}
+              >
+                <FolderKanban size={18} />
+                New project
+              </button>
+            )}
+          </div>
+          <ProjectRecordsTable
+            emptyCopy={
+              creatableOrganizations.length > 0
+                ? "Create the first draft project to prepare dataset ingestion."
+                : "You can view signed-in public projects, but need owner, admin, or manager access to create one."
+            }
+            loading={projectsLoading || organizationsLoading}
+            projects={projects}
+            subtitle="All signed-in public projects plus records available to your access."
+            title="Available projects"
+          />
+        </section>
+      )}
     </section>
+  );
+}
+
+function ProjectRecordsTable({
+  emptyCopy,
+  loading,
+  projects,
+  subtitle,
+  title
+}: {
+  emptyCopy: string;
+  loading: boolean;
+  projects: ProjectSummary[];
+  subtitle: string;
+  title: string;
+}) {
+  return (
+    <section className="table-panel">
+      <div className="table-toolbar">
+        <div>
+          <p className="eyebrow">Projects</p>
+          <h2>{title}</h2>
+          <p className="muted-copy">{subtitle}</p>
+        </div>
+      </div>
+      <div className="table-row project-head table-head">
+        <span>Name</span>
+        <span>Access</span>
+        <span>Status</span>
+        <span>Members</span>
+        <span>Updated</span>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <FolderKanban size={28} />
+          <strong>Loading projects</strong>
+          <span>Checking your organization access and project records.</span>
+        </div>
+      ) : projects.length > 0 ? (
+        projects.map((project) => <ProjectRow key={project.id} project={project} />)
+      ) : (
+        <div className="empty-state">
+          <FolderKanban size={28} />
+          <strong>No projects yet</strong>
+          <span>{emptyCopy}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ProjectCreateForm({
+  creatableOrganizations,
+  defaultOrganizationId,
+  draft,
+  onSubmit,
+  saving
+}: {
+  creatableOrganizations: Array<{ id: string; name: string }>;
+  defaultOrganizationId: string;
+  draft: ReturnType<typeof useFormDraft>;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  saving: boolean;
+}) {
+  return (
+    <form
+      className="panel project-form compact-project-form"
+      onChange={draft.saveDraft}
+      onSubmit={onSubmit}
+      ref={draft.formRef}
+    >
+      <div className="wide">
+        <p className="eyebrow">Create</p>
+        <h2>New project</h2>
+      </div>
+      <label>
+        Organization
+        <select name="organizationId" defaultValue={defaultOrganizationId} required disabled={creatableOrganizations.length === 0}>
+          {creatableOrganizations.map((organization) => (
+            <option key={organization.id} value={organization.id}>
+              {organization.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Data type
+        <select name="dataType" defaultValue="IMAGE" disabled={creatableOrganizations.length === 0}>
+          <option value="IMAGE">Image</option>
+          <option value="VIDEO">Video</option>
+          <option value="AUDIO">Audio</option>
+          <option value="TEXT">Text</option>
+          <option value="PDF">PDF</option>
+          <option value="TIME_SERIES">Time series</option>
+          <option value="MULTIMODAL">Multimodal</option>
+        </select>
+      </label>
+      <label className="wide">
+        Project name
+        <input name="name" placeholder="Vehicle damage labeling" required disabled={creatableOrganizations.length === 0} />
+      </label>
+      <label>
+        Privacy
+        <select name="accessMode" defaultValue="ORGANIZATION" disabled={creatableOrganizations.length === 0}>
+          {projectAccessModes.map((mode) => (
+            <option key={mode} value={mode}>
+              {formatEnum(mode)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Member limit
+        <input name="memberLimit" min={1} placeholder="No limit" type="number" disabled={creatableOrganizations.length === 0} />
+      </label>
+      <label className="check-row wide">
+        <input name="allowExternalMembers" type="checkbox" disabled={creatableOrganizations.length === 0} />
+        Allow members outside the organization
+      </label>
+      <label className="check-row wide">
+        <input name="joinCodeEnabled" type="checkbox" disabled={creatableOrganizations.length === 0} />
+        Enable join code
+      </label>
+      <label className="wide">
+        Description
+        <textarea name="description" placeholder="Short internal summary" rows={3} disabled={creatableOrganizations.length === 0} />
+      </label>
+      <label className="wide">
+        Instructions
+        <textarea
+          name="instructions"
+          placeholder="Labeling rules, review expectations, or QA notes"
+          rows={4}
+          disabled={creatableOrganizations.length === 0}
+        />
+      </label>
+      <button className="primary-button wide" type="submit" disabled={saving || creatableOrganizations.length === 0}>
+        <FolderKanban size={18} />
+        {saving ? "Creating" : "Create draft project"}
+      </button>
+    </form>
   );
 }
 

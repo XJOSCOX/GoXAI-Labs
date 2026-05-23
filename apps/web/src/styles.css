@@ -1092,6 +1092,21 @@ textarea:focus {
   width: min(1440px, 100%);
 }
 
+.project-directory-frame,
+.project-create-frame {
+  gap: 18px;
+  justify-self: start;
+  width: min(1440px, 100%);
+}
+
+.project-directory-frame > .section-actions:empty {
+  display: none;
+}
+
+.project-create-frame .project-workspace-layout {
+  width: 100%;
+}
+
 .organization-detail-nav {
   display: flex;
   align-items: center;
