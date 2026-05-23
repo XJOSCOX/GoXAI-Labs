@@ -39,7 +39,10 @@ export function AppShell() {
             <span>{getInitials(name, email)}</span>
           </div>
           <div className="sidebar-profile-info">
-            <strong>{name}</strong>
+            <strong>
+              {name}
+              {dbUser?.isVerified && <CheckCircle2 size={14} aria-label="Verified user" />}
+            </strong>
             <span>{email}</span>
             <small>{formatEnum(role)}</small>
             <small>{accountKind}</small>

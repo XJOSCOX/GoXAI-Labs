@@ -373,6 +373,24 @@ label {
   font-weight: 500;
 }
 
+.check-row {
+  display: flex;
+  align-items: center;
+  align-self: end;
+  gap: 9px;
+  min-height: 40px;
+}
+
+.join-code-panel {
+  width: min(680px, 100%);
+}
+
+.join-code-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
 input,
 select,
 textarea {
@@ -702,6 +720,10 @@ textarea:focus {
 }
 
 .sidebar-profile strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
   font-size: 14px;
   font-weight: 600;
 }
@@ -1315,14 +1337,14 @@ textarea:focus {
 
 .org-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 320px));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   gap: 12px;
 }
 
 .org-summary-card {
   display: grid;
-  gap: 14px;
-  min-height: 150px;
+  gap: 16px;
+  min-height: 260px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-soft);
@@ -1338,12 +1360,6 @@ textarea:focus {
   background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
 }
 
-.org-summary-card strong,
-.org-summary-card small,
-.org-summary-card span {
-  display: block;
-}
-
 .org-summary-card strong {
   font-size: 15px;
   font-weight: 600;
@@ -1355,17 +1371,74 @@ textarea:focus {
   font-size: 12px;
 }
 
-.org-summary-meta {
+.org-card-head,
+.org-summary-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.org-card-head > span:first-child {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.org-card-head small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.org-card-badges {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
-.org-summary-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.org-card-badges span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.org-card-stats,
+.org-card-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.org-card-stats > span,
+.org-card-meta > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.org-card-stats strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.org-card-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.org-card-meta strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .organization-detail {
@@ -1737,9 +1810,12 @@ textarea:focus {
   }
 
   .auth-form.two-column,
+  .join-code-form,
   .signup-type-picker,
   .stat-grid,
   .detail-list,
+  .org-card-stats,
+  .org-card-meta,
   .setup-form,
   .project-form,
   .dataset-form,

@@ -30,6 +30,13 @@ enum OrganizationType {
   MARKETPLACE_VENDOR
 }
 
+enum OrganizationAccessMode {
+  INVITE_ONLY
+  PUBLIC
+  REQUEST_TO_JOIN
+  PRIVATE
+}
+
 enum PlanTier {
   FREE
   STARTER
@@ -265,6 +272,11 @@ model User {
   lastName        String?     @map("last_name")
   jobTitle        String?     @map("job_title")
   avatarUrl       String?     @map("avatar_url")
+  referralCode    String?     @unique @map("referral_code")
+  apiCode         String?     @unique @map("api_code")
+  isVerified      Boolean     @default(false) @map("is_verified")
+  verifiedAt      DateTime?   @map("verified_at") @db.Timestamptz(6)
+  verifiedById    String?     @map("verified_by_id")
   globalRole      GlobalRole  @default(USER) @map("global_role")
   status          UserStatus  @default(ACTIVE)
   lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz(6)
@@ -297,6 +309,9 @@ model User {
 
   @@index([email])
   @@index([supabaseAuthId])
+  @@index([referralCode])
+  @@index([apiCode])
+  @@index([isVerified])
   @@index([status])
   @@map("users")
 }
@@ -312,6 +327,9 @@ model Organization {
   email    String?          @unique
   description String?
   type     OrganizationType @default(PERSONAL)
+  accessMode OrganizationAccessMode @default(INVITE_ONLY) @map("access_mode")
+  joinCode String?          @unique @map("join_code")
+  joinCodeEnabled Boolean   @default(false) @map("join_code_enabled")
   planTier PlanTier         @default(FREE) @map("plan_tier")
   ownerId  String           @map("owner_id")
   onboardingComplete Boolean @default(true) @map("onboarding_complete")
@@ -336,6 +354,9 @@ model Organization {
 
   @@index([ownerId])
   @@index([email])
+  @@index([accessMode])
+  @@index([joinCode])
+  @@index([joinCodeEnabled])
   @@index([onboardingComplete])
   @@index([type])
   @@index([planTier])

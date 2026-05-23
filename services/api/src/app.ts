@@ -102,19 +102,7 @@ app.post("/api/auth/sync", async (request, response) => {
     const user = await syncUserFromAccessToken(accessToken);
 
     response.status(200).json({
-      user: {
-        id: user.id,
-        supabaseAuthId: user.supabaseAuthId,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        jobTitle: user.jobTitle,
-        avatarUrl: user.avatarUrl,
-        globalRole: user.globalRole,
-        status: user.status,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt
-      }
+      user: serializeUser(user)
     });
   } catch (error) {
     response.status(401).json({
@@ -143,21 +131,30 @@ app.patch("/api/auth/profile", requireAuthenticatedUser, async (request: Authent
   });
 
   response.status(200).json({
-    user: {
-      id: updated.id,
-      supabaseAuthId: updated.supabaseAuthId,
-      email: updated.email,
-      firstName: updated.firstName,
-      lastName: updated.lastName,
-      jobTitle: updated.jobTitle,
-      avatarUrl: updated.avatarUrl,
-      globalRole: updated.globalRole,
-      status: updated.status,
-      createdAt: updated.createdAt,
-      updatedAt: updated.updatedAt
-    }
+    user: serializeUser(updated)
   });
 });
+
+function serializeUser(user: Awaited<ReturnType<typeof syncUserFromAccessToken>>) {
+  return {
+    id: user.id,
+    supabaseAuthId: user.supabaseAuthId,
+    email: user.email,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    jobTitle: user.jobTitle,
+    avatarUrl: user.avatarUrl,
+    referralCode: user.referralCode,
+    apiCode: user.apiCode,
+    isVerified: user.isVerified,
+    verifiedAt: user.verifiedAt,
+    verifiedById: user.verifiedById,
+    globalRole: user.globalRole,
+    status: user.status,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
+}
 
 app.use("/api/organizations", organizationsRouter);
 app.use("/api/projects", projectsRouter);

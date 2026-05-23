@@ -5,6 +5,7 @@ import {
   addOrganizationMember,
   createOrganization,
   deleteOrganization,
+  joinOrganizationWithCode,
   removeOrganizationMember,
   updateOrganization,
   updateOrganizationMember,
@@ -22,6 +23,8 @@ export function OrganizationSetupPage() {
   const { organizationId = "" } = useParams();
   const { error, loading, organizations, reload, setError } = useOrganizations(session);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const [joinMessage, setJoinMessage] = useState<string | null>(null);
   const {
     error: organizationDetailError,
     loading: organizationDetailLoading,
@@ -29,6 +32,30 @@ export function OrganizationSetupPage() {
     reload: reloadOrganization,
     setError: setOrganizationDetailError
   } = useOrganization(session, organizationId);
+
+  async function handleJoinByCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setJoinMessage(null);
+
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    setJoining(true);
+
+    try {
+      await joinOrganizationWithCode(session, getFormValue(event, "code"));
+      event.currentTarget.reset();
+      setJoinMessage("Organization joined. Your access is active.");
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to join organization.");
+    } finally {
+      setJoining(false);
+    }
+  }
 
   return (
     <section className="page-stack organization-page">
@@ -75,21 +102,71 @@ export function OrganizationSetupPage() {
                   key={organization.id}
                   to={`/organization/${organization.id}`}
                 >
-                  <span>
-                    <strong>{organization.name}</strong>
-                    <small>{organization.workspace?.name ?? "Organization wide"}</small>
+                  <span className="org-card-head">
+                    <span>
+                      <strong>{organization.name}</strong>
+                      <small>{organization.description || organization.workspace?.name || "Organization wide"}</small>
+                    </span>
+                    <span className="status-pill compact">{formatEnum(organization.role)}</span>
                   </span>
-                  <span className="org-summary-meta">
+                  <span className="org-card-badges">
                     <span>{formatEnum(organization.type)}</span>
                     <span>{formatEnum(organization.planTier)}</span>
+                    <span>{formatEnum(organization.accessMode)}</span>
+                    <span>{organization.joinCodeEnabled ? "Join code on" : "Invite managed"}</span>
                   </span>
-                  <span className="org-summary-footer">
-                    <span className="status-pill compact">{formatEnum(organization.role)}</span>
-                    <small>Updated {formatDate(organization.updatedAt)}</small>
+                  <span className="org-card-stats">
+                    <span>
+                      <strong>{organization.counts.owners}</strong>
+                      <small>Owners</small>
+                    </span>
+                    <span>
+                      <strong>{organization.counts.members}</strong>
+                      <small>Members</small>
+                    </span>
+                    <span>
+                      <strong>{organization.counts.projects}</strong>
+                      <small>Projects</small>
+                    </span>
+                    <span>
+                      <strong>{organization.counts.datasets}</strong>
+                      <small>Datasets</small>
+                    </span>
+                  </span>
+                  <span className="org-card-meta">
+                    <span>
+                      <small>Org slug</small>
+                      <strong>{organization.slug}</strong>
+                    </span>
+                    <span>
+                      <small>Workspace</small>
+                      <strong>{organization.workspace?.slug ?? "wide"}</strong>
+                    </span>
+                    <span>
+                      <small>Created</small>
+                      <strong>{formatDate(organization.createdAt)}</strong>
+                    </span>
+                    <span>
+                      <small>Updated</small>
+                      <strong>{formatDate(organization.updatedAt)}</strong>
+                    </span>
                   </span>
                 </Link>
               ))}
             </div>
+          </section>
+          <section className="panel join-code-panel">
+            <div>
+              <p className="eyebrow">Join</p>
+              <h2>Join with organization code</h2>
+            </div>
+            <form className="join-code-form" onSubmit={handleJoinByCode}>
+              <input name="code" placeholder="ORG-XXXXX-XXXXX-XXXXX" required />
+              <button className="secondary-button" type="submit" disabled={joining}>
+                {joining ? "Joining" : "Join organization"}
+              </button>
+            </form>
+            {joinMessage && <p className="form-success">{joinMessage}</p>}
           </section>
         </>
       ) : organizations.length > 0 && organizationId ? (
@@ -122,17 +199,32 @@ export function OrganizationSetupPage() {
           )}
         </>
       ) : (
-        <div className="single-column">
-          <OrganizationCreateForm
-            loading={loading}
-            onCreated={async (organizationId) => {
-              await reload();
-              navigate(`/organization/${organizationId}`);
-            }}
-            session={session}
-            setPageError={setError}
-          />
-        </div>
+        <>
+          <section className="panel join-code-panel">
+            <div>
+              <p className="eyebrow">Join</p>
+              <h2>Join with organization code</h2>
+            </div>
+            <form className="join-code-form" onSubmit={handleJoinByCode}>
+              <input name="code" placeholder="ORG-XXXXX-XXXXX-XXXXX" required />
+              <button className="secondary-button" type="submit" disabled={joining}>
+                {joining ? "Joining" : "Join organization"}
+              </button>
+            </form>
+            {joinMessage && <p className="form-success">{joinMessage}</p>}
+          </section>
+          <div className="single-column">
+            <OrganizationCreateForm
+              loading={loading}
+              onCreated={async (organizationId) => {
+                await reload();
+                navigate(`/organization/${organizationId}`);
+              }}
+              session={session}
+              setPageError={setError}
+            />
+          </div>
+        </>
       )}
       {showCreateModal && (
         <OrganizationCreateModal
@@ -358,6 +450,8 @@ function OrganizationManagementPanel({
         email: getFormValue(event, "email"),
         description: getFormValue(event, "description"),
         type: getFormValue(event, "type"),
+        accessMode: getFormValue(event, "accessMode"),
+        joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
         planTier: getFormValue(event, "planTier")
       });
       setMessage("Organization settings updated.");
@@ -444,6 +538,26 @@ function OrganizationManagementPanel({
               <dd>{organization.memberships.length}</dd>
             </div>
             <div>
+              <dt>Owners</dt>
+              <dd>{organization.counts.owners}</dd>
+            </div>
+            <div>
+              <dt>Projects</dt>
+              <dd>{organization.counts.projects}</dd>
+            </div>
+            <div>
+              <dt>Datasets</dt>
+              <dd>{organization.counts.datasets}</dd>
+            </div>
+            <div>
+              <dt>Privacy</dt>
+              <dd>{formatEnum(organization.accessMode)}</dd>
+            </div>
+            <div>
+              <dt>Join code</dt>
+              <dd>{organization.joinCodeEnabled ? organization.joinCode ?? "Generating" : "Disabled"}</dd>
+            </div>
+            <div>
               <dt>Email</dt>
               <dd>{organization.email ?? "Not set"}</dd>
             </div>
@@ -454,6 +568,10 @@ function OrganizationManagementPanel({
             <div>
               <dt>Slug</dt>
               <dd>{organization.slug}</dd>
+            </div>
+            <div>
+              <dt>Created</dt>
+              <dd>{formatDate(organization.createdAt)}</dd>
             </div>
             <div>
               <dt>Updated</dt>
@@ -517,6 +635,19 @@ function OrganizationManagementPanel({
                 <option value="BUSINESS">Business</option>
                 <option value="ENTERPRISE">Enterprise</option>
               </select>
+            </label>
+            <label>
+              Privacy
+              <select name="accessMode" defaultValue={organization.accessMode}>
+                <option value="INVITE_ONLY">Invite only</option>
+                <option value="PUBLIC">Open public</option>
+                <option value="REQUEST_TO_JOIN">Request to join</option>
+                <option value="PRIVATE">Private</option>
+              </select>
+            </label>
+            <label className="check-row">
+              <input name="joinCodeEnabled" type="checkbox" defaultChecked={organization.joinCodeEnabled} />
+              Enable join code
             </label>
             <label className="wide">
               Description

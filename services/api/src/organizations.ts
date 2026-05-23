@@ -2,6 +2,7 @@ import {
   getPrismaClient,
   MembershipRole,
   type Membership,
+  OrganizationAccessMode,
   OrganizationType,
   PlanTier,
   type Organization,
@@ -42,6 +43,58 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       createdAt: "asc"
     }
   });
+  const organizationIds = memberships.map((membership) => membership.organizationId);
+  const [membershipCounts, ownerCounts, projectCounts, datasetCounts] = await Promise.all([
+    prisma.membership.groupBy({
+      by: ["organizationId"],
+      where: {
+        organizationId: {
+          in: organizationIds
+        },
+        status: "ACTIVE"
+      },
+      _count: {
+        _all: true
+      }
+    }),
+    prisma.membership.groupBy({
+      by: ["organizationId"],
+      where: {
+        organizationId: {
+          in: organizationIds
+        },
+        role: "OWNER",
+        status: "ACTIVE"
+      },
+      _count: {
+        _all: true
+      }
+    }),
+    prisma.project.groupBy({
+      by: ["organizationId"],
+      where: {
+        organizationId: {
+          in: organizationIds
+        }
+      },
+      _count: {
+        _all: true
+      }
+    }),
+    prisma.dataset.groupBy({
+      by: ["organizationId"],
+      where: {
+        organizationId: {
+          in: organizationIds
+        }
+      },
+      _count: {
+        _all: true
+      }
+    })
+  ]);
+  const getCount = (rows: Array<{ organizationId: string; _count: { _all: number } }>, organizationId: string) =>
+    rows.find((row) => row.organizationId === organizationId)?._count._all ?? 0;
 
   response.status(200).json({
     organizations: memberships.map((membership) => ({
@@ -52,8 +105,16 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       description: membership.organization.description,
       onboardingComplete: membership.organization.onboardingComplete,
       type: membership.organization.type,
+      accessMode: membership.organization.accessMode,
+      joinCodeEnabled: membership.organization.joinCodeEnabled,
       planTier: membership.organization.planTier,
       role: membership.role,
+      counts: {
+        owners: getCount(ownerCounts, membership.organizationId),
+        members: getCount(membershipCounts, membership.organizationId),
+        projects: getCount(projectCounts, membership.organizationId),
+        datasets: getCount(datasetCounts, membership.organizationId)
+      },
       workspace: membership.workspace
         ? {
             id: membership.workspace.id,
@@ -111,11 +172,15 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         email: parsed.value.organizationEmail,
         description: parsed.value.description,
         type: parsed.value.organizationType,
+        accessMode: OrganizationAccessMode.INVITE_ONLY,
+        joinCode: createHumanCode("ORG", 3),
+        joinCodeEnabled: false,
         planTier: parsed.value.planTier,
         ownerId: user.id,
         onboardingComplete: true,
         onboardingJson: {
           createdFrom: "app",
+          accessMode: OrganizationAccessMode.INVITE_ONLY,
           completed: true
         }
       }
@@ -163,6 +228,98 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   response.status(201).json({
     organization: serializeOrganization(result.organization),
     workspace: serializeWorkspace(result.workspace)
+  });
+});
+
+router.post("/join-code", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const code = normalizeName(request.body?.code)?.toUpperCase();
+
+  if (!code) {
+    response.status(400).json({ error: "Join code is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const organization = await prisma.organization.findUnique({
+    where: {
+      joinCode: code
+    },
+    include: {
+      workspaces: {
+        orderBy: {
+          createdAt: "asc"
+        },
+        take: 1
+      }
+    }
+  });
+
+  if (!organization || !organization.joinCodeEnabled || organization.accessMode === "PRIVATE") {
+    response.status(404).json({ error: "Join code is not valid or is no longer active." });
+    return;
+  }
+
+  const workspace = organization.workspaces[0] ?? null;
+  const membership = await prisma.$transaction(async (tx) => {
+    const existing = await tx.membership.findFirst({
+      where: {
+        userId: user.id,
+        organizationId: organization.id
+      }
+    });
+
+    if (existing) {
+      return tx.membership.update({
+        where: {
+          id: existing.id
+        },
+        data: {
+          role: existing.role === MembershipRole.OWNER ? MembershipRole.OWNER : MembershipRole.VIEWER,
+          status: "ACTIVE",
+          workspaceId: existing.workspaceId ?? workspace?.id,
+          joinedAt: existing.joinedAt ?? new Date()
+        }
+      });
+    }
+
+    const created = await tx.membership.create({
+      data: {
+        userId: user.id,
+        organizationId: organization.id,
+        workspaceId: workspace?.id,
+        role: MembershipRole.VIEWER,
+        status: "ACTIVE",
+        joinedAt: new Date()
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: organization.id,
+        workspaceId: workspace?.id,
+        userId: user.id,
+        action: "organization.joined_with_code",
+        entityType: "organization",
+        entityId: organization.id,
+        metadata: {
+          membershipId: created.id
+        }
+      }
+    });
+
+    return created;
+  });
+
+  response.status(200).json({
+    organization: serializeOrganization(organization),
+    membershipId: membership.id
   });
 });
 
@@ -260,12 +417,23 @@ router.patch("/:organizationId", async (request: AuthenticatedRequest, response)
 
   const organization = await prisma.$transaction(async (tx) => {
     const { completeOnboarding, ...organizationData } = parsed.value;
+    const currentOrganization = await tx.organization.findUnique({
+      where: {
+        id: organizationId
+      },
+      select: {
+        joinCode: true
+      }
+    });
     const updated = await tx.organization.update({
       where: {
         id: organizationId
       },
       data: {
         ...organizationData,
+        ...(organizationData.joinCodeEnabled === true && !currentOrganization?.joinCode
+          ? { joinCode: createHumanCode("ORG", 3) }
+          : {}),
         ...(completeOnboarding
           ? {
               onboardingComplete: true,
@@ -740,6 +908,8 @@ type UpdateOrganizationBody =
       email?: unknown;
       description?: unknown;
       type?: unknown;
+      accessMode?: unknown;
+      joinCodeEnabled?: unknown;
       planTier?: unknown;
       completeOnboarding?: unknown;
     }
@@ -813,6 +983,8 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
         email?: string | null;
         description?: string | null;
         type?: OrganizationType;
+        accessMode?: OrganizationAccessMode;
+        joinCodeEnabled?: boolean;
         planTier?: PlanTier;
         completeOnboarding?: boolean;
       };
@@ -822,6 +994,8 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
   const email = normalizeNullableEmail(body?.email);
   const description = normalizeNullableLongText(body?.description);
   const type = parseOptionalEnumValue(OrganizationType, body?.type);
+  const accessMode = parseOptionalEnumValue(OrganizationAccessMode, body?.accessMode);
+  const joinCodeEnabled = typeof body?.joinCodeEnabled === "boolean" ? body.joinCodeEnabled : undefined;
   const planTier = parseOptionalEnumValue(PlanTier, body?.planTier);
   const completeOnboarding = body?.completeOnboarding === true;
 
@@ -831,6 +1005,10 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
 
   if (body?.type && !type) {
     return { ok: false, error: "Choose a valid organization type." };
+  }
+
+  if (body?.accessMode && !accessMode) {
+    return { ok: false, error: "Choose a valid organization access mode." };
   }
 
   if (email === false) {
@@ -852,6 +1030,8 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
       ...(email !== undefined ? { email } : {}),
       ...(description !== undefined ? { description } : {}),
       ...(type ? { type } : {}),
+      ...(accessMode ? { accessMode } : {}),
+      ...(joinCodeEnabled !== undefined ? { joinCodeEnabled } : {}),
       ...(planTier ? { planTier } : {}),
       ...(completeOnboarding ? { completeOnboarding } : {})
     }
@@ -910,6 +1090,9 @@ function serializeOrganization(organization: Organization) {
     description: organization.description,
     onboardingComplete: organization.onboardingComplete,
     type: organization.type,
+    accessMode: organization.accessMode,
+    joinCode: organization.joinCode,
+    joinCodeEnabled: organization.joinCodeEnabled,
     planTier: organization.planTier,
     ownerId: organization.ownerId,
     createdAt: organization.createdAt,
@@ -948,6 +1131,17 @@ const membershipIncludes = {
 } as const;
 
 const organizationDetailIncludes = {
+  _count: {
+    select: {
+      datasets: true,
+      memberships: {
+        where: {
+          status: "ACTIVE"
+        }
+      },
+      projects: true
+    }
+  },
   workspaces: true,
   memberships: {
     where: {
@@ -962,6 +1156,11 @@ const organizationDetailIncludes = {
 
 type OrganizationDetail = Organization & {
   workspaces: Workspace[];
+  _count: {
+    datasets: number;
+    memberships: number;
+    projects: number;
+  };
   memberships: Array<Membership & {
     user: {
       id: string;
@@ -995,6 +1194,12 @@ function serializeOrganizationDetail(organization: OrganizationDetail, currentUs
   return {
     ...serializeOrganization(organization),
     currentUserRole,
+    counts: {
+      owners: organization.memberships.filter((membership) => membership.role === MembershipRole.OWNER).length,
+      members: organization._count.memberships,
+      projects: organization._count.projects,
+      datasets: organization._count.datasets
+    },
     workspaces: organization.workspaces.map(serializeWorkspace),
     memberships: organization.memberships.map(serializeMembership)
   };
@@ -1096,6 +1301,25 @@ function slugify(value: string) {
       .replace(/(^-|-$)/g, "")
       .slice(0, 72) || "workspace"
   );
+}
+
+function createHumanCode(prefix: string, groups: number) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(groups * 5);
+  globalThis.crypto.getRandomValues(bytes);
+  const chunks: string[] = [];
+
+  for (let groupIndex = 0; groupIndex < groups; groupIndex += 1) {
+    let chunk = "";
+
+    for (let offset = 0; offset < 5; offset += 1) {
+      chunk += alphabet[bytes[groupIndex * 5 + offset] % alphabet.length];
+    }
+
+    chunks.push(chunk);
+  }
+
+  return [prefix, ...chunks].join("-");
 }
 
 function parseEnumValue<T extends Record<string, string>>(

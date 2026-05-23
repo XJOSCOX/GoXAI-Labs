@@ -8,6 +8,11 @@ export interface ApiUser {
   lastName: string | null;
   jobTitle: string | null;
   avatarUrl: string | null;
+  referralCode: string | null;
+  apiCode: string | null;
+  isVerified: boolean;
+  verifiedAt: string | null;
+  verifiedById: string | null;
   globalRole: string;
   status: string;
   createdAt: string;
@@ -33,8 +38,17 @@ export interface OrganizationSummary {
   description: string | null;
   onboardingComplete: boolean;
   type: string;
+  accessMode: string;
+  joinCode?: string | null;
+  joinCodeEnabled: boolean;
   planTier: string;
   role: string;
+  counts: {
+    owners: number;
+    members: number;
+    projects: number;
+    datasets: number;
+  };
   workspace: {
     id: string;
     name: string;
@@ -93,6 +107,8 @@ export interface UpdateOrganizationInput {
   email?: string;
   description?: string;
   type?: string;
+  accessMode?: string;
+  joinCodeEnabled?: boolean;
   planTier?: string;
   completeOnboarding?: boolean;
 }
@@ -416,6 +432,17 @@ export async function getOrganization(session: Session, organizationId: string) 
   }
 
   return ((await response.json()) as { organization: OrganizationDetail }).organization;
+}
+
+export async function joinOrganizationWithCode(session: Session, code: string) {
+  const response = await authenticatedFetch(session, "/api/organizations/join-code", {
+    method: "POST",
+    body: JSON.stringify({ code })
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to join organization."));
+  }
 }
 
 export async function updateOrganization(session: Session, organizationId: string, input: UpdateOrganizationInput) {

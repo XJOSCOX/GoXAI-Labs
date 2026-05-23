@@ -4,6 +4,7 @@ import {
   getSupabaseConfig,
   GlobalRole,
   MembershipRole,
+  OrganizationAccessMode,
   OrganizationType,
   PlanTier,
   Prisma
@@ -74,6 +75,8 @@ export async function syncUserFromAccessToken(accessToken: string) {
       lastName: profile.lastName,
       jobTitle: profile.jobTitle,
       avatarUrl: profile.avatarUrl,
+      referralCode: createHumanCode("REF", 4),
+      apiCode: createHumanCode("API", 5),
       globalRole: shouldBootstrapOwner ? GlobalRole.SUPER_ADMIN : GlobalRole.USER,
       lastLoginAt: now
     },
@@ -87,6 +90,18 @@ export async function syncUserFromAccessToken(accessToken: string) {
       lastLoginAt: now
     }
   });
+
+  if (!user.referralCode || !user.apiCode) {
+    await prisma.user.update({
+      where: {
+        id: user.id
+      },
+      data: {
+        ...(!user.referralCode ? { referralCode: createHumanCode("REF", 4) } : {}),
+        ...(!user.apiCode ? { apiCode: createHumanCode("API", 5) } : {})
+      }
+    });
+  }
 
   await createSignupOrganizationIfNeeded(user.id, authUser.user_metadata);
 
@@ -143,6 +158,25 @@ function getUserProfile(user: {
 
 function getMetadataString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function createHumanCode(prefix: string, groups: number) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(groups * 5);
+  globalThis.crypto.getRandomValues(bytes);
+  const chunks: string[] = [];
+
+  for (let groupIndex = 0; groupIndex < groups; groupIndex += 1) {
+    let chunk = "";
+
+    for (let offset = 0; offset < 5; offset += 1) {
+      chunk += alphabet[bytes[groupIndex * 5 + offset] % alphabet.length];
+    }
+
+    chunks.push(chunk);
+  }
+
+  return [prefix, ...chunks].join("-");
 }
 
 async function createSignupOrganizationIfNeeded(userId: string, metadata: Record<string, unknown>) {
@@ -209,6 +243,9 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
           email: organizationEmail,
           description: organizationDescription,
           type: organizationType,
+          accessMode: OrganizationAccessMode.INVITE_ONLY,
+          joinCode: createHumanCode("ORG", 3),
+          joinCodeEnabled: false,
           planTier,
           ownerId: userId,
           onboardingComplete: false,
