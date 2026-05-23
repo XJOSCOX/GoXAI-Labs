@@ -9,6 +9,12 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import {
+  canDeleteOrganization,
+  canGrantOwnerRole,
+  canManageMembers,
+  canUpdateOrganization
+} from "./permissions.js";
 
 const router = Router();
 
@@ -201,10 +207,10 @@ router.patch("/:organizationId", async (request: AuthenticatedRequest, response)
   }
 
   const prisma = getPrismaClient();
-  const membership = await requireOrganizationManager(user.id, organizationId);
+  const membership = await requireActiveMembership(user.id, organizationId);
 
-  if (!membership) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to edit this organization." });
+  if (!membership || !canUpdateOrganization(membership)) {
+    response.status(403).json({ error: "You need owner or admin access to edit this organization." });
     return;
   }
 
@@ -252,16 +258,9 @@ router.delete("/:organizationId", async (request: AuthenticatedRequest, response
   }
 
   const prisma = getPrismaClient();
-  const membership = await prisma.membership.findFirst({
-    where: {
-      userId: user.id,
-      organizationId,
-      status: "ACTIVE",
-      role: "OWNER"
-    }
-  });
+  const membership = await requireActiveMembership(user.id, organizationId);
 
-  if (!membership) {
+  if (!membership || !canDeleteOrganization(membership)) {
     response.status(403).json({ error: "Only an owner can delete an organization." });
     return;
   }
@@ -324,10 +323,15 @@ router.post("/:organizationId/members", async (request: AuthenticatedRequest, re
     return;
   }
 
-  const manager = await requireOrganizationManager(user.id, organizationId);
+  const manager = await requireActiveMembership(user.id, organizationId);
 
-  if (!manager) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to add members." });
+  if (!manager || !canManageMembers(manager)) {
+    response.status(403).json({ error: "You need owner or admin access to add members." });
+    return;
+  }
+
+  if (parsed.value.role === MembershipRole.OWNER && !canGrantOwnerRole(manager)) {
+    response.status(403).json({ error: "Only an owner can grant the owner role." });
     return;
   }
 
@@ -437,10 +441,10 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
     return;
   }
 
-  const manager = await requireOrganizationManager(user.id, organizationId);
+  const manager = await requireActiveMembership(user.id, organizationId);
 
-  if (!manager) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to edit members." });
+  if (!manager || !canManageMembers(manager)) {
+    response.status(403).json({ error: "You need owner or admin access to edit members." });
     return;
   }
 
@@ -454,6 +458,11 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
 
   if (!membership) {
     response.status(404).json({ error: "Membership was not found." });
+    return;
+  }
+
+  if ((membership.role === MembershipRole.OWNER || parsed.value.role === MembershipRole.OWNER) && !canGrantOwnerRole(manager)) {
+    response.status(403).json({ error: "Only an owner can grant or remove the owner role." });
     return;
   }
 
@@ -503,10 +512,10 @@ router.delete("/:organizationId/members/:membershipId", async (request: Authenti
     return;
   }
 
-  const manager = await requireOrganizationManager(user.id, organizationId);
+  const manager = await requireActiveMembership(user.id, organizationId);
 
-  if (!manager) {
-    response.status(403).json({ error: "You need owner, admin, or manager access to remove members." });
+  if (!manager || !canManageMembers(manager)) {
+    response.status(403).json({ error: "You need owner or admin access to remove members." });
     return;
   }
 
@@ -520,6 +529,11 @@ router.delete("/:organizationId/members/:membershipId", async (request: Authenti
 
   if (!membership) {
     response.status(404).json({ error: "Membership was not found." });
+    return;
+  }
+
+  if (membership.role === MembershipRole.OWNER && !canGrantOwnerRole(manager)) {
+    response.status(403).json({ error: "Only an owner can remove another owner." });
     return;
   }
 
@@ -809,17 +823,14 @@ function serializeMembership(membership: MembershipWithUser) {
   };
 }
 
-async function requireOrganizationManager(userId: string, organizationId: string) {
+async function requireActiveMembership(userId: string, organizationId: string) {
   const prisma = getPrismaClient();
 
   return prisma.membership.findFirst({
     where: {
       userId,
       organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 }

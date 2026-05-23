@@ -699,6 +699,24 @@ function OrganizationManagementPanel({
         session={session}
         setPageError={setPageError}
       />
+      <RolePrivilegesPanel />
+    </section>
+  );
+}
+
+function RolePrivilegesPanel() {
+  return (
+    <section className="role-grid">
+      {rolePrivileges.map((role) => (
+        <article className="role-card" key={role.role}>
+          <strong>{formatEnum(role.role)}</strong>
+          <ul>
+            {role.permissions.map((permission) => (
+              <li key={permission}>{permission}</li>
+            ))}
+          </ul>
+        </article>
+      ))}
     </section>
   );
 }
@@ -821,6 +839,33 @@ function MemberRow({
 }
 
 const memberRoles = ["OWNER", "ADMIN", "MANAGER", "REVIEWER", "ANNOTATOR", "VIEWER"];
+
+const rolePrivileges = [
+  {
+    role: "OWNER",
+    permissions: ["Full organization control", "Manage owners and members", "Manage projects, datasets, assets, and tasks"]
+  },
+  {
+    role: "ADMIN",
+    permissions: ["Edit organization settings", "Manage non-owner members", "Manage projects, datasets, assets, and tasks"]
+  },
+  {
+    role: "MANAGER",
+    permissions: ["Manage projects and datasets", "Upload/register assets", "Generate and assign tasks"]
+  },
+  {
+    role: "REVIEWER",
+    permissions: ["Read workspace records", "Assign/start/submit tasks", "Reserved for review/QA tools"]
+  },
+  {
+    role: "ANNOTATOR",
+    permissions: ["Read workspace records", "Assign/start/submit tasks"]
+  },
+  {
+    role: "VIEWER",
+    permissions: ["Read-only access"]
+  }
+];
 
 function ProjectsPage() {
   const { session } = useAuth();

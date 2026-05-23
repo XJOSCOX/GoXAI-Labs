@@ -9,6 +9,7 @@ import {
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import { getRequestId, saveAuditLog } from "./logging.js";
+import { canManageAssets } from "./permissions.js";
 
 const router = Router();
 
@@ -75,7 +76,8 @@ router.get("/:assetId/access-url", async (request: AuthenticatedRequest, respons
       status: "ACTIVE"
     },
     select: {
-      id: true
+      id: true,
+      role: true
     }
   });
 
@@ -176,21 +178,19 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
+  const uploadMembership = await prisma.membership.findFirst({
     where: {
       userId: user.id,
       organizationId: dataset.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     },
     select: {
-      id: true
+      id: true,
+      role: true
     }
   });
 
-  if (!membership) {
+  if (!uploadMembership || !canManageAssets(uploadMembership)) {
     response.status(403).json({
       error: "You need owner, admin, or manager access to upload assets to this dataset."
     });
@@ -377,17 +377,15 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     where: {
       userId: user.id,
       organizationId: dataset.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     },
     select: {
-      id: true
+      id: true,
+      role: true
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageAssets(membership)) {
     response.status(403).json({
       error: "You need owner, admin, or manager access to register assets in this dataset."
     });

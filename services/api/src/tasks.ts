@@ -6,6 +6,7 @@ import {
 import { Router, type Response } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import { getRequestId, saveAuditLog } from "./logging.js";
+import { canGenerateTasks, canWorkTasks } from "./permissions.js";
 
 const router = Router();
 
@@ -130,17 +131,15 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
     where: {
       userId: user.id,
       organizationId: dataset.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     },
     select: {
-      id: true
+      id: true,
+      role: true
     }
   });
 
-  if (!membership) {
+  if (!membership || !canGenerateTasks(membership)) {
     response.status(403).json({
       error: "You need owner, admin, or manager access to generate tasks for this dataset."
     });
@@ -295,11 +294,12 @@ async function updateTaskForUser(
       status: "ACTIVE"
     },
     select: {
-      id: true
+      id: true,
+      role: true
     }
   });
 
-  if (!membership) {
+  if (!membership || !canWorkTasks(membership)) {
     response.status(403).json({ error: "You do not have access to this task." });
     return;
   }

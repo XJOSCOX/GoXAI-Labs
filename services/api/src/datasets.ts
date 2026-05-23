@@ -5,6 +5,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { canManageDatasets } from "./permissions.js";
 
 const router = Router();
 
@@ -182,14 +183,11 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     where: {
       userId: user.id,
       organizationId: project.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageDatasets(membership)) {
     response.status(403).json({
       error: "You need owner, admin, or manager access to create datasets in this project."
     });
@@ -291,14 +289,11 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
     where: {
       userId: user.id,
       organizationId: dataset.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageDatasets(membership)) {
     response.status(403).json({ error: "You need owner, admin, or manager access to edit this dataset." });
     return;
   }
@@ -367,14 +362,11 @@ router.post("/:datasetId/archive", async (request: AuthenticatedRequest, respons
     where: {
       userId: user.id,
       organizationId: dataset.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageDatasets(membership)) {
     response.status(403).json({ error: "You need owner, admin, or manager access to archive this dataset." });
     return;
   }

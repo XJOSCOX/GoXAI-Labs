@@ -589,6 +589,31 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.role-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.role-card ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .project-form .primary-button.wide,
 .dataset-form .primary-button.wide,
 .asset-form .primary-button.wide,
@@ -883,6 +908,7 @@ textarea:focus {
   .dataset-form,
   .asset-form,
   .management-grid,
+  .role-grid,
   .table-row.assets-head,
   .table-row.member-head,
   .table-row.task-head,

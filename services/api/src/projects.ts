@@ -6,6 +6,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { canManageProjects } from "./permissions.js";
 
 const router = Router();
 
@@ -144,14 +145,11 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
     where: {
       userId: user.id,
       organizationId: parsed.value.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageProjects(membership)) {
     response.status(403).json({
       error: "You need owner, admin, or manager access to create projects in this organization."
     });
@@ -273,14 +271,11 @@ router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
     where: {
       userId: user.id,
       organizationId: project.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageProjects(membership)) {
     response.status(403).json({ error: "You need owner, admin, or manager access to edit this project." });
     return;
   }
@@ -365,14 +360,11 @@ router.post("/:projectId/archive", async (request: AuthenticatedRequest, respons
     where: {
       userId: user.id,
       organizationId: project.organizationId,
-      status: "ACTIVE",
-      role: {
-        in: ["OWNER", "ADMIN", "MANAGER"]
-      }
+      status: "ACTIVE"
     }
   });
 
-  if (!membership) {
+  if (!membership || !canManageProjects(membership)) {
     response.status(403).json({ error: "You need owner, admin, or manager access to archive this project." });
     return;
   }
