@@ -691,7 +691,13 @@ function OrganizationSetupPage() {
         )}
       </div>
       {error && <p className="form-error">{error}</p>}
-      {organizations.length > 0 && !organizationId ? (
+      {loading ? (
+        <section className="panel empty-state compact-empty">
+          <Building2 size={28} />
+          <strong>Loading organizations</strong>
+          <span>Preparing your workspace directory.</span>
+        </section>
+      ) : organizations.length > 0 && !organizationId ? (
         <>
           <section className="panel">
             <div className="section-head">
