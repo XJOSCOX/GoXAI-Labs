@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 import { createSupabaseBrowserClient, syncAuthenticatedUser, type ApiUser } from "./api";
@@ -39,16 +40,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const lastSyncedUserIdRef = useRef<string | null>(null);
 
   const syncSession = useCallback(async (activeSession: Session | null) => {
     setSession(activeSession);
 
     if (!activeSession) {
+      lastSyncedUserIdRef.current = null;
       setDbUser(null);
       return;
     }
 
+    if (lastSyncedUserIdRef.current === activeSession.user.id) {
+      return;
+    }
+
     const user = await syncAuthenticatedUser(activeSession);
+    lastSyncedUserIdRef.current = activeSession.user.id;
     setDbUser(user);
   }, []);
 
@@ -73,8 +81,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const {
           data: { subscription }
         } = client.auth.onAuthStateChange((_event, nextSession) => {
-          setSession(nextSession);
-
           void syncSession(nextSession).catch((reason: unknown) => {
             setError(reason instanceof Error ? reason.message : "Unable to sync user session.");
           });

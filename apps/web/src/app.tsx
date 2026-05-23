@@ -1348,12 +1348,16 @@ function AssetPreview({
 }
 
 function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!session) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
       setOrganizations([]);
       return;
     }
@@ -1362,13 +1366,13 @@ function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
     setError(null);
 
     try {
-      setOrganizations(await listOrganizations(session));
+      setOrganizations(await listOrganizations(activeSession));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load organizations.");
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -1384,12 +1388,16 @@ function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
 }
 
 function useProjects(session: ReturnType<typeof useAuth>["session"]) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!session) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
       setProjects([]);
       return;
     }
@@ -1398,13 +1406,13 @@ function useProjects(session: ReturnType<typeof useAuth>["session"]) {
     setError(null);
 
     try {
-      setProjects(await listProjects(session));
+      setProjects(await listProjects(activeSession));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load projects.");
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -1420,12 +1428,16 @@ function useProjects(session: ReturnType<typeof useAuth>["session"]) {
 }
 
 function useProject(session: ReturnType<typeof useAuth>["session"], projectId: string) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!session || !projectId) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || !projectId) {
       setProject(null);
       return;
     }
@@ -1434,13 +1446,13 @@ function useProject(session: ReturnType<typeof useAuth>["session"], projectId: s
     setError(null);
 
     try {
-      setProject(await getProject(session, projectId));
+      setProject(await getProject(activeSession, projectId));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load project.");
     } finally {
       setLoading(false);
     }
-  }, [projectId, session]);
+  }, [projectId, sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -1455,12 +1467,16 @@ function useProject(session: ReturnType<typeof useAuth>["session"], projectId: s
 }
 
 function useDatasets(session: ReturnType<typeof useAuth>["session"], projectId?: string) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!session) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
       setDatasets([]);
       return;
     }
@@ -1469,13 +1485,13 @@ function useDatasets(session: ReturnType<typeof useAuth>["session"], projectId?:
     setError(null);
 
     try {
-      setDatasets(await listDatasets(session, projectId));
+      setDatasets(await listDatasets(activeSession, projectId));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load datasets.");
     } finally {
       setLoading(false);
     }
-  }, [projectId, session]);
+  }, [projectId, sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -1491,12 +1507,16 @@ function useDatasets(session: ReturnType<typeof useAuth>["session"], projectId?:
 }
 
 function useDataset(session: ReturnType<typeof useAuth>["session"], datasetId: string) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
   const [dataset, setDataset] = useState<DatasetSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!session || !datasetId) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || !datasetId) {
       setDataset(null);
       return;
     }
@@ -1505,13 +1525,13 @@ function useDataset(session: ReturnType<typeof useAuth>["session"], datasetId: s
     setError(null);
 
     try {
-      setDataset(await getDataset(session, datasetId));
+      setDataset(await getDataset(activeSession, datasetId));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load dataset.");
     } finally {
       setLoading(false);
     }
-  }, [datasetId, session]);
+  }, [datasetId, sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -1529,12 +1549,16 @@ function useAssets(
   session: ReturnType<typeof useAuth>["session"],
   input: { datasetId?: string; projectId?: string } = {}
 ) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    if (!session) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
       setAssets([]);
       return;
     }
@@ -1543,13 +1567,13 @@ function useAssets(
     setError(null);
 
     try {
-      setAssets(await listAssets(session, input));
+      setAssets(await listAssets(activeSession, input));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load assets.");
     } finally {
       setLoading(false);
     }
-  }, [input.datasetId, input.projectId, session]);
+  }, [input.datasetId, input.projectId, sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -1562,6 +1586,20 @@ function useAssets(
     reload,
     setError
   };
+}
+
+function useLatestSessionRef(session: ReturnType<typeof useAuth>["session"]) {
+  const sessionRef = useRef(session);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  return sessionRef;
+}
+
+function getSessionKey(session: ReturnType<typeof useAuth>["session"]) {
+  return session?.user.id ?? "signed-out";
 }
 
 function useFormDraft(key: string) {
