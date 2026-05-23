@@ -18,13 +18,14 @@ import { useFormDraft, useOrganization, useOrganizations } from "../../hooks/use
 import { formatDate, formatEnum } from "../../utils/format";
 
 export function OrganizationSetupPage() {
-  const { session } = useAuth();
+  const { dbUser, session } = useAuth();
   const navigate = useNavigate();
   const { organizationId = "" } = useParams();
   const { error, loading, organizations, reload, setError } = useOrganizations(session);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [joining, setJoining] = useState(false);
   const [joinMessage, setJoinMessage] = useState<string | null>(null);
+  const canCreateOrganizations = dbUser?.globalRole === "SUPER_ADMIN" || dbUser?.creatorStatus === "APPROVED";
   const {
     error: organizationDetailError,
     loading: organizationDetailLoading,
@@ -76,10 +77,12 @@ export function OrganizationSetupPage() {
               </div>
               <div className="section-actions">
                 <span className="muted-copy">Select one to manage settings and members.</span>
-                <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
-                  <Building2 size={18} />
-                  New organization
-                </button>
+                {canCreateOrganizations && (
+                  <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
+                    <Building2 size={18} />
+                    New organization
+                  </button>
+                )}
               </div>
             </div>
             <div className="org-card-grid">
@@ -207,19 +210,30 @@ export function OrganizationSetupPage() {
             {joinMessage && <p className="form-success">{joinMessage}</p>}
           </section>
           <div className="single-column">
-            <OrganizationCreateForm
-              loading={loading}
-              onCreated={async (organizationId) => {
-                await reload();
-                navigate(`/organization/${organizationId}`);
-              }}
-              session={session}
-              setPageError={setError}
-            />
+            {canCreateOrganizations ? (
+              <OrganizationCreateForm
+                loading={loading}
+                onCreated={async (organizationId) => {
+                  await reload();
+                  navigate(`/organization/${organizationId}`);
+                }}
+                session={session}
+                setPageError={setError}
+              />
+            ) : (
+              <section className="panel empty-state compact-empty">
+                <ShieldCheck size={28} />
+                <strong>Creator rights required</strong>
+                <span>Simple users can join organizations, but need approved creator rights to create one.</span>
+                <Link className="secondary-button" to="/account">
+                  Apply in My Account
+                </Link>
+              </section>
+            )}
           </div>
         </>
       )}
-      {showCreateModal && (
+      {showCreateModal && canCreateOrganizations && (
         <OrganizationCreateModal
           loading={loading}
           onClose={() => setShowCreateModal(false)}

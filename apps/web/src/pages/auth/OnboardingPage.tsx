@@ -5,10 +5,10 @@ import { getFormValue, useAuth } from "../../auth";
 import { ThemeToggle } from "../../components/layout/ThemeToggle";
 import { planOptions } from "../../constants/options";
 import { useOrganizations } from "../../hooks/useResources";
-import { updateOrganization, updateUserProfile } from "../../api";
+import { submitVerificationApplication, updateOrganization, updateUserProfile } from "../../api";
 
 export function OnboardingPage() {
-  const { logout, session } = useAuth();
+  const { dbUser, logout, refreshUser, session } = useAuth();
   const { loading, organizations } = useOrganizations(session);
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
@@ -45,17 +45,27 @@ export function OnboardingPage() {
     const description = getFormValue(event, "description");
     const organizationType = getFormValue(event, "type");
     const planTier = getFormValue(event, "plan");
+    const verificationReason = getFormValue(event, "verificationReason");
+    const verificationUse = getFormValue(event, "verificationUse");
 
     try {
       await updateUserProfile(session, {
         jobTitle
       });
+      if (dbUser?.verificationStatus !== "VERIFIED" && dbUser?.verificationStatus !== "PENDING") {
+        await submitVerificationApplication(session, {
+          fullName: [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email || organization.name,
+          reason: verificationReason,
+          intendedUse: verificationUse
+        });
+      }
       await updateOrganization(session, organization.id, {
         description,
         type: organizationType,
         planTier,
         completeOnboarding: true
       });
+      await refreshUser();
       window.location.assign(`/organization/${organization.id}`);
     } catch (reason) {
       setPageError(reason instanceof Error ? reason.message : "Unable to complete onboarding.");
@@ -106,6 +116,26 @@ export function OnboardingPage() {
               required
             />
           </label>
+          {dbUser?.verificationStatus !== "VERIFIED" && dbUser?.verificationStatus !== "PENDING" && (
+            <>
+              <label className="wide">
+                Verification reason
+                <textarea
+                  name="verificationReason"
+                  placeholder="Tell GoXAi Lab admins why this organization owner account should be verified."
+                  required
+                />
+              </label>
+              <label className="wide">
+                Intended use
+                <textarea
+                  name="verificationUse"
+                  placeholder="What kind of organization, projects, and data workflows will this account manage?"
+                  required
+                />
+              </label>
+            </>
+          )}
           <fieldset className="plan-picker wide">
             <legend>Plan</legend>
             <div className="plan-option-row">

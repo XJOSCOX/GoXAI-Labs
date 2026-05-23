@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import { AuthProvider } from "./auth";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { AppShell } from "./components/layout/AppShell";
+import { AdminPage } from "./pages/admin/AdminPage";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { OnboardingPage } from "./pages/auth/OnboardingPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
@@ -44,6 +45,7 @@ export function App() {
           <Route path="datasets/:datasetId" element={<DatasetDetailPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="account" element={<AccountPage />} />
+          <Route path="admin" element={<AdminPage />} />
         </Route>
       </Routes>
     </AuthProvider>

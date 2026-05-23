@@ -1,12 +1,56 @@
-import { CheckCircle2, KeyRound, Save, ShieldCheck, UserRound } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { CheckCircle2, KeyRound, Send, Save, ShieldCheck, UserRound } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
+import {
+  getMyApplications,
+  submitCreatorApplication,
+  submitVerificationApplication,
+  type UserApplicationSummary
+} from "../../api";
 import { useAuth } from "../../auth";
 import { formatDate, formatEnum } from "../../utils/format";
 
 export function AccountPage() {
-  const { dbUser, loading, updateProfile } = useAuth();
+  const { dbUser, loading, refreshUser, session, updateProfile } = useAuth();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
+  const [verificationApplication, setVerificationApplication] = useState<UserApplicationSummary | null>(null);
+  const [creatorApplication, setCreatorApplication] = useState<UserApplicationSummary | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadApplications() {
+      if (!session) {
+        return;
+      }
+
+      setApplicationsLoading(true);
+
+      try {
+        const result = await getMyApplications(session);
+
+        if (mounted) {
+          setVerificationApplication(result.verificationApplication);
+          setCreatorApplication(result.creatorApplication);
+        }
+      } catch (reason) {
+        if (mounted) {
+          setError(reason instanceof Error ? reason.message : "Unable to load account applications.");
+        }
+      } finally {
+        if (mounted) {
+          setApplicationsLoading(false);
+        }
+      }
+    }
+
+    void loadApplications();
+
+    return () => {
+      mounted = false;
+    };
+  }, [session]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -23,6 +67,59 @@ export function AccountPage() {
       setMessage("Account updated.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to update account.");
+    }
+  }
+
+  async function handleVerificationSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setError(null);
+
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    const form = new FormData(event.currentTarget);
+
+    try {
+      const application = await submitVerificationApplication(session, {
+        fullName: getString(form, "fullName"),
+        reason: getString(form, "reason"),
+        intendedUse: getString(form, "intendedUse")
+      });
+      setVerificationApplication(application);
+      await refreshUser();
+      setMessage("Verification application submitted.");
+      event.currentTarget.reset();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to submit verification application.");
+    }
+  }
+
+  async function handleCreatorSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setError(null);
+
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    const form = new FormData(event.currentTarget);
+
+    try {
+      const application = await submitCreatorApplication(session, {
+        reason: getString(form, "reason"),
+        intendedUse: getString(form, "intendedUse")
+      });
+      setCreatorApplication(application);
+      await refreshUser();
+      setMessage("Creator rights application submitted.");
+      event.currentTarget.reset();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to submit creator application.");
     }
   }
 
@@ -86,7 +183,9 @@ export function AccountPage() {
                 <p className="eyebrow">Status</p>
                 <h2>{dbUser.isVerified ? "Verified account" : "Unverified account"}</h2>
                 <p className="muted-copy">
-                  {dbUser.isVerified ? "This user has been verified by GoXAi Lab." : "Verification can be granted by an approved site admin."}
+                  {dbUser.isVerified
+                    ? "This user has been verified by GoXAi Lab."
+                    : "Submit a verification request before applying for creator rights."}
                 </p>
               </div>
             </div>
@@ -104,6 +203,14 @@ export function AccountPage() {
                 <dd>{formatEnum(dbUser.status)}</dd>
               </div>
               <div>
+                <dt>Verification</dt>
+                <dd>{formatEnum(dbUser.verificationStatus)}</dd>
+              </div>
+              <div>
+                <dt>Creator rights</dt>
+                <dd>{formatEnum(dbUser.creatorStatus)}</dd>
+              </div>
+              <div>
                 <dt>Created</dt>
                 <dd>{formatDate(dbUser.createdAt)}</dd>
               </div>
@@ -112,6 +219,74 @@ export function AccountPage() {
                 <dd>{formatDate(dbUser.updatedAt)}</dd>
               </div>
             </dl>
+          </section>
+
+          <section className="panel">
+            <p className="eyebrow">Applications</p>
+            <h2>Verification request</h2>
+            <p className="muted-copy">
+              {verificationApplication
+                ? `Latest request: ${formatEnum(verificationApplication.status)}`
+                : "Ask GoXAi Lab admins to verify your account status."}
+            </p>
+            {verificationApplication?.reviewerNotes && <p className="form-error">{verificationApplication.reviewerNotes}</p>}
+            {dbUser.verificationStatus === "VERIFIED" ? (
+              <p className="form-success">Account verification is approved.</p>
+            ) : verificationApplication?.status === "SUBMITTED" || verificationApplication?.status === "REVIEWING" ? (
+              <p className="form-success">Verification is waiting for admin review.</p>
+            ) : (
+              <form className="account-application-form" onSubmit={handleVerificationSubmit}>
+                <label>
+                  Full name
+                  <input name="fullName" defaultValue={[dbUser.firstName, dbUser.lastName].filter(Boolean).join(" ")} />
+                </label>
+                <label>
+                  Reason
+                  <textarea name="reason" placeholder="Tell us why this account should be verified." required />
+                </label>
+                <label>
+                  Intended use
+                  <textarea name="intendedUse" placeholder="How will you use GoXAi Lab?" />
+                </label>
+                <button className="primary-button" type="submit" disabled={applicationsLoading}>
+                  <Send size={16} />
+                  Submit verification
+                </button>
+              </form>
+            )}
+          </section>
+
+          <section className="panel">
+            <p className="eyebrow">Creator access</p>
+            <h2>Organization and project rights</h2>
+            <p className="muted-copy">
+              {creatorApplication
+                ? `Latest request: ${formatEnum(creatorApplication.status)}`
+                : "Verified users can apply to create organizations and projects."}
+            </p>
+            {creatorApplication?.reviewerNotes && <p className="form-error">{creatorApplication.reviewerNotes}</p>}
+            {dbUser.creatorStatus === "APPROVED" ? (
+              <p className="form-success">Creator rights are approved.</p>
+            ) : dbUser.verificationStatus !== "VERIFIED" && dbUser.globalRole !== "SUPER_ADMIN" ? (
+              <p className="muted-copy">Complete verification before applying for creator rights.</p>
+            ) : creatorApplication?.status === "SUBMITTED" || creatorApplication?.status === "REVIEWING" ? (
+              <p className="form-success">Creator rights are waiting for admin review.</p>
+            ) : (
+              <form className="account-application-form" onSubmit={handleCreatorSubmit}>
+                <label>
+                  Reason
+                  <textarea name="reason" placeholder="Why do you need organization and project creation rights?" required />
+                </label>
+                <label>
+                  Intended use
+                  <textarea name="intendedUse" placeholder="What kind of work will you create or manage?" />
+                </label>
+                <button className="primary-button" type="submit" disabled={applicationsLoading}>
+                  <Send size={16} />
+                  Apply for creator rights
+                </button>
+              </form>
+            )}
           </section>
 
           <section className="panel">

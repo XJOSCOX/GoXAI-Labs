@@ -23,6 +23,29 @@ enum UserStatus {
   DELETED
 }
 
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum CreatorStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  REVIEWING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 enum OrganizationType {
   PERSONAL
   COMPANY
@@ -282,6 +305,8 @@ model User {
   referralCode    String?     @unique @map("referral_code")
   apiCode         String?     @unique @map("api_code")
   isVerified      Boolean     @default(false) @map("is_verified")
+  verificationStatus VerificationStatus @default(UNVERIFIED) @map("verification_status")
+  creatorStatus   CreatorStatus @default(NONE) @map("creator_status")
   verifiedAt      DateTime?   @map("verified_at") @db.Timestamptz(6)
   verifiedById    String?     @map("verified_by_id")
   globalRole      GlobalRole  @default(USER) @map("global_role")
@@ -312,6 +337,10 @@ model User {
   auditLogs           AuditLog[]
   apiKeys             ApiKey[]
   invitedMemberships  Membership[]      @relation("MembershipInviter")
+  verificationApplications VerificationApplication[] @relation("VerificationApplicant")
+  reviewedVerificationApplications VerificationApplication[] @relation("VerificationReviewer")
+  creatorApplications CreatorApplication[] @relation("CreatorApplicant")
+  reviewedCreatorApplications CreatorApplication[] @relation("CreatorReviewer")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -321,8 +350,55 @@ model User {
   @@index([referralCode])
   @@index([apiCode])
   @@index([isVerified])
+  @@index([verificationStatus])
+  @@index([creatorStatus])
   @@index([status])
   @@map("users")
+}
+
+model VerificationApplication {
+  id             String            @id @default(cuid())
+  userId         String            @map("user_id")
+  status         ApplicationStatus @default(SUBMITTED)
+  fullName       String?           @map("full_name")
+  reason         String
+  intendedUse    String?           @map("intended_use")
+  reviewerId     String?           @map("reviewer_id")
+  reviewerNotes  String?           @map("reviewer_notes")
+  reviewedAt     DateTime?         @map("reviewed_at") @db.Timestamptz(6)
+
+  user     User  @relation("VerificationApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("VerificationReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([status])
+  @@index([reviewerId])
+  @@map("verification_applications")
+}
+
+model CreatorApplication {
+  id             String            @id @default(cuid())
+  userId         String            @map("user_id")
+  status         ApplicationStatus @default(SUBMITTED)
+  reason         String
+  intendedUse    String?           @map("intended_use")
+  reviewerId     String?           @map("reviewer_id")
+  reviewerNotes  String?           @map("reviewer_notes")
+  reviewedAt     DateTime?         @map("reviewed_at") @db.Timestamptz(6)
+
+  user     User  @relation("CreatorApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("CreatorReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([status])
+  @@index([reviewerId])
+  @@map("creator_applications")
 }
 
 // =========================

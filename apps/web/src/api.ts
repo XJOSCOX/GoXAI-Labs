@@ -11,6 +11,8 @@ export interface ApiUser {
   referralCode: string | null;
   apiCode: string | null;
   isVerified: boolean;
+  verificationStatus: string;
+  creatorStatus: string;
   verifiedAt: string | null;
   verifiedById: string | null;
   globalRole: string;
@@ -24,6 +26,55 @@ export interface BackendConfig {
     url: string;
     anonKey: string;
   };
+}
+
+export interface UserApplicationSummary {
+  id: string;
+  userId: string;
+  status: string;
+  reason: string;
+  intendedUse: string | null;
+  reviewerNotes: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  name: string;
+  jobTitle: string | null;
+  isVerified: boolean;
+  verificationStatus: string;
+  creatorStatus: string;
+  globalRole: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminApplicationSummary extends UserApplicationSummary {
+  type: "verification" | "creator";
+  user: AdminUserSummary | null;
+}
+
+export interface AdminOverview {
+  counts: {
+    users: number;
+    pendingVerification: number;
+    verifiedUsers: number;
+    pendingCreators: number;
+    approvedCreators: number;
+    organizations: number;
+    projects: number;
+    datasets: number;
+  };
+  users: AdminUserSummary[];
+  verificationApplications: AdminApplicationSummary[];
+  creatorApplications: AdminApplicationSummary[];
 }
 
 export const apiUrl = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -411,6 +462,103 @@ export async function updateUserProfile(
   }
 
   return ((await response.json()) as { user: ApiUser }).user;
+}
+
+export async function getMyApplications(session: Session) {
+  const response = await authenticatedFetch(session, "/api/applications/me");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load applications."));
+  }
+
+  return (await response.json()) as {
+    verificationApplication: UserApplicationSummary | null;
+    creatorApplication: UserApplicationSummary | null;
+  };
+}
+
+export async function submitVerificationApplication(
+  session: Session,
+  input: { fullName: string; reason: string; intendedUse?: string }
+) {
+  const response = await authenticatedFetch(session, "/api/applications/verification", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to submit verification application."));
+  }
+
+  return ((await response.json()) as { application: UserApplicationSummary }).application;
+}
+
+export async function submitCreatorApplication(session: Session, input: { reason: string; intendedUse?: string }) {
+  const response = await authenticatedFetch(session, "/api/applications/creator", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to submit creator application."));
+  }
+
+  return ((await response.json()) as { application: UserApplicationSummary }).application;
+}
+
+export async function getAdminOverview(session: Session) {
+  const response = await authenticatedFetch(session, "/api/admin/overview");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load admin panel."));
+  }
+
+  return (await response.json()) as AdminOverview;
+}
+
+export async function reviewAdminApplication(
+  session: Session,
+  type: "verification" | "creator",
+  applicationId: string,
+  decision: "approve" | "reject",
+  reviewerNotes?: string
+) {
+  const response = await authenticatedFetch(
+    session,
+    `/api/admin/applications/${type}/${encodeURIComponent(applicationId)}/${decision}`,
+    {
+      method: "POST",
+      body: JSON.stringify(removeEmptyValues({ reviewerNotes }))
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to review application."));
+  }
+
+  return ((await response.json()) as { application: AdminApplicationSummary }).application;
+}
+
+export async function updateAdminUser(
+  session: Session,
+  userId: string,
+  input: {
+    verificationStatus?: string;
+    creatorStatus?: string;
+    globalRole?: string;
+    status?: string;
+  }
+) {
+  const response = await authenticatedFetch(session, `/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update user."));
+  }
+
+  return ((await response.json()) as { user: AdminUserSummary }).user;
 }
 
 export async function listOrganizations(session: Session) {

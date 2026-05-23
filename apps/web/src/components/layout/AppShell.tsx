@@ -1,4 +1,4 @@
-import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, LogOut, UserRound } from "lucide-react";
+import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import goxaiLogo from "../../assets/goxailab-logo.png";
@@ -71,6 +71,12 @@ export function AppShell() {
             <ClipboardList size={18} />
             Tasks
           </NavLink>
+          {dbUser?.globalRole === "SUPER_ADMIN" && (
+            <NavLink to="/admin">
+              <ShieldCheck size={18} />
+              Admin
+            </NavLink>
+          )}
         </nav>
         <div className="sidebar-footer">
           <NavLink to="/account" className="account-link">
@@ -138,6 +144,10 @@ function getTopbarTitle(pathname: string) {
 
   if (pathname === "/account") {
     return { eyebrow: "Account", title: "My Account" };
+  }
+
+  if (pathname === "/admin") {
+    return { eyebrow: "Admin", title: "Control panel" };
   }
 
   return { eyebrow: "Workspace", title: "GoXAi Lab" };

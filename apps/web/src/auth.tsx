@@ -22,6 +22,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   register: (input: RegisterInput) => Promise<"signed-in" | "check-email">;
+  refreshUser: () => Promise<void>;
   updateProfile: (input: { firstName?: string; lastName?: string; jobTitle?: string }) => Promise<void>;
 }
 
@@ -206,6 +207,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } finally {
           setLoading(false);
         }
+      },
+      refreshUser: async () => {
+        if (!session) {
+          return;
+        }
+
+        const user = await syncAuthenticatedUser(session);
+        setDbUser(user);
       },
       updateProfile: async (input) => {
         if (!session) {

@@ -1,5 +1,7 @@
 import {
+  CreatorStatus,
   getPrismaClient,
+  GlobalRole,
   MembershipRole,
   type Membership,
   OrganizationAccessMode,
@@ -173,6 +175,13 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
 
   if (!parsed.ok) {
     response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  if (user.globalRole !== GlobalRole.SUPER_ADMIN && user.creatorStatus !== CreatorStatus.APPROVED) {
+    response.status(403).json({
+      error: "You need approved creator rights before creating an organization."
+    });
     return;
   }
 

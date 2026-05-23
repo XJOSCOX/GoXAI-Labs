@@ -1,6 +1,8 @@
 import cors from "cors";
 import express from "express";
 import { getPrismaClient, getSupabaseConfig } from "@goxai/database";
+import { adminRouter } from "./admin.js";
+import { applicationsRouter } from "./applications.js";
 import { assetsRouter } from "./assets.js";
 import { getBearerToken, requireAuthenticatedUser, syncUserFromAccessToken, type AuthenticatedRequest } from "./auth.js";
 import { datasetsRouter } from "./datasets.js";
@@ -165,6 +167,8 @@ function serializeUser(user: Awaited<ReturnType<typeof syncUserFromAccessToken>>
     referralCode: user.referralCode,
     apiCode: user.apiCode,
     isVerified: user.isVerified,
+    verificationStatus: user.verificationStatus,
+    creatorStatus: user.creatorStatus,
     verifiedAt: user.verifiedAt,
     verifiedById: user.verifiedById,
     globalRole: user.globalRole,
@@ -179,6 +183,8 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/datasets", datasetsRouter);
 app.use("/api/assets", assetsRouter);
 app.use("/api/tasks", tasksRouter);
+app.use("/api/applications", applicationsRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/logs", logsRouter);
 
 app.use(

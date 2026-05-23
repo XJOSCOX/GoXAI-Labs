@@ -23,7 +23,8 @@ export function ProjectsPage() {
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const projectDraft = useFormDraft("goxai-draft-project");
-  const creatableOrganizations = organizations.filter((organization) => organization.role === "OWNER");
+  const canCreateProjects = dbUser?.globalRole === "SUPER_ADMIN" || dbUser?.creatorStatus === "APPROVED";
+  const creatableOrganizations = canCreateProjects ? organizations.filter((organization) => organization.role === "OWNER") : [];
   const defaultOrganization = creatableOrganizations[0];
   const userCreatedProjects = projects.filter((project) => project.createdById === dbUser?.id);
 
@@ -123,7 +124,9 @@ export function ProjectsPage() {
             emptyCopy={
               creatableOrganizations.length > 0
                 ? "Create the first draft project to prepare dataset ingestion."
-                : "You can view signed-in public projects, but must be an organization owner to create one."
+                : canCreateProjects
+                  ? "You need organization owner access before creating a project."
+                  : "You can view signed-in public projects, but need approved creator rights to create one."
             }
             loading={projectsLoading || organizationsLoading}
             projects={projects}

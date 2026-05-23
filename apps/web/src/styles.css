@@ -1091,6 +1091,51 @@ textarea:focus {
   grid-template-columns: 1fr;
 }
 
+.account-application-form {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-page .stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.admin-application-list,
+.admin-user-list {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.admin-application-card,
+.admin-user-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 14px;
+}
+
+.admin-application-card {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-application-card h3 {
+  margin: 2px 0;
+}
+
+.admin-user-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) repeat(4, minmax(140px, 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+.admin-user-row > div {
+  display: grid;
+  gap: 4px;
+}
+
 .organization-detail-frame {
   gap: 18px;
   width: min(1440px, 100%);
@@ -2123,7 +2168,8 @@ textarea:focus {
   .detail-layout,
   .organization-layout,
   .project-workspace-layout,
-  .dataset-detail-layout {
+  .dataset-detail-layout,
+  .admin-user-row {
     grid-template-columns: 1fr;
   }
 
@@ -2171,7 +2217,8 @@ textarea:focus {
   .table-row.member-head,
   .table-row.project-head,
   .table-row.task-head,
-  .table-row {
+  .table-row,
+  .admin-user-row {
     grid-template-columns: 1fr;
   }
 

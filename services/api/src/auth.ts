@@ -1,5 +1,6 @@
 import {
   createSupabaseUserClient,
+  CreatorStatus,
   getPrismaClient,
   getSupabaseConfig,
   GlobalRole,
@@ -7,7 +8,8 @@ import {
   OrganizationAccessMode,
   OrganizationType,
   PlanTier,
-  Prisma
+  Prisma,
+  VerificationStatus
 } from "@goxai/database";
 import type { Request, Response, NextFunction } from "express";
 
@@ -37,6 +39,7 @@ export async function syncUserFromAccessToken(accessToken: string) {
   const prisma = getPrismaClient();
   const profile = getUserProfile(authUser);
   const now = new Date();
+  const isOrganizationSignup = getMetadataString(authUser.user_metadata.signup_type) === "organization";
   const [userCount, superAdminCount, existingUser, firstUser] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({
@@ -77,6 +80,9 @@ export async function syncUserFromAccessToken(accessToken: string) {
       avatarUrl: profile.avatarUrl,
       referralCode: createHumanCode("REF", 4),
       apiCode: createHumanCode("API", 5),
+      isVerified: shouldBootstrapOwner,
+      verificationStatus: shouldBootstrapOwner ? VerificationStatus.VERIFIED : VerificationStatus.UNVERIFIED,
+      creatorStatus: shouldBootstrapOwner || isOrganizationSignup ? CreatorStatus.APPROVED : CreatorStatus.NONE,
       globalRole: shouldBootstrapOwner ? GlobalRole.SUPER_ADMIN : GlobalRole.USER,
       lastLoginAt: now
     },
@@ -86,7 +92,18 @@ export async function syncUserFromAccessToken(accessToken: string) {
       lastName: profile.lastName,
       jobTitle: profile.jobTitle,
       avatarUrl: profile.avatarUrl,
-      ...(shouldBootstrapOwner ? { globalRole: GlobalRole.SUPER_ADMIN } : {}),
+      ...(shouldBootstrapOwner
+        ? {
+            globalRole: GlobalRole.SUPER_ADMIN,
+            isVerified: true,
+            verificationStatus: VerificationStatus.VERIFIED,
+            creatorStatus: CreatorStatus.APPROVED
+          }
+        : isOrganizationSignup
+          ? {
+              creatorStatus: CreatorStatus.APPROVED
+            }
+        : {}),
       lastLoginAt: now
     }
   });
@@ -103,7 +120,7 @@ export async function syncUserFromAccessToken(accessToken: string) {
     });
   }
 
-  await createSignupOrganizationIfNeeded(user.id, authUser.user_metadata);
+  await createSignupOrganizationIfNeeded(user, authUser.user_metadata);
 
   return user;
 }
@@ -179,8 +196,19 @@ function createHumanCode(prefix: string, groups: number) {
   return [prefix, ...chunks].join("-");
 }
 
-async function createSignupOrganizationIfNeeded(userId: string, metadata: Record<string, unknown>) {
+async function createSignupOrganizationIfNeeded(
+  user: {
+    id: string;
+    globalRole: GlobalRole;
+    creatorStatus: CreatorStatus;
+  },
+  metadata: Record<string, unknown>
+) {
   if (getMetadataString(metadata.signup_type) !== "organization") {
+    return;
+  }
+
+  if (user.globalRole !== GlobalRole.SUPER_ADMIN && user.creatorStatus !== CreatorStatus.APPROVED) {
     return;
   }
 
@@ -193,7 +221,7 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
   const prisma = getPrismaClient();
   const existingMembership = await prisma.membership.findFirst({
     where: {
-      userId,
+      userId: user.id,
       status: "ACTIVE"
     },
     select: {
@@ -247,7 +275,7 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
           joinCode: createHumanCode("ORG", 3),
           joinCodeEnabled: false,
           planTier,
-          ownerId: userId,
+          ownerId: user.id,
           onboardingComplete: false,
           onboardingJson: {
             signupType: "organization",
@@ -270,7 +298,7 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
 
       const membership = await tx.membership.create({
         data: {
-          userId,
+          userId: user.id,
           organizationId: organization.id,
           workspaceId: workspace.id,
           role: MembershipRole.OWNER,
@@ -283,7 +311,7 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
         data: {
           organizationId: organization.id,
           workspaceId: workspace.id,
-          userId,
+          userId: user.id,
           action: "organization.created_from_signup",
           entityType: "organization",
           entityId: organization.id,
@@ -298,7 +326,7 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
   } catch (reason) {
     const membership = await prisma.membership.findFirst({
       where: {
-        userId,
+        userId: user.id,
         status: "ACTIVE"
       },
       select: {
