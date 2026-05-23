@@ -195,31 +195,41 @@ export function OrganizationSetupPage() {
           )}
         </section>
       ) : (
-        <>
-          <section className="panel join-code-panel">
+        <section className="panel no-organization-frame">
+          <div className="section-head">
             <div>
-              <p className="eyebrow">Join</p>
-              <h2>Join with organization code</h2>
+              <p className="eyebrow">Organization access</p>
+              <h2>Get started</h2>
             </div>
-            <form className="join-code-form" onSubmit={handleJoinByCode}>
-              <input name="code" placeholder="ORG-XXXXX-XXXXX-XXXXX" required />
-              <button className="secondary-button" type="submit" disabled={joining}>
-                {joining ? "Joining" : "Join organization"}
-              </button>
-            </form>
-            {joinMessage && <p className="form-success">{joinMessage}</p>}
-          </section>
-          <div className="single-column">
+            <span className="muted-copy">Join an existing organization or request creator access.</span>
+          </div>
+          <div className="no-organization-grid">
+            <section className="panel join-code-panel">
+              <div>
+                <p className="eyebrow">Join</p>
+                <h2>Join with organization code</h2>
+              </div>
+              <form className="join-code-form" onSubmit={handleJoinByCode}>
+                <input name="code" placeholder="ORG-XXXXX-XXXXX-XXXXX" required />
+                <button className="secondary-button" type="submit" disabled={joining}>
+                  {joining ? "Joining" : "Join organization"}
+                </button>
+              </form>
+              {joinMessage && <p className="form-success">{joinMessage}</p>}
+            </section>
             {canCreateOrganizations ? (
-              <OrganizationCreateForm
-                loading={loading}
-                onCreated={async (organizationId) => {
-                  await reload();
-                  navigate(`/organization/${organizationId}`);
-                }}
-                session={session}
-                setPageError={setError}
-              />
+              <section className="panel no-organization-card">
+                <OrganizationCreateForm
+                  embedded
+                  loading={loading}
+                  onCreated={async (organizationId) => {
+                    await reload();
+                    navigate(`/organization/${organizationId}`);
+                  }}
+                  session={session}
+                  setPageError={setError}
+                />
+              </section>
             ) : (
               <section className="panel empty-state compact-empty">
                 <ShieldCheck size={28} />
@@ -231,7 +241,7 @@ export function OrganizationSetupPage() {
               </section>
             )}
           </div>
-        </>
+        </section>
       )}
       {showCreateModal && canCreateOrganizations && (
         <OrganizationCreateModal

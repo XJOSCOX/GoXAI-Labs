@@ -1009,6 +1009,31 @@ textarea:focus {
   width: 100%;
 }
 
+.no-organization-frame {
+  width: min(1440px, 100%);
+}
+
+.no-organization-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.no-organization-grid > .panel,
+.no-organization-grid .join-code-panel {
+  width: 100%;
+  min-width: 0;
+}
+
+.no-organization-grid .compact-empty {
+  min-height: 210px;
+}
+
+.no-organization-card .setup-form {
+  width: 100%;
+}
+
 .detail-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2178,6 +2203,10 @@ textarea:focus {
   }
 
   .organization-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .no-organization-grid {
     grid-template-columns: 1fr;
   }
 
