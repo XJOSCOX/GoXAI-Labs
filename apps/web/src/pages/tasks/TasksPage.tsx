@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../../auth";
 import { assignTaskToSelf, startTask, submitTask, type TaskSummary } from "../../api";
 import { useTasks } from "../../hooks/useResources";
 import { formatDate, formatEnum } from "../../utils/format";
 import { ClipboardList, Eye, Send, UserCheck } from "lucide-react";
+
+const taskPageSize = 8;
 
 export function TasksPage() {
   const { session } = useAuth();
@@ -30,6 +32,19 @@ export function TasksTable({
   setPageError: (error: string | null) => void;
   tasks: TaskSummary[];
 }) {
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(tasks.length / taskPageSize));
+  const pageStart = (currentPage - 1) * taskPageSize;
+  const pageTasks = tasks.slice(pageStart, pageStart + taskPageSize);
+  const pageEnd = pageStart + pageTasks.length;
+  const visiblePageStart = tasks.length > 0 ? pageStart + 1 : 0;
+
+  useEffect(() => {
+    if (currentPage > pageCount) {
+      setCurrentPage(pageCount);
+    }
+  }, [currentPage, pageCount]);
+
   return (
     <section className="table-panel">
       <div className="table-row task-head table-head">
@@ -45,7 +60,7 @@ export function TasksTable({
           <span>Checking task assignments and statuses.</span>
         </div>
       ) : tasks.length > 0 ? (
-        tasks.map((task) => (
+        pageTasks.map((task) => (
           <TaskRow
             key={task.id}
             onChanged={onChanged}
@@ -59,6 +74,34 @@ export function TasksTable({
           <ClipboardList size={28} />
           <strong>No tasks yet</strong>
           <span>Generate tasks from dataset assets to start annotation work.</span>
+        </div>
+      )}
+      {tasks.length > taskPageSize && (
+        <div className="pagination-bar">
+          <span>
+            Showing {visiblePageStart}-{pageEnd} of {tasks.length}
+          </span>
+          <div>
+            <button
+              className="secondary-button compact-button"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              type="button"
+            >
+              Previous
+            </button>
+            <span>
+              Page {currentPage} of {pageCount}
+            </span>
+            <button
+              className="secondary-button compact-button"
+              disabled={currentPage === pageCount}
+              onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </section>
