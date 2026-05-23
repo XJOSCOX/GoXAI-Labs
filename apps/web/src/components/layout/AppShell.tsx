@@ -2,6 +2,7 @@ import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanb
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import goxaiLogo from "../../assets/goxailab-logo.png";
+import verifiedBadge from "../../assets/verified.png";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum, getInitials } from "../../utils/format";
 import { LoadingScreen } from "./LoadingScreen";
@@ -47,9 +48,7 @@ export function AppShell() {
             <strong>
               {name}
               {dbUser?.isVerified && (
-                <span className="verified-badge" title="Verified user" aria-label="Verified user">
-                  <CheckCircle2 size={13} />
-                </span>
+                <img className="verified-icon" src={verifiedBadge} alt="Verified user" title="Verified user" />
               )}
             </strong>
             <span>{email}</span>
