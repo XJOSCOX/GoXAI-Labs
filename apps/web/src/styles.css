@@ -97,6 +97,7 @@ a {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  align-items: center;
   gap: 20px;
   width: 100%;
   padding: 48px clamp(28px, 4vw, 56px);
@@ -416,6 +417,62 @@ textarea:focus {
 .icon-button:hover {
   border-color: var(--accent);
   color: var(--accent-strong);
+}
+
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 4px 3px 12px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.theme-switch:hover {
+  border-color: var(--accent-strong);
+}
+
+.theme-switch-label {
+  min-width: 32px;
+  text-align: left;
+}
+
+.theme-switch-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 50px;
+  height: 28px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, var(--surface));
+  transition: background 180ms ease;
+}
+
+.theme-switch-thumb {
+  position: absolute;
+  left: 3px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #7dd3fc;
+  color: #0f172a;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+  transition: transform 180ms ease, background 180ms ease;
+}
+
+:root[data-theme="dark"] .theme-switch-thumb {
+  transform: translateX(22px);
+  background: #bae6fd;
 }
 
 .form-error,

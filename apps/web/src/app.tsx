@@ -344,13 +344,16 @@ function ThemeToggle() {
 
   return (
     <button
-      className="icon-button"
+      className="theme-switch"
       type="button"
       onClick={toggleTheme}
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
       title={isDark ? "Light theme" : "Dark theme"}
     >
-      {isDark ? <Sun size={18} /> : <Moon size={18} />}
+      <span className="theme-switch-label">{isDark ? "Dark" : "Light"}</span>
+      <span className="theme-switch-track" aria-hidden="true">
+        <span className="theme-switch-thumb">{isDark ? <Moon size={13} /> : <Sun size={13} />}</span>
+      </span>
     </button>
   );
 }
