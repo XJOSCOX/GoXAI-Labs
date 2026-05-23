@@ -125,11 +125,26 @@ a {
 }
 
 .brand-row.compact {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .brand-row strong {
   font-weight: 600;
+}
+
+.sidebar-brand {
+  padding: 2px 2px 0;
+}
+
+.brand-wordmark {
+  color: var(--sidebar-text);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.brand-wordmark::first-letter {
+  color: #7dd3fc;
 }
 
 .brand-mark,
@@ -415,12 +430,12 @@ textarea:focus {
 }
 
 .sidebar-profile .avatar {
-  width: 58px;
-  height: 58px;
+  width: 74px;
+  height: 74px;
   border-radius: 999px;
   background: linear-gradient(135deg, #bae6fd, #7dd3fc);
   color: #0f172a;
-  font-size: 17px;
+  font-size: 22px;
 }
 
 .sidebar-profile-info {

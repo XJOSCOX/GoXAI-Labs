@@ -284,12 +284,9 @@ function AppShell() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand-row compact">
+        <div className="brand-row compact sidebar-brand">
           <div className="brand-mark">GX</div>
-          <div>
-            <p className="eyebrow">GoXAI Labs</p>
-            <strong>Studio Ops</strong>
-          </div>
+          <strong className="brand-wordmark">GoXAi Lab</strong>
         </div>
         <section className="sidebar-profile">
           <div className="avatar">{getInitials(name, email)}</div>
