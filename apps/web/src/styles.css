@@ -2000,6 +2000,107 @@ textarea:focus {
   font-size: 12px;
 }
 
+.task-back-button {
+  justify-self: start;
+}
+
+.task-folder-panel {
+  width: 100%;
+}
+
+.task-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.task-folder-card {
+  display: grid;
+  gap: 16px;
+  min-height: 210px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 14px;
+  text-decoration: none;
+}
+
+.task-folder-card:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+}
+
+.task-folder-head,
+.task-folder-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-folder-head {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.task-folder-head > span:last-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.task-folder-head strong {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-folder-head small,
+.task-folder-footer {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.task-folder-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+
+.task-folder-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.task-folder-stats > span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.task-folder-stats strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.task-folder-stats small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .asset-row-actions {
   display: flex;
   align-items: center;
@@ -2147,6 +2248,10 @@ textarea:focus {
   .org-card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .task-folder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 920px) {
@@ -2210,7 +2315,8 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
-  .org-card-grid {
+  .org-card-grid,
+  .task-folder-grid {
     grid-template-columns: 1fr;
   }
 
