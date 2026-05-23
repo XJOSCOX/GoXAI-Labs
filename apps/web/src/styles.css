@@ -1095,8 +1095,7 @@ textarea:focus {
 .project-directory-frame,
 .project-create-frame {
   gap: 18px;
-  justify-self: start;
-  width: min(1440px, 100%);
+  width: 100%;
 }
 
 .project-directory-frame > .section-actions:empty {
