@@ -40,11 +40,57 @@ export interface OrganizationSummary {
   updatedAt: string;
 }
 
+export interface MembershipSummary {
+  id: string;
+  organizationId: string;
+  workspaceId: string | null;
+  role: string;
+  status: string;
+  joinedAt: string | null;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+  };
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizationDetail extends Omit<OrganizationSummary, "role" | "workspace"> {
+  currentUserRole: string;
+  workspaces: Array<{
+    id: string;
+    organizationId: string;
+    name: string;
+    slug: string;
+    description: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  memberships: MembershipSummary[];
+}
+
 export interface CreateOrganizationInput {
   organizationName: string;
   workspaceName: string;
   organizationType: string;
   planTier: string;
+}
+
+export interface UpdateOrganizationInput {
+  name?: string;
+  type?: string;
+  planTier?: string;
+}
+
+export interface AddMemberInput {
+  email: string;
+  role: string;
 }
 
 export interface ProjectSummary {
@@ -80,6 +126,13 @@ export interface CreateProjectInput {
   instructions?: string;
 }
 
+export interface UpdateProjectInput {
+  name?: string;
+  description?: string;
+  status?: string;
+  instructions?: string;
+}
+
 export interface DatasetSummary {
   id: string;
   organizationId: string;
@@ -108,6 +161,12 @@ export interface CreateDatasetInput {
   projectId: string;
   name: string;
   description?: string;
+}
+
+export interface UpdateDatasetInput {
+  name?: string;
+  description?: string;
+  status?: string;
 }
 
 export interface AssetSummary {
@@ -316,6 +375,88 @@ export async function createOrganization(session: Session, input: CreateOrganiza
   };
 }
 
+export async function getOrganization(session: Session, organizationId: string) {
+  const response = await authenticatedFetch(session, `/api/organizations/${encodeURIComponent(organizationId)}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load organization."));
+  }
+
+  return ((await response.json()) as { organization: OrganizationDetail }).organization;
+}
+
+export async function updateOrganization(session: Session, organizationId: string, input: UpdateOrganizationInput) {
+  const response = await authenticatedFetch(session, `/api/organizations/${encodeURIComponent(organizationId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update organization."));
+  }
+
+  return ((await response.json()) as { organization: OrganizationDetail }).organization;
+}
+
+export async function deleteOrganization(session: Session, organizationId: string) {
+  const response = await authenticatedFetch(session, `/api/organizations/${encodeURIComponent(organizationId)}`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to delete organization."));
+  }
+}
+
+export async function addOrganizationMember(session: Session, organizationId: string, input: AddMemberInput) {
+  const response = await authenticatedFetch(session, `/api/organizations/${encodeURIComponent(organizationId)}/members`, {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to add member."));
+  }
+
+  return ((await response.json()) as { membership: MembershipSummary }).membership;
+}
+
+export async function updateOrganizationMember(
+  session: Session,
+  organizationId: string,
+  membershipId: string,
+  role: string
+) {
+  const response = await authenticatedFetch(
+    session,
+    `/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ role })
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update member."));
+  }
+
+  return ((await response.json()) as { membership: MembershipSummary }).membership;
+}
+
+export async function removeOrganizationMember(session: Session, organizationId: string, membershipId: string) {
+  const response = await authenticatedFetch(
+    session,
+    `/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}`,
+    {
+      method: "DELETE"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to remove member."));
+  }
+}
+
 export async function listProjects(session: Session) {
   const response = await authenticatedFetch(session, "/api/projects");
 
@@ -344,6 +485,31 @@ export async function createProject(session: Session, input: CreateProjectInput)
 
   if (!response.ok) {
     throw new Error(await getApiError(response, "Unable to create project."));
+  }
+
+  return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
+export async function updateProject(session: Session, projectId: string, input: UpdateProjectInput) {
+  const response = await authenticatedFetch(session, `/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update project."));
+  }
+
+  return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
+export async function archiveProject(session: Session, projectId: string) {
+  const response = await authenticatedFetch(session, `/api/projects/${encodeURIComponent(projectId)}/archive`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to archive project."));
   }
 
   return ((await response.json()) as { project: ProjectSummary }).project;
@@ -384,6 +550,31 @@ export async function createDataset(session: Session, input: CreateDatasetInput)
 
   if (!response.ok) {
     throw new Error(await getApiError(response, "Unable to create dataset."));
+  }
+
+  return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
+export async function updateDataset(session: Session, datasetId: string, input: UpdateDatasetInput) {
+  const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update dataset."));
+  }
+
+  return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
+export async function archiveDataset(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}/archive`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to archive dataset."));
   }
 
   return ((await response.json()) as { dataset: DatasetSummary }).dataset;

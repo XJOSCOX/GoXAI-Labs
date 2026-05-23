@@ -305,6 +305,22 @@ textarea:focus {
   border: 1px solid color-mix(in srgb, var(--sidebar-text) 24%, transparent);
 }
 
+.danger-button {
+  color: var(--danger-text);
+  border-color: color-mix(in srgb, var(--danger-text) 45%, var(--border));
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.row-actions .ghost-button {
+  width: auto;
+  color: var(--danger-text);
+}
+
 .icon-button {
   width: 38px;
   padding: 0;
@@ -558,6 +574,21 @@ textarea:focus {
   grid-column: auto;
 }
 
+.management-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.management-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.management-grid .wide {
+  grid-column: 1 / -1;
+}
+
 .project-form .primary-button.wide,
 .dataset-form .primary-button.wide,
 .asset-form .primary-button.wide,
@@ -689,6 +720,10 @@ textarea:focus {
 
 .table-row.task-head {
   grid-template-columns: minmax(0, 2fr) 1fr 1fr 1fr;
+}
+
+.table-row.member-head {
+  grid-template-columns: minmax(0, 2fr) 1fr 1fr 1.2fr;
 }
 
 .table-head {
@@ -824,6 +859,7 @@ textarea:focus {
 
   .stat-grid,
   .detail-list,
+  .management-grid,
   .setup-form,
   .project-form,
   .dataset-form,
@@ -846,7 +882,9 @@ textarea:focus {
   .project-form,
   .dataset-form,
   .asset-form,
+  .management-grid,
   .table-row.assets-head,
+  .table-row.member-head,
   .table-row.task-head,
   .table-row {
     grid-template-columns: 1fr;

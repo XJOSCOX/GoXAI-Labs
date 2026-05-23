@@ -231,6 +231,182 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.params.projectId);
+
+  if (!projectId) {
+    response.status(400).json({ error: "Project is required." });
+    return;
+  }
+
+  const parsed = parseUpdateProjectBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const project = await prisma.project.findUnique({
+    where: {
+      id: projectId
+    },
+    select: {
+      id: true,
+      organizationId: true
+    }
+  });
+
+  if (!project) {
+    response.status(404).json({ error: "Project was not found." });
+    return;
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: project.organizationId,
+      status: "ACTIVE",
+      role: {
+        in: ["OWNER", "ADMIN", "MANAGER"]
+      }
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to edit this project." });
+    return;
+  }
+
+  const updatedProject = await prisma.$transaction(async (tx) => {
+    const saved = await tx.project.update({
+      where: {
+        id: project.id
+      },
+      data: parsed.value,
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        },
+        workspace: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        }
+      }
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: saved.organizationId,
+        workspaceId: saved.workspaceId,
+        projectId: saved.id,
+        userId: user.id,
+        action: "project.updated",
+        entityType: "project",
+        entityId: saved.id,
+        metadata: parsed.value
+      }
+    });
+
+    return saved;
+  });
+
+  response.status(200).json({
+    project: serializeProject(updatedProject)
+  });
+});
+
+router.post("/:projectId/archive", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.params.projectId);
+
+  if (!projectId) {
+    response.status(400).json({ error: "Project is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const project = await prisma.project.findUnique({
+    where: {
+      id: projectId
+    },
+    select: {
+      id: true,
+      organizationId: true
+    }
+  });
+
+  if (!project) {
+    response.status(404).json({ error: "Project was not found." });
+    return;
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: project.organizationId,
+      status: "ACTIVE",
+      role: {
+        in: ["OWNER", "ADMIN", "MANAGER"]
+      }
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to archive this project." });
+    return;
+  }
+
+  const archivedProject = await prisma.project.update({
+    where: {
+      id: project.id
+    },
+    data: {
+      status: ProjectStatus.ARCHIVED
+    },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      },
+      workspace: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      }
+    }
+  });
+
+  response.status(200).json({
+    project: serializeProject(archivedProject)
+  });
+});
+
 export { router as projectsRouter };
 
 type CreateProjectBody =
@@ -240,6 +416,15 @@ type CreateProjectBody =
       name?: unknown;
       description?: unknown;
       dataType?: unknown;
+      instructions?: unknown;
+    }
+  | undefined;
+
+type UpdateProjectBody =
+  | {
+      name?: unknown;
+      description?: unknown;
+      status?: unknown;
       instructions?: unknown;
     }
   | undefined;
@@ -301,6 +486,49 @@ function parseCreateProjectBody(body: CreateProjectBody):
   };
 }
 
+function parseUpdateProjectBody(body: UpdateProjectBody):
+  | {
+      ok: true;
+      value: {
+        name?: string;
+        description?: string | null;
+        status?: ProjectStatus;
+        instructions?: string | null;
+      };
+    }
+  | { ok: false; error: string } {
+  const name = normalizeText(body?.name);
+  const description = normalizeNullableText(body?.description);
+  const instructions = normalizeNullableText(body?.instructions);
+  const status = parseEnumValue(ProjectStatus, body?.status);
+
+  if (name && name.length > 120) {
+    return { ok: false, error: "Project name must be 120 characters or fewer." };
+  }
+
+  if (description && description.length > 500) {
+    return { ok: false, error: "Project description must be 500 characters or fewer." };
+  }
+
+  if (instructions && instructions.length > 4000) {
+    return { ok: false, error: "Instructions must be 4000 characters or fewer." };
+  }
+
+  if (body?.status && !status) {
+    return { ok: false, error: "Choose a valid project status." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...(name ? { name } : {}),
+      ...(body?.description !== undefined ? { description } : {}),
+      ...(status ? { status } : {}),
+      ...(body?.instructions !== undefined ? { instructions } : {})
+    }
+  };
+}
+
 async function getUniqueProjectSlug(organizationId: string, name: string) {
   const prisma = getPrismaClient();
   const base = slugify(name);
@@ -352,6 +580,10 @@ function normalizeId(value: unknown) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeNullableText(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 function slugify(value: string) {

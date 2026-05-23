@@ -1,6 +1,7 @@
 import {
   getPrismaClient,
   MembershipRole,
+  type Membership,
   OrganizationType,
   PlanTier,
   type Organization,
@@ -131,6 +132,424 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.get("/:organizationId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const organizationId = normalizeId(request.params.organizationId);
+
+  if (!organizationId) {
+    response.status(400).json({ error: "Organization is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId,
+      status: "ACTIVE"
+    }
+  });
+
+  if (!membership) {
+    response.status(404).json({ error: "Organization was not found or you do not have access." });
+    return;
+  }
+
+  const organization = await prisma.organization.findUnique({
+    where: {
+      id: organizationId
+    },
+    include: organizationDetailIncludes
+  });
+
+  if (!organization) {
+    response.status(404).json({ error: "Organization was not found." });
+    return;
+  }
+
+  response.status(200).json({
+    organization: serializeOrganizationDetail(organization, membership.role)
+  });
+});
+
+router.patch("/:organizationId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const organizationId = normalizeId(request.params.organizationId);
+
+  if (!organizationId) {
+    response.status(400).json({ error: "Organization is required." });
+    return;
+  }
+
+  const parsed = parseUpdateOrganizationBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const membership = await requireOrganizationManager(user.id, organizationId);
+
+  if (!membership) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to edit this organization." });
+    return;
+  }
+
+  const organization = await prisma.$transaction(async (tx) => {
+    const updated = await tx.organization.update({
+      where: {
+        id: organizationId
+      },
+      data: parsed.value,
+      include: organizationDetailIncludes
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId,
+        userId: user.id,
+        action: "organization.updated",
+        entityType: "organization",
+        entityId: organizationId,
+        metadata: parsed.value
+      }
+    });
+
+    return updated;
+  });
+
+  response.status(200).json({
+    organization: serializeOrganizationDetail(organization, membership.role)
+  });
+});
+
+router.delete("/:organizationId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const organizationId = normalizeId(request.params.organizationId);
+
+  if (!organizationId) {
+    response.status(400).json({ error: "Organization is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId,
+      status: "ACTIVE",
+      role: "OWNER"
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({ error: "Only an owner can delete an organization." });
+    return;
+  }
+
+  const counts = await prisma.organization.findUnique({
+    where: {
+      id: organizationId
+    },
+    select: {
+      _count: {
+        select: {
+          projects: true,
+          datasets: true,
+          assets: true
+        }
+      }
+    }
+  });
+
+  if (!counts) {
+    response.status(404).json({ error: "Organization was not found." });
+    return;
+  }
+
+  if (counts._count.projects > 0 || counts._count.datasets > 0 || counts._count.assets > 0) {
+    response.status(409).json({
+      error: "Only empty organizations can be deleted. Archive projects and datasets instead."
+    });
+    return;
+  }
+
+  await prisma.organization.delete({
+    where: {
+      id: organizationId
+    }
+  });
+
+  response.status(204).send();
+});
+
+router.post("/:organizationId/members", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const organizationId = normalizeId(request.params.organizationId);
+
+  if (!organizationId) {
+    response.status(400).json({ error: "Organization is required." });
+    return;
+  }
+
+  const parsed = parseMemberBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const manager = await requireOrganizationManager(user.id, organizationId);
+
+  if (!manager) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to add members." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const targetUser = await prisma.user.findUnique({
+    where: {
+      email: parsed.value.email
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (!targetUser) {
+    response.status(404).json({ error: "That user must sign up before they can be added as a member." });
+    return;
+  }
+
+  const workspace = await prisma.workspace.findFirst({
+    where: {
+      organizationId
+    },
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true
+    }
+  });
+
+  const existing = await prisma.membership.findFirst({
+    where: {
+      userId: targetUser.id,
+      organizationId
+    }
+  });
+
+  const membership = await prisma.$transaction(async (tx) => {
+    const saved = existing
+      ? await tx.membership.update({
+          where: {
+            id: existing.id
+          },
+          data: {
+            role: parsed.value.role,
+            status: "ACTIVE",
+            workspaceId: existing.workspaceId ?? workspace?.id,
+            joinedAt: existing.joinedAt ?? new Date()
+          },
+          include: membershipIncludes
+        })
+      : await tx.membership.create({
+          data: {
+            userId: targetUser.id,
+            organizationId,
+            workspaceId: workspace?.id,
+            role: parsed.value.role,
+            status: "ACTIVE",
+            invitedById: user.id,
+            joinedAt: new Date()
+          },
+          include: membershipIncludes
+        });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId,
+        userId: user.id,
+        action: existing ? "membership.reactivated" : "membership.created",
+        entityType: "membership",
+        entityId: saved.id,
+        metadata: {
+          email: parsed.value.email,
+          role: parsed.value.role
+        }
+      }
+    });
+
+    return saved;
+  });
+
+  response.status(existing ? 200 : 201).json({
+    membership: serializeMembership(membership)
+  });
+});
+
+router.patch("/:organizationId/members/:membershipId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const organizationId = normalizeId(request.params.organizationId);
+  const membershipId = normalizeId(request.params.membershipId);
+
+  if (!organizationId || !membershipId) {
+    response.status(400).json({ error: "Organization and membership are required." });
+    return;
+  }
+
+  const parsed = parseMemberBody(request.body, false);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const manager = await requireOrganizationManager(user.id, organizationId);
+
+  if (!manager) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to edit members." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const membership = await prisma.membership.findFirst({
+    where: {
+      id: membershipId,
+      organizationId
+    }
+  });
+
+  if (!membership) {
+    response.status(404).json({ error: "Membership was not found." });
+    return;
+  }
+
+  if (membership.role === MembershipRole.OWNER && parsed.value.role !== MembershipRole.OWNER) {
+    const ownerCount = await prisma.membership.count({
+      where: {
+        organizationId,
+        status: "ACTIVE",
+        role: MembershipRole.OWNER
+      }
+    });
+
+    if (ownerCount <= 1) {
+      response.status(409).json({ error: "An organization must keep at least one owner." });
+      return;
+    }
+  }
+
+  const updated = await prisma.membership.update({
+    where: {
+      id: membershipId
+    },
+    data: {
+      role: parsed.value.role
+    },
+    include: membershipIncludes
+  });
+
+  response.status(200).json({
+    membership: serializeMembership(updated)
+  });
+});
+
+router.delete("/:organizationId/members/:membershipId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const organizationId = normalizeId(request.params.organizationId);
+  const membershipId = normalizeId(request.params.membershipId);
+
+  if (!organizationId || !membershipId) {
+    response.status(400).json({ error: "Organization and membership are required." });
+    return;
+  }
+
+  const manager = await requireOrganizationManager(user.id, organizationId);
+
+  if (!manager) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to remove members." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const membership = await prisma.membership.findFirst({
+    where: {
+      id: membershipId,
+      organizationId
+    }
+  });
+
+  if (!membership) {
+    response.status(404).json({ error: "Membership was not found." });
+    return;
+  }
+
+  if (membership.role === MembershipRole.OWNER) {
+    const ownerCount = await prisma.membership.count({
+      where: {
+        organizationId,
+        status: "ACTIVE",
+        role: MembershipRole.OWNER
+      }
+    });
+
+    if (ownerCount <= 1) {
+      response.status(409).json({ error: "An organization must keep at least one owner." });
+      return;
+    }
+  }
+
+  await prisma.membership.update({
+    where: {
+      id: membershipId
+    },
+    data: {
+      status: "REMOVED"
+    }
+  });
+
+  response.status(204).send();
+});
+
 export { router as organizationsRouter };
 
 type CreateOrganizationBody =
@@ -139,6 +558,21 @@ type CreateOrganizationBody =
       workspaceName?: unknown;
       organizationType?: unknown;
       planTier?: unknown;
+    }
+  | undefined;
+
+type UpdateOrganizationBody =
+  | {
+      name?: unknown;
+      type?: unknown;
+      planTier?: unknown;
+    }
+  | undefined;
+
+type MemberBody =
+  | {
+      email?: unknown;
+      role?: unknown;
     }
   | undefined;
 
@@ -177,6 +611,71 @@ function parseCreateOrganizationBody(body: CreateOrganizationBody):
       workspaceName,
       organizationType,
       planTier
+    }
+  };
+}
+
+function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
+  | {
+      ok: true;
+      value: {
+        name?: string;
+        type?: OrganizationType;
+        planTier?: PlanTier;
+      };
+    }
+  | { ok: false; error: string } {
+  const name = normalizeName(body?.name);
+  const type = parseOptionalEnumValue(OrganizationType, body?.type);
+  const planTier = parseOptionalEnumValue(PlanTier, body?.planTier);
+
+  if (name && name.length > 120) {
+    return { ok: false, error: "Organization name must be 120 characters or fewer." };
+  }
+
+  if (body?.type && !type) {
+    return { ok: false, error: "Choose a valid organization type." };
+  }
+
+  if (body?.planTier && !planTier) {
+    return { ok: false, error: "Choose a valid plan tier." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...(name ? { name } : {}),
+      ...(type ? { type } : {}),
+      ...(planTier ? { planTier } : {})
+    }
+  };
+}
+
+function parseMemberBody(body: MemberBody, requireEmail = true):
+  | {
+      ok: true;
+      value: {
+        email?: string;
+        role: MembershipRole;
+      };
+    }
+  | { ok: false; error: string } {
+  const email = normalizeEmail(body?.email);
+  const role = parseOptionalEnumValue(MembershipRole, body?.role);
+
+  if (requireEmail && !email) {
+    return { ok: false, error: "Member email is required." };
+  }
+
+  if (!role) {
+    return { ok: false, error: "Choose a valid member role." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      email,
+      role
     }
   };
 }
@@ -220,8 +719,121 @@ function serializeWorkspace(workspace: Workspace) {
   };
 }
 
+const membershipIncludes = {
+  user: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true
+    }
+  },
+  workspace: {
+    select: {
+      id: true,
+      name: true,
+      slug: true
+    }
+  }
+} as const;
+
+const organizationDetailIncludes = {
+  workspaces: true,
+  memberships: {
+    where: {
+      status: "ACTIVE"
+    },
+    include: membershipIncludes,
+    orderBy: {
+      createdAt: "asc"
+    }
+  }
+} as const;
+
+type OrganizationDetail = Organization & {
+  workspaces: Workspace[];
+  memberships: Array<Membership & {
+    user: {
+      id: string;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+    };
+    workspace: {
+      id: string;
+      name: string;
+      slug: string;
+    } | null;
+  }>;
+};
+
+type MembershipWithUser = Membership & {
+  user: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  workspace: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+};
+
+function serializeOrganizationDetail(organization: OrganizationDetail, currentUserRole: MembershipRole) {
+  return {
+    ...serializeOrganization(organization),
+    currentUserRole,
+    workspaces: organization.workspaces.map(serializeWorkspace),
+    memberships: organization.memberships.map(serializeMembership)
+  };
+}
+
+function serializeMembership(membership: MembershipWithUser) {
+  return {
+    id: membership.id,
+    organizationId: membership.organizationId,
+    workspaceId: membership.workspaceId,
+    role: membership.role,
+    status: membership.status,
+    joinedAt: membership.joinedAt,
+    user: {
+      id: membership.user.id,
+      email: membership.user.email,
+      name: [membership.user.firstName, membership.user.lastName].filter(Boolean).join(" ") || membership.user.email
+    },
+    workspace: membership.workspace,
+    createdAt: membership.createdAt,
+    updatedAt: membership.updatedAt
+  };
+}
+
+async function requireOrganizationManager(userId: string, organizationId: string) {
+  const prisma = getPrismaClient();
+
+  return prisma.membership.findFirst({
+    where: {
+      userId,
+      organizationId,
+      status: "ACTIVE",
+      role: {
+        in: ["OWNER", "ADMIN", "MANAGER"]
+      }
+    }
+  });
+}
+
 function normalizeName(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeId(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeEmail(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().toLowerCase() : undefined;
 }
 
 function slugify(value: string) {
@@ -243,4 +855,10 @@ function parseEnumValue<T extends Record<string, string>>(
   return typeof value === "string" && Object.values(enumValues).includes(value)
     ? (value as T[keyof T])
     : fallback;
+}
+
+function parseOptionalEnumValue<T extends Record<string, string>>(enumValues: T, value: unknown) {
+  return typeof value === "string" && Object.values(enumValues).includes(value)
+    ? (value as T[keyof T])
+    : undefined;
 }

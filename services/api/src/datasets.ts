@@ -248,6 +248,152 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const parsed = parseUpdateDatasetBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      projectId: true
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: dataset.organizationId,
+      status: "ACTIVE",
+      role: {
+        in: ["OWNER", "ADMIN", "MANAGER"]
+      }
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to edit this dataset." });
+    return;
+  }
+
+  const updatedDataset = await prisma.$transaction(async (tx) => {
+    const saved = await tx.dataset.update({
+      where: {
+        id: dataset.id
+      },
+      data: parsed.value,
+      include: datasetIncludes
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: saved.organizationId,
+        projectId: saved.projectId,
+        userId: user.id,
+        action: "dataset.updated",
+        entityType: "dataset",
+        entityId: saved.id,
+        metadata: parsed.value
+      }
+    });
+
+    return saved;
+  });
+
+  response.status(200).json({
+    dataset: serializeDataset(updatedDataset)
+  });
+});
+
+router.post("/:datasetId/archive", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      organizationId: true
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: user.id,
+      organizationId: dataset.organizationId,
+      status: "ACTIVE",
+      role: {
+        in: ["OWNER", "ADMIN", "MANAGER"]
+      }
+    }
+  });
+
+  if (!membership) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to archive this dataset." });
+    return;
+  }
+
+  const archivedDataset = await prisma.dataset.update({
+    where: {
+      id: dataset.id
+    },
+    data: {
+      status: DatasetStatus.ARCHIVED
+    },
+    include: datasetIncludes
+  });
+
+  response.status(200).json({
+    dataset: serializeDataset(archivedDataset)
+  });
+});
+
 export { router as datasetsRouter };
 
 type CreateDatasetBody =
@@ -255,6 +401,14 @@ type CreateDatasetBody =
       projectId?: unknown;
       name?: unknown;
       description?: unknown;
+    }
+  | undefined;
+
+type UpdateDatasetBody =
+  | {
+      name?: unknown;
+      description?: unknown;
+      status?: unknown;
     }
   | undefined;
 
@@ -298,6 +452,60 @@ function parseCreateDatasetBody(body: CreateDatasetBody):
   };
 }
 
+function parseUpdateDatasetBody(body: UpdateDatasetBody):
+  | {
+      ok: true;
+      value: {
+        name?: string;
+        description?: string | null;
+        status?: DatasetStatus;
+      };
+    }
+  | { ok: false; error: string } {
+  const name = normalizeText(body?.name);
+  const description = normalizeNullableText(body?.description);
+  const status = parseEnumValue(DatasetStatus, body?.status);
+
+  if (name && name.length > 120) {
+    return { ok: false, error: "Dataset name must be 120 characters or fewer." };
+  }
+
+  if (description && description.length > 500) {
+    return { ok: false, error: "Dataset description must be 500 characters or fewer." };
+  }
+
+  if (body?.status && !status) {
+    return { ok: false, error: "Choose a valid dataset status." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...(name ? { name } : {}),
+      ...(body?.description !== undefined ? { description } : {}),
+      ...(status ? { status } : {})
+    }
+  };
+}
+
+const datasetIncludes = {
+  organization: {
+    select: {
+      id: true,
+      name: true,
+      slug: true
+    }
+  },
+  project: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      dataType: true
+    }
+  }
+} as const;
+
 type DatasetWithRelations = Dataset & {
   organization: {
     id: string;
@@ -335,4 +543,14 @@ function normalizeId(value: unknown) {
 
 function normalizeText(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function normalizeNullableText(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: unknown) {
+  return typeof value === "string" && Object.values(enumValues).includes(value)
+    ? (value as T[keyof T])
+    : undefined;
 }

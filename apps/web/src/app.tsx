@@ -6,6 +6,7 @@ import {
   ClipboardList,
   CloudUpload,
   Database,
+  Edit3,
   ExternalLink,
   Eye,
   FileText,
@@ -13,6 +14,7 @@ import {
   HardDrive,
   LogOut,
   Moon,
+  Save,
   Search,
   Send,
   ShieldCheck,
@@ -28,10 +30,15 @@ import {
   createDataset,
   createOrganization,
   createProject,
+  addOrganizationMember,
+  archiveDataset,
+  archiveProject,
   assignTaskToSelf,
+  deleteOrganization,
   generateTasksFromDataset,
   getAssetAccessUrl,
   getDataset,
+  getOrganization,
   getProject,
   listAssets,
   listDatasets,
@@ -39,11 +46,18 @@ import {
   listProjects,
   listTasks,
   logClientEvent,
+  removeOrganizationMember,
   startTask,
   submitTask,
+  updateDataset,
+  updateOrganization,
+  updateOrganizationMember,
+  updateProject,
   uploadFileToSignedUrl,
   type AssetSummary,
   type DatasetSummary,
+  type MembershipSummary,
+  type OrganizationDetail,
   type OrganizationSummary,
   type ProjectSummary,
   type TaskSummary
@@ -385,6 +399,15 @@ function OrganizationSetupPage() {
   const organizationDraft = useFormDraft("goxai-draft-organization");
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState("");
+  const activeOrganizationId = selectedOrganizationId || organizations[0]?.id || "";
+  const {
+    error: organizationDetailError,
+    loading: organizationDetailLoading,
+    organization,
+    reload: reloadOrganization,
+    setError: setOrganizationDetailError
+  } = useOrganization(session, activeOrganizationId);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -409,6 +432,7 @@ function OrganizationSetupPage() {
       setSavedMessage(`${result.organization.name} and ${result.workspace.name} are ready.`);
       organizationDraft.clearDraft();
       await reload();
+      setSelectedOrganizationId(result.organization.id);
       navigate("/projects");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create organization.");
@@ -431,6 +455,19 @@ function OrganizationSetupPage() {
             <p className="eyebrow">Existing organizations</p>
             <h2>{organizations.length} workspace foundation</h2>
           </div>
+          <label className="wide">
+            Manage organization
+            <select
+              value={activeOrganizationId}
+              onChange={(event) => setSelectedOrganizationId(event.target.value)}
+            >
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="org-list">
             {organizations.map((organization) => (
               <article className="org-item" key={organization.id}>
@@ -443,6 +480,22 @@ function OrganizationSetupPage() {
             ))}
           </div>
         </section>
+      )}
+      {(organizationDetailError || organizationDetailLoading) && (
+        <p className={organizationDetailError ? "form-error" : "muted-copy"}>
+          {organizationDetailError ?? "Loading organization settings."}
+        </p>
+      )}
+      {organization && (
+        <OrganizationManagementPanel
+          onChanged={async () => {
+            await reload();
+            await reloadOrganization();
+          }}
+          organization={organization}
+          session={session}
+          setPageError={setOrganizationDetailError}
+        />
       )}
       <form
         className="panel setup-form"
@@ -487,6 +540,287 @@ function OrganizationSetupPage() {
     </section>
   );
 }
+
+function OrganizationManagementPanel({
+  onChanged,
+  organization,
+  session,
+  setPageError
+}: {
+  onChanged: () => Promise<void>;
+  organization: OrganizationDetail;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [memberSaving, setMemberSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleUpdate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateOrganization(session, organization.id, {
+        name: getFormValue(event, "name"),
+        type: getFormValue(event, "type"),
+        planTier: getFormValue(event, "planTier")
+      });
+      setMessage("Organization settings updated.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to update organization.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleAddMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setMemberSaving(true);
+
+    try {
+      await addOrganizationMember(session, organization.id, {
+        email: getFormValue(event, "email"),
+        role: getFormValue(event, "role")
+      });
+      form.reset();
+      setMessage("Member added.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to add member.");
+    } finally {
+      setMemberSaving(false);
+    }
+  }
+
+  async function handleDeleteOrganization() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await deleteOrganization(session, organization.id);
+      setMessage("Organization deleted.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to delete organization.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel management-panel">
+      <div>
+        <p className="eyebrow">Manage</p>
+        <h2>{organization.name}</h2>
+      </div>
+      {message && <p className="form-success">{message}</p>}
+      <form className="management-grid" onSubmit={handleUpdate}>
+        <label>
+          Name
+          <input name="name" defaultValue={organization.name} required />
+        </label>
+        <label>
+          Type
+          <select name="type" defaultValue={organization.type}>
+            <option value="PERSONAL">Personal</option>
+            <option value="COMPANY">Company</option>
+            <option value="ENTERPRISE">Enterprise</option>
+            <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+          </select>
+        </label>
+        <label>
+          Plan
+          <select name="planTier" defaultValue={organization.planTier}>
+            <option value="FREE">Free</option>
+            <option value="STARTER">Starter</option>
+            <option value="PRO">Pro</option>
+            <option value="BUSINESS">Business</option>
+            <option value="ENTERPRISE">Enterprise</option>
+          </select>
+        </label>
+        <button className="primary-button" type="submit" disabled={saving}>
+          <Save size={18} />
+          {saving ? "Saving" : "Save organization"}
+        </button>
+      </form>
+      <form className="management-grid" onSubmit={handleAddMember}>
+        <label>
+          Member email
+          <input name="email" placeholder="teammate@example.com" type="email" required />
+        </label>
+        <label>
+          Role
+          <select name="role" defaultValue="ANNOTATOR">
+            {memberRoles.map((role) => (
+              <option key={role} value={role}>
+                {formatEnum(role)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="secondary-button" type="submit" disabled={memberSaving}>
+          <UserRoundPlus size={18} />
+          {memberSaving ? "Adding" : "Add member"}
+        </button>
+        <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
+          Delete empty organization
+        </button>
+      </form>
+      <MembersTable
+        members={organization.memberships}
+        onChanged={onChanged}
+        organizationId={organization.id}
+        session={session}
+        setPageError={setPageError}
+      />
+    </section>
+  );
+}
+
+function MembersTable({
+  members,
+  onChanged,
+  organizationId,
+  session,
+  setPageError
+}: {
+  members: MembershipSummary[];
+  onChanged: () => Promise<void>;
+  organizationId: string;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  return (
+    <section className="table-panel">
+      <div className="table-row member-head table-head">
+        <span>Member</span>
+        <span>Role</span>
+        <span>Status</span>
+        <span>Action</span>
+      </div>
+      {members.map((member) => (
+        <MemberRow
+          key={member.id}
+          member={member}
+          onChanged={onChanged}
+          organizationId={organizationId}
+          session={session}
+          setPageError={setPageError}
+        />
+      ))}
+    </section>
+  );
+}
+
+function MemberRow({
+  member,
+  onChanged,
+  organizationId,
+  session,
+  setPageError
+}: {
+  member: MembershipSummary;
+  onChanged: () => Promise<void>;
+  organizationId: string;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [role, setRole] = useState(member.role);
+
+  async function saveRole() {
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateOrganizationMember(session, organizationId, member.id, role);
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to update member.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeMember() {
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await removeOrganizationMember(session, organizationId, member.id);
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to remove member.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="table-row member-head project-row">
+      <span>
+        <strong>{member.user.name}</strong>
+        <small>{member.user.email}</small>
+      </span>
+      <span>
+        <select value={role} onChange={(event) => setRole(event.target.value)}>
+          {memberRoles.map((item) => (
+            <option key={item} value={item}>
+              {formatEnum(item)}
+            </option>
+          ))}
+        </select>
+      </span>
+      <span>
+        <span className="status-pill compact">{formatEnum(member.status)}</span>
+      </span>
+      <span className="row-actions">
+        <button className="secondary-button compact-button" type="button" onClick={saveRole} disabled={saving}>
+          Save
+        </button>
+        <button className="ghost-button compact-button danger-button" type="button" onClick={removeMember} disabled={saving}>
+          Remove
+        </button>
+      </span>
+    </article>
+  );
+}
+
+const memberRoles = ["OWNER", "ADMIN", "MANAGER", "REVIEWER", "ANNOTATOR", "VIEWER"];
 
 function ProjectsPage() {
   const { session } = useAuth();
@@ -664,10 +998,118 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
   );
 }
 
+function ProjectSettingsPanel({
+  onChanged,
+  project,
+  session,
+  setPageError
+}: {
+  onChanged: () => Promise<void>;
+  project: ProjectSummary;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleUpdate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateProject(session, project.id, {
+        name: getFormValue(event, "name"),
+        description: getFormValue(event, "description"),
+        status: getFormValue(event, "status"),
+        instructions: getFormValue(event, "instructions")
+      });
+      setMessage("Project updated.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to update project.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleArchive() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await archiveProject(session, project.id);
+      setMessage("Project archived.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to archive project.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="panel management-grid" onSubmit={handleUpdate}>
+      <div className="wide">
+        <p className="eyebrow">Manage</p>
+        <h2>Project settings</h2>
+      </div>
+      <label>
+        Name
+        <input name="name" defaultValue={project.name} required />
+      </label>
+      <label>
+        Status
+        <select name="status" defaultValue={project.status}>
+          {projectStatuses.map((status) => (
+            <option key={status} value={status}>
+              {formatEnum(status)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="wide">
+        Description
+        <textarea name="description" defaultValue={project.description ?? ""} rows={3} />
+      </label>
+      <label className="wide">
+        Instructions
+        <textarea name="instructions" defaultValue={project.instructions ?? ""} rows={4} />
+      </label>
+      {message && <p className="form-success wide">{message}</p>}
+      <div className="row-actions wide">
+        <button className="primary-button" type="submit" disabled={saving}>
+          <Save size={18} />
+          {saving ? "Saving" : "Save project"}
+        </button>
+        <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
+          Archive project
+        </button>
+      </div>
+    </form>
+  );
+}
+
+const projectStatuses = ["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"];
+
 function ProjectDetailPage() {
   const { projectId = "" } = useParams();
   const { session } = useAuth();
-  const { error: projectError, loading: projectLoading, project } = useProject(session, projectId);
+  const { error: projectError, loading: projectLoading, project, reload: reloadProject } = useProject(session, projectId);
   const {
     datasets,
     error: datasetsError,
@@ -713,6 +1155,12 @@ function ProjectDetailPage() {
               </div>
             </dl>
           </section>
+          <ProjectSettingsPanel
+            onChanged={reloadProject}
+            project={project}
+            session={session}
+            setPageError={setDatasetsError}
+          />
           <DatasetForm
             defaultProjectId={project.id}
             onCreated={reloadDatasets}
@@ -1125,10 +1573,113 @@ function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start" | "sub
   return null;
 }
 
+function DatasetSettingsPanel({
+  dataset,
+  onChanged,
+  session,
+  setPageError
+}: {
+  dataset: DatasetSummary;
+  onChanged: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleUpdate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateDataset(session, dataset.id, {
+        name: getFormValue(event, "name"),
+        description: getFormValue(event, "description"),
+        status: getFormValue(event, "status")
+      });
+      setMessage("Dataset updated.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to update dataset.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleArchive() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await archiveDataset(session, dataset.id);
+      setMessage("Dataset archived.");
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to archive dataset.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="panel management-grid" onSubmit={handleUpdate}>
+      <div className="wide">
+        <p className="eyebrow">Manage</p>
+        <h2>Dataset settings</h2>
+      </div>
+      <label>
+        Name
+        <input name="name" defaultValue={dataset.name} required />
+      </label>
+      <label>
+        Status
+        <select name="status" defaultValue={dataset.status}>
+          {datasetStatuses.map((status) => (
+            <option key={status} value={status}>
+              {formatEnum(status)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="wide">
+        Description
+        <textarea name="description" defaultValue={dataset.description ?? ""} rows={3} />
+      </label>
+      {message && <p className="form-success wide">{message}</p>}
+      <div className="row-actions wide">
+        <button className="primary-button" type="submit" disabled={saving}>
+          <Save size={18} />
+          {saving ? "Saving" : "Save dataset"}
+        </button>
+        <button className="ghost-button danger-button" type="button" onClick={handleArchive} disabled={saving}>
+          Archive dataset
+        </button>
+      </div>
+    </form>
+  );
+}
+
+const datasetStatuses = ["DRAFT", "IMPORTING", "READY", "PROCESSING", "ARCHIVED", "FAILED"];
+
 function DatasetDetailPage() {
   const { datasetId = "" } = useParams();
   const { session } = useAuth();
-  const { dataset, error: datasetError, loading: datasetLoading } = useDataset(session, datasetId);
+  const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
   const {
     assets,
     error: assetsError,
@@ -1183,6 +1734,12 @@ function DatasetDetailPage() {
               </div>
             </dl>
           </section>
+          <DatasetSettingsPanel
+            dataset={dataset}
+            onChanged={reloadDataset}
+            session={session}
+            setPageError={setTasksError}
+          />
           <AssetForm
             dataset={dataset}
             onCreated={async () => {
@@ -1664,6 +2221,46 @@ function useProjects(session: ReturnType<typeof useAuth>["session"]) {
     error,
     loading,
     projects,
+    reload,
+    setError
+  };
+}
+
+function useOrganization(session: ReturnType<typeof useAuth>["session"], organizationId: string) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
+  const [organization, setOrganization] = useState<OrganizationDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || !organizationId) {
+      setOrganization(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setOrganization(await getOrganization(activeSession, organizationId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load organization.");
+    } finally {
+      setLoading(false);
+    }
+  }, [organizationId, sessionKey, sessionRef]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    organization,
     reload,
     setError
   };
