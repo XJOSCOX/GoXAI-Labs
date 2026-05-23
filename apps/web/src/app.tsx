@@ -13,6 +13,7 @@ import { DatasetDetailPage } from "./pages/datasets/DatasetDetailPage";
 import { DatasetsPage } from "./pages/datasets/DatasetsPage";
 import { OrganizationSetupPage } from "./pages/organizations/OrganizationSetupPage";
 import { ProjectDetailPage, ProjectsPage } from "./pages/projects/ProjectsPage";
+import { TaskDetailPage } from "./pages/tasks/TaskDetailPage";
 import { TasksPage } from "./pages/tasks/TasksPage";
 
 export function App() {
@@ -59,6 +60,7 @@ export function App() {
             }
           />
           <Route path="tasks" element={<TasksPage />} />
+          <Route path="tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route path="admin" element={<AdminPage />} />
         </Route>

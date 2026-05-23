@@ -1,6 +1,9 @@
 import {
+  AnnotationRegionType,
+  AnnotationStatus,
   getPrismaClient,
   MembershipRole,
+  Prisma,
   ProjectAccessMode,
   ProjectStatus,
   TaskStatus,
@@ -322,6 +325,42 @@ router.post("/:taskId/assign-self", async (request: AuthenticatedRequest, respon
   await updateTaskForUser(request, response, "assign-self");
 });
 
+router.get("/:taskId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const taskId = normalizeId(request.params.taskId);
+
+  if (!taskId) {
+    response.status(400).json({ error: "Task is required." });
+    return;
+  }
+
+  const access = await getTaskAccess(user.id, taskId);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  response.status(200).json({
+    annotation: serializeAnnotation(access.annotation),
+    task: serializeTask(access.task, access.membership)
+  });
+});
+
+router.post("/:taskId/annotation", async (request: AuthenticatedRequest, response) => {
+  await saveTaskAnnotation(request, response, "draft");
+});
+
+router.post("/:taskId/annotation/submit", async (request: AuthenticatedRequest, response) => {
+  await saveTaskAnnotation(request, response, "submit");
+});
+
 router.post("/:taskId/start", async (request: AuthenticatedRequest, response) => {
   await updateTaskForUser(request, response, "start");
 });
@@ -333,6 +372,216 @@ router.post("/:taskId/submit", async (request: AuthenticatedRequest, response) =
 export { router as tasksRouter };
 
 type TaskAction = "assign-self" | "start" | "submit";
+type AnnotationAction = "draft" | "submit";
+
+async function getTaskAccess(userId: string, taskId: string):
+  Promise<
+    | {
+        ok: true;
+        annotation: AnnotationWithRegions | null;
+        membership?: { role: MembershipRole };
+        task: TaskWithDetailRelations;
+      }
+    | { ok: false; error: string; status: number }
+  > {
+  const prisma = getPrismaClient();
+  const task = await prisma.task.findUnique({
+    where: {
+      id: taskId
+    },
+    include: taskDetailIncludes
+  });
+
+  if (!task) {
+    return { ok: false, error: "Task was not found.", status: 404 };
+  }
+
+  const [membership, projectMembership] = await Promise.all([
+    prisma.membership.findFirst({
+      where: {
+        userId,
+        organizationId: task.project.organizationId,
+        status: "ACTIVE"
+      },
+      select: {
+        role: true
+      }
+    }),
+    prisma.projectMembership.findFirst({
+      where: {
+        userId,
+        projectId: task.projectId,
+        status: "ACTIVE"
+      },
+      select: {
+        role: true
+      }
+    })
+  ]);
+  const effectiveMembership = membership ?? projectMembership ?? undefined;
+  const canManage = Boolean(effectiveMembership && canGenerateTasks(effectiveMembership));
+  const canReadActivePublicTask = task.project.accessMode === ProjectAccessMode.PUBLIC && task.project.status === ProjectStatus.ACTIVE;
+
+  if (!effectiveMembership && !canReadActivePublicTask) {
+    return { ok: false, error: "You do not have access to this task.", status: 403 };
+  }
+
+  if (!canManage && (task.project.status !== ProjectStatus.ACTIVE || task.status === TaskStatus.ARCHIVED)) {
+    return { ok: false, error: "Task was not found or you do not have access.", status: 404 };
+  }
+
+  const annotation =
+    task.annotations.find((item) => item.userId === userId && item.status === AnnotationStatus.DRAFT) ??
+    task.annotations.find((item) => item.userId === userId) ??
+    task.annotations[0] ??
+    null;
+
+  return {
+    ok: true,
+    annotation,
+    membership: effectiveMembership,
+    task
+  };
+}
+
+async function saveTaskAnnotation(request: AuthenticatedRequest, response: Response, action: AnnotationAction) {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const taskId = normalizeId(request.params.taskId);
+
+  if (!taskId) {
+    response.status(400).json({ error: "Task is required." });
+    return;
+  }
+
+  const access = await getTaskAccess(user.id, taskId);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  if (!access.membership || !canWorkTasks(access.membership)) {
+    response.status(403).json({ error: "You do not have permission to annotate this task." });
+    return;
+  }
+
+  if (access.task.assignedToId && access.task.assignedToId !== user.id) {
+    response.status(409).json({ error: "This task is assigned to another user." });
+    return;
+  }
+
+  const parsed = parseAnnotationBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const status = action === "submit" ? AnnotationStatus.SUBMITTED : AnnotationStatus.DRAFT;
+  const submittedAt = action === "submit" ? new Date() : null;
+  const existingDraft = access.annotation?.status === AnnotationStatus.DRAFT ? access.annotation : null;
+  const version = existingDraft ? existingDraft.version : Math.max(0, ...access.task.annotations.map((annotation) => annotation.version)) + 1;
+
+  const savedAnnotation = await prisma.$transaction(async (tx) => {
+    const annotation = existingDraft
+      ? await tx.annotation.update({
+          where: {
+            id: existingDraft.id
+          },
+          data: {
+            leadTimeSeconds: parsed.value.leadTimeSeconds,
+            resultJson: parsed.value.resultJson,
+            status,
+            submittedAt
+          }
+        })
+      : await tx.annotation.create({
+          data: {
+            leadTimeSeconds: parsed.value.leadTimeSeconds,
+            projectId: access.task.projectId,
+            resultJson: parsed.value.resultJson,
+            status,
+            submittedAt,
+            taskId: access.task.id,
+            userId: user.id,
+            version
+          }
+        });
+
+    await tx.annotationRegion.deleteMany({
+      where: {
+        annotationId: annotation.id
+      }
+    });
+
+    if (parsed.value.regions.length > 0) {
+      await tx.annotationRegion.createMany({
+        data: parsed.value.regions.map((region) => ({
+          annotationId: annotation.id,
+          geometryJson: region.geometryJson,
+          label: region.label,
+          metadata: region.metadata as Prisma.InputJsonObject,
+          type: AnnotationRegionType.BBOX
+        }))
+      });
+    }
+
+    if (action === "submit") {
+      await tx.task.update({
+        where: {
+          id: access.task.id
+        },
+        data: {
+          assignedToId: access.task.assignedToId ?? user.id,
+          status: TaskStatus.SUBMITTED
+        }
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: access.task.project.organizationId,
+        projectId: access.task.projectId,
+        userId: user.id,
+        action: action === "submit" ? "annotation.submitted" : "annotation.saved",
+        entityType: "annotation",
+        entityId: annotation.id,
+        metadata: {
+          requestId: getRequestId(request),
+          regionCount: parsed.value.regions.length,
+          taskId: access.task.id,
+          version
+        }
+      }
+    });
+
+    return tx.annotation.findUniqueOrThrow({
+      where: {
+        id: annotation.id
+      },
+      include: annotationIncludes
+    });
+  });
+
+  const savedTask = await prisma.task.findUniqueOrThrow({
+    where: {
+      id: access.task.id
+    },
+    include: taskDetailIncludes
+  });
+
+  response.status(action === "submit" ? 200 : 201).json({
+    annotation: serializeAnnotation(savedAnnotation),
+    task: serializeTask(savedTask, access.membership)
+  });
+}
 
 async function updateTaskForUser(
   request: AuthenticatedRequest,
@@ -511,7 +760,8 @@ const taskIncludes = {
       name: true,
       slug: true,
       organizationId: true,
-      status: true
+      status: true,
+      accessMode: true
     }
   },
   dataset: {
@@ -527,7 +777,9 @@ const taskIncludes = {
       fileName: true,
       objectKey: true,
       mimeType: true,
-      fileSize: true
+      fileSize: true,
+      width: true,
+      height: true
     }
   },
   assignedTo: {
@@ -548,6 +800,42 @@ const taskIncludes = {
   }
 } as const;
 
+const annotationIncludes = {
+  regions: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      type: true,
+      label: true,
+      geometryJson: true,
+      confidence: true,
+      metadata: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  },
+  user: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true
+    }
+  }
+} as const;
+
+const taskDetailIncludes = {
+  ...taskIncludes,
+  annotations: {
+    orderBy: {
+      version: "desc"
+    },
+    include: annotationIncludes
+  }
+} as const;
+
 type TaskWithRelations = Task & {
   project: {
     id: string;
@@ -555,6 +843,7 @@ type TaskWithRelations = Task & {
     slug: string;
     organizationId: string;
     status: ProjectStatus;
+    accessMode: ProjectAccessMode;
   };
   dataset: {
     id: string;
@@ -567,6 +856,8 @@ type TaskWithRelations = Task & {
     objectKey: string;
     mimeType: string;
     fileSize: bigint;
+    width: number | null;
+    height: number | null;
   } | null;
   assignedTo: {
     id: string;
@@ -580,6 +871,40 @@ type TaskWithRelations = Task & {
     firstName: string | null;
     lastName: string | null;
   } | null;
+};
+
+type TaskWithDetailRelations = TaskWithRelations & {
+  annotations: AnnotationWithRegions[];
+};
+
+type AnnotationWithRegions = {
+  id: string;
+  taskId: string;
+  projectId: string;
+  userId: string;
+  status: AnnotationStatus;
+  resultJson: unknown;
+  leadTimeSeconds: number | null;
+  version: number;
+  submittedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  regions: {
+    id: string;
+    type: AnnotationRegionType;
+    label: string | null;
+    geometryJson: unknown;
+    confidence: number | null;
+    metadata: unknown;
+    createdAt: Date;
+    updatedAt: Date;
+  }[];
+  user: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
 };
 
 function serializeTask(task: TaskWithRelations, membership?: { role: MembershipRole }) {
@@ -610,6 +935,37 @@ function serializeTask(task: TaskWithRelations, membership?: { role: MembershipR
   };
 }
 
+function serializeAnnotation(annotation: AnnotationWithRegions | null) {
+  if (!annotation) {
+    return null;
+  }
+
+  return {
+    id: annotation.id,
+    taskId: annotation.taskId,
+    projectId: annotation.projectId,
+    userId: annotation.userId,
+    status: annotation.status,
+    resultJson: annotation.resultJson,
+    leadTimeSeconds: annotation.leadTimeSeconds,
+    version: annotation.version,
+    submittedAt: annotation.submittedAt,
+    user: serializeUserName(annotation.user),
+    regions: annotation.regions.map((region) => ({
+      id: region.id,
+      type: region.type,
+      label: region.label,
+      geometryJson: region.geometryJson,
+      confidence: region.confidence,
+      metadata: region.metadata,
+      createdAt: region.createdAt,
+      updatedAt: region.updatedAt
+    })),
+    createdAt: annotation.createdAt,
+    updatedAt: annotation.updatedAt
+  };
+}
+
 function serializeUserName(user: {
   id: string;
   email: string;
@@ -625,6 +981,119 @@ function serializeUserName(user: {
 
 function normalizeId(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function parseAnnotationBody(body: unknown):
+  | {
+      ok: true;
+      value: {
+        leadTimeSeconds?: number;
+        regions: {
+          geometryJson: {
+            height: number;
+            width: number;
+            x: number;
+            y: number;
+          };
+          label: string | null;
+          metadata: Record<string, unknown>;
+        }[];
+        resultJson: {
+          regions: {
+            geometry: {
+              height: number;
+              width: number;
+              x: number;
+              y: number;
+            };
+            label: string | null;
+            type: "BBOX";
+          }[];
+          tool: "bbox";
+        };
+      };
+    }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== "object") {
+    return { ok: false, error: "Annotation payload is required." };
+  }
+
+  const payload = body as Record<string, unknown>;
+  const rawRegions = Array.isArray(payload.regions) ? payload.regions : [];
+
+  if (rawRegions.length > 250) {
+    return { ok: false, error: "Save up to 250 regions per annotation for now." };
+  }
+
+  const regions = [];
+
+  for (const rawRegion of rawRegions) {
+    if (!rawRegion || typeof rawRegion !== "object") {
+      return { ok: false, error: "Each annotation region must be an object." };
+    }
+
+    const region = rawRegion as Record<string, unknown>;
+    const geometry = region.geometry;
+
+    if (!geometry || typeof geometry !== "object") {
+      return { ok: false, error: "Each annotation region needs geometry." };
+    }
+
+    const box = geometry as Record<string, unknown>;
+    const x = normalizeUnitNumber(box.x);
+    const y = normalizeUnitNumber(box.y);
+    const width = normalizeUnitNumber(box.width);
+    const height = normalizeUnitNumber(box.height);
+
+    if (x === null || y === null || width === null || height === null || width <= 0 || height <= 0) {
+      return { ok: false, error: "Bounding boxes must use normalized x, y, width, and height values." };
+    }
+
+    const label = typeof region.label === "string" && region.label.trim() ? region.label.trim().slice(0, 120) : null;
+    const geometryJson = {
+      height,
+      width,
+      x,
+      y
+    };
+
+    regions.push({
+      geometryJson,
+      label,
+      metadata: {
+        tool: "bbox"
+      }
+    });
+  }
+
+  const leadTimeSeconds =
+    typeof payload.leadTimeSeconds === "number" && Number.isFinite(payload.leadTimeSeconds) && payload.leadTimeSeconds >= 0
+      ? payload.leadTimeSeconds
+      : undefined;
+
+  return {
+    ok: true,
+    value: {
+      leadTimeSeconds,
+      regions,
+      resultJson: {
+        regions: regions.map((region) => ({
+          geometry: region.geometryJson,
+          label: region.label,
+          type: "BBOX"
+        })),
+        tool: "bbox"
+      }
+    }
+  };
+}
+
+function normalizeUnitNumber(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(1, value));
 }
 
 function normalizePositiveInteger(value: unknown) {

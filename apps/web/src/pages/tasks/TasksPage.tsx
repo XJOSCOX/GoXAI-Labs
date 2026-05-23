@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth";
-import { assignTaskToSelf, startTask, submitTask, type TaskSummary } from "../../api";
+import { assignTaskToSelf, startTask, type TaskSummary } from "../../api";
 import { useTasks } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
-import { ArrowLeft, ClipboardList, Eye, FolderKanban, Send, UserCheck } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FolderKanban, UserCheck } from "lucide-react";
 
 const taskPageSize = 8;
 
@@ -217,10 +217,8 @@ function TaskRow({
     try {
       if (action.kind === "assign") {
         await assignTaskToSelf(session, task.id);
-      } else if (action.kind === "start") {
-        await startTask(session, task.id);
       } else {
-        await submitTask(session, task.id);
+        await startTask(session, task.id);
       }
 
       await onChanged();
@@ -234,7 +232,9 @@ function TaskRow({
   return (
     <article className="table-row task-head project-row">
       <span>
-        <strong>{task.asset?.fileName ?? "No asset"}</strong>
+        <Link className="table-link" to={`/tasks/${task.id}`}>
+          {task.asset?.fileName ?? "No asset"}
+        </Link>
         <small>{task.dataset?.name ?? task.project.name}</small>
       </span>
       <span>
@@ -244,7 +244,7 @@ function TaskRow({
       <span>
         {task.canWork && action ? (
           <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
-            {action.kind === "assign" ? <UserCheck size={16} /> : action.kind === "start" ? <Eye size={16} /> : <Send size={16} />}
+            {action.kind === "assign" ? <UserCheck size={16} /> : <Eye size={16} />}
             {saving ? "Saving" : action.label}
           </button>
         ) : !task.canWork ? (
@@ -257,17 +257,13 @@ function TaskRow({
   );
 }
 
-function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start" | "submit"; label: string } | null {
+function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start"; label: string } | null {
   if (task.status === "PENDING") {
     return { kind: "assign", label: "Assign" };
   }
 
   if (task.status === "ASSIGNED") {
     return { kind: "start", label: "Start" };
-  }
-
-  if (task.status === "IN_PROGRESS") {
-    return { kind: "submit", label: "Submit" };
   }
 
   return null;

@@ -152,6 +152,10 @@ function getTopbarTitle(pathname: string) {
     return { eyebrow: "Tasks", title: "Labeling tasks" };
   }
 
+  if (normalizedPathname.startsWith("/tasks/")) {
+    return { eyebrow: "Tasks", title: "Task workspace" };
+  }
+
   if (normalizedPathname === "/account") {
     return { eyebrow: "Account", title: "My Account" };
   }

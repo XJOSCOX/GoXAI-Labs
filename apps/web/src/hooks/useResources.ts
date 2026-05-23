@@ -3,6 +3,7 @@ import {
   getDataset,
   getOrganization,
   getProject,
+  getTask,
   listAssets,
   listDatasets,
   listOrganizations,
@@ -339,6 +340,53 @@ export function useTasks(
     reload,
     setError,
     tasks
+  };
+}
+
+export function useTask(session: ReturnType<typeof useAuth>["session"], taskId: string) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
+  const [task, setTask] = useState<TaskSummary | null>(null);
+  const [annotation, setAnnotation] = useState<Awaited<ReturnType<typeof getTask>>["annotation"]>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || !taskId) {
+      setAnnotation(null);
+      setTask(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await getTask(activeSession, taskId);
+      setAnnotation(result.annotation);
+      setTask(result.task);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load task.");
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionKey, sessionRef, taskId]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    annotation,
+    error,
+    loading,
+    reload,
+    setAnnotation,
+    setError,
+    setTask,
+    task
   };
 }
 

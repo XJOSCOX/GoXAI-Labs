@@ -409,6 +409,55 @@ export interface TaskSummary {
   updatedAt: string;
 }
 
+export interface AnnotationRegionSummary {
+  id: string;
+  type: string;
+  label: string | null;
+  geometryJson: Record<string, unknown>;
+  confidence: number | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnnotationSummary {
+  id: string;
+  taskId: string;
+  projectId: string;
+  userId: string;
+  status: string;
+  resultJson: Record<string, unknown>;
+  leadTimeSeconds: number | null;
+  version: number;
+  submittedAt: string | null;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+  };
+  regions: AnnotationRegionSummary[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskDetailResult {
+  annotation: AnnotationSummary | null;
+  task: TaskSummary;
+}
+
+export interface SaveAnnotationInput {
+  leadTimeSeconds?: number;
+  regions: {
+    geometry: {
+      height: number;
+      width: number;
+      x: number;
+      y: number;
+    };
+    label?: string | null;
+  }[];
+}
+
 export interface GenerateTasksResult {
   createdCount: number;
   skippedCount: number;
@@ -992,6 +1041,42 @@ export async function listTasks(session: Session, input: { datasetId?: string; p
   }
 
   return ((await response.json()) as { tasks: TaskSummary[] }).tasks;
+}
+
+export async function getTask(session: Session, taskId: string) {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load task."));
+  }
+
+  return (await response.json()) as TaskDetailResult;
+}
+
+export async function saveTaskAnnotation(session: Session, taskId: string, input: SaveAnnotationInput) {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/annotation`, {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to save annotation."));
+  }
+
+  return (await response.json()) as TaskDetailResult;
+}
+
+export async function submitTaskAnnotation(session: Session, taskId: string, input: SaveAnnotationInput) {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/annotation/submit`, {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to submit annotation."));
+  }
+
+  return (await response.json()) as TaskDetailResult;
 }
 
 export async function generateTasksFromDataset(session: Session, datasetId: string, input: { quantity?: number } = {}) {
