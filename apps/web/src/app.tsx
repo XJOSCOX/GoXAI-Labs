@@ -3,6 +3,7 @@ import {
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
+  ClipboardList,
   CloudUpload,
   Database,
   ExternalLink,
@@ -13,9 +14,10 @@ import {
   LogOut,
   Moon,
   Search,
+  Send,
   ShieldCheck,
-  Sparkles,
   Sun,
+  UserCheck,
   UserRoundPlus
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
@@ -26,6 +28,8 @@ import {
   createDataset,
   createOrganization,
   createProject,
+  assignTaskToSelf,
+  generateTasksFromDataset,
   getAssetAccessUrl,
   getDataset,
   getProject,
@@ -33,12 +37,16 @@ import {
   listDatasets,
   listOrganizations,
   listProjects,
+  listTasks,
   logClientEvent,
+  startTask,
+  submitTask,
   uploadFileToSignedUrl,
   type AssetSummary,
   type DatasetSummary,
   type OrganizationSummary,
-  type ProjectSummary
+  type ProjectSummary,
+  type TaskSummary
 } from "./api";
 import { AuthProvider, getFormValue, useAuth } from "./auth";
 import { useTheme } from "./theme";
@@ -63,6 +71,7 @@ export function App() {
           <Route path="projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
           <Route path="datasets/:datasetId" element={<DatasetDetailPage />} />
+          <Route path="tasks" element={<TasksPage />} />
         </Route>
       </Routes>
     </AuthProvider>
@@ -260,6 +269,10 @@ function AppShell() {
             <Database size={18} />
             Datasets
           </NavLink>
+          <NavLink to="/tasks">
+            <ClipboardList size={18} />
+            Tasks
+          </NavLink>
         </nav>
         <button className="ghost-button" type="button" onClick={() => void logout()}>
           <LogOut size={18} />
@@ -308,6 +321,7 @@ function DashboardPage() {
   const { organizations } = useOrganizations(session);
   const { projects } = useProjects(session);
   const { datasets } = useDatasets(session);
+  const { tasks } = useTasks(session);
   const primaryMembership = organizations[0]?.role ?? "Not assigned";
 
   return (
@@ -335,9 +349,9 @@ function DashboardPage() {
           <strong>{datasets.length}</strong>
         </article>
         <article className="stat-card">
-          <Sparkles size={20} />
-          <span>AI jobs</span>
-          <strong>0</strong>
+          <ClipboardList size={20} />
+          <span>Tasks</span>
+          <strong>{tasks.length}</strong>
         </article>
       </div>
       <section className="panel">
@@ -763,6 +777,24 @@ function DatasetsPage() {
   );
 }
 
+function TasksPage() {
+  const { session } = useAuth();
+  const { error, loading, reload, setError, tasks } = useTasks(session);
+
+  return (
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Tasks</p>
+          <h1>Labeling tasks</h1>
+        </div>
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      <TasksTable loading={loading} onChanged={reload} session={session} setPageError={setError} tasks={tasks} />
+    </section>
+  );
+}
+
 function DatasetForm({
   defaultProjectId,
   onCreated,
@@ -903,6 +935,196 @@ function DatasetRow({ dataset, projectScoped }: { dataset: DatasetSummary; proje
   );
 }
 
+function DatasetTasksPanel({
+  dataset,
+  loading,
+  onGenerated,
+  session,
+  setPageError,
+  tasks
+}: {
+  dataset: DatasetSummary;
+  loading: boolean;
+  onGenerated: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+  tasks: TaskSummary[];
+}) {
+  const [generating, setGenerating] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function handleGenerate() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setGenerating(true);
+
+    try {
+      const result = await generateTasksFromDataset(session, dataset.id);
+      setMessage(
+        result.createdCount > 0
+          ? `${result.createdCount} task${result.createdCount === 1 ? "" : "s"} generated.`
+          : "Tasks already exist for every dataset asset."
+      );
+      await onGenerated();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to generate tasks.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <section className="panel task-panel">
+      <div className="task-panel-head">
+        <div>
+          <p className="eyebrow">Workflow</p>
+          <h2>Dataset tasks</h2>
+          <span>{tasks.length} task records for this dataset</span>
+        </div>
+        <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating}>
+          <ClipboardList size={18} />
+          {generating ? "Generating" : "Generate tasks"}
+        </button>
+      </div>
+      {message && <p className="form-success">{message}</p>}
+      <TasksTable loading={loading} onChanged={onGenerated} session={session} setPageError={setPageError} tasks={tasks} />
+    </section>
+  );
+}
+
+function TasksTable({
+  loading,
+  onChanged,
+  session,
+  setPageError,
+  tasks
+}: {
+  loading: boolean;
+  onChanged: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+  tasks: TaskSummary[];
+}) {
+  return (
+    <section className="table-panel">
+      <div className="table-row task-head table-head">
+        <span>Asset</span>
+        <span>Status</span>
+        <span>Assigned</span>
+        <span>Action</span>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <ClipboardList size={28} />
+          <strong>Loading tasks</strong>
+          <span>Checking task assignments and statuses.</span>
+        </div>
+      ) : tasks.length > 0 ? (
+        tasks.map((task) => (
+          <TaskRow
+            key={task.id}
+            onChanged={onChanged}
+            session={session}
+            setPageError={setPageError}
+            task={task}
+          />
+        ))
+      ) : (
+        <div className="empty-state">
+          <ClipboardList size={28} />
+          <strong>No tasks yet</strong>
+          <span>Generate tasks from dataset assets to start annotation work.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TaskRow({
+  onChanged,
+  session,
+  setPageError,
+  task
+}: {
+  onChanged: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+  task: TaskSummary;
+}) {
+  const [saving, setSaving] = useState(false);
+  const action = getNextTaskAction(task);
+
+  async function handleAction() {
+    if (!session || !action) {
+      return;
+    }
+
+    setSaving(true);
+    setPageError(null);
+
+    try {
+      if (action.kind === "assign") {
+        await assignTaskToSelf(session, task.id);
+      } else if (action.kind === "start") {
+        await startTask(session, task.id);
+      } else {
+        await submitTask(session, task.id);
+      }
+
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to update task.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <article className="table-row task-head project-row">
+      <span>
+        <strong>{task.asset?.fileName ?? "No asset"}</strong>
+        <small>{task.dataset?.name ?? task.project.name}</small>
+      </span>
+      <span>
+        <span className="status-pill compact">{formatEnum(task.status)}</span>
+      </span>
+      <span>{task.assignedTo?.name ?? "Unassigned"}</span>
+      <span>
+        {action ? (
+          <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
+            {action.kind === "assign" ? <UserCheck size={16} /> : action.kind === "start" ? <Eye size={16} /> : <Send size={16} />}
+            {saving ? "Saving" : action.label}
+          </button>
+        ) : (
+          <span className="muted-copy">Waiting</span>
+        )}
+      </span>
+    </article>
+  );
+}
+
+function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start" | "submit"; label: string } | null {
+  if (task.status === "PENDING") {
+    return { kind: "assign", label: "Assign" };
+  }
+
+  if (task.status === "ASSIGNED") {
+    return { kind: "start", label: "Start" };
+  }
+
+  if (task.status === "IN_PROGRESS") {
+    return { kind: "submit", label: "Submit" };
+  }
+
+  return null;
+}
+
 function DatasetDetailPage() {
   const { datasetId = "" } = useParams();
   const { session } = useAuth();
@@ -914,6 +1136,13 @@ function DatasetDetailPage() {
     reload: reloadAssets,
     setError: setAssetsError
   } = useAssets(session, { datasetId });
+  const {
+    error: tasksError,
+    loading: tasksLoading,
+    reload: reloadTasks,
+    setError: setTasksError,
+    tasks
+  } = useTasks(session, { datasetId });
 
   return (
     <section className="page-stack">
@@ -925,7 +1154,9 @@ function DatasetDetailPage() {
           <h1>{dataset?.name ?? "Dataset detail"}</h1>
         </div>
       </div>
-      {(datasetError ?? assetsError) && <p className="form-error">{datasetError ?? assetsError}</p>}
+      {(datasetError ?? assetsError ?? tasksError) && (
+        <p className="form-error">{datasetError ?? assetsError ?? tasksError}</p>
+      )}
       {datasetLoading ? (
         <section className="panel">
           <p className="muted-copy">Loading dataset details.</p>
@@ -954,9 +1185,20 @@ function DatasetDetailPage() {
           </section>
           <AssetForm
             dataset={dataset}
-            onCreated={reloadAssets}
+            onCreated={async () => {
+              await reloadAssets();
+              await reloadTasks();
+            }}
             session={session}
             setPageError={setAssetsError}
+          />
+          <DatasetTasksPanel
+            dataset={dataset}
+            loading={tasksLoading}
+            onGenerated={reloadTasks}
+            session={session}
+            setPageError={setTasksError}
+            tasks={tasks}
           />
           <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
         </>
@@ -1585,6 +1827,49 @@ function useAssets(
     loading,
     reload,
     setError
+  };
+}
+
+function useTasks(
+  session: ReturnType<typeof useAuth>["session"],
+  input: { datasetId?: string; projectId?: string } = {}
+) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
+      setTasks([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setTasks(await listTasks(activeSession, input));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load tasks.");
+    } finally {
+      setLoading(false);
+    }
+  }, [input.datasetId, input.projectId, sessionKey, sessionRef]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    reload,
+    setError,
+    tasks
   };
 }
 

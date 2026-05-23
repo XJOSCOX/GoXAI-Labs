@@ -623,6 +623,26 @@ textarea:focus {
   gap: 12px;
 }
 
+.task-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.task-panel-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.task-panel-head h2 {
+  margin: 2px 0;
+}
+
+.task-panel-head span {
+  color: var(--muted);
+}
+
 .asset-toolbar {
   display: flex;
   align-items: end;
@@ -664,6 +684,10 @@ textarea:focus {
 }
 
 .table-row.assets-head {
+  grid-template-columns: minmax(0, 2fr) 1fr 1fr 1fr;
+}
+
+.table-row.task-head {
   grid-template-columns: minmax(0, 2fr) 1fr 1fr 1fr;
 }
 
@@ -790,7 +814,7 @@ textarea:focus {
   }
 
   .nav-list {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .ghost-button {
@@ -823,6 +847,7 @@ textarea:focus {
   .dataset-form,
   .asset-form,
   .table-row.assets-head,
+  .table-row.task-head,
   .table-row {
     grid-template-columns: 1fr;
   }
@@ -834,6 +859,7 @@ textarea:focus {
   .page-heading,
   .asset-toolbar,
   .asset-preview-head,
+  .task-panel-head,
   .topbar {
     align-items: flex-start;
     flex-direction: column;

@@ -181,6 +181,55 @@ export interface AssetAccessUrl {
   expiresInSeconds: number;
 }
 
+export interface TaskSummary {
+  id: string;
+  projectId: string;
+  datasetId: string | null;
+  assetId: string | null;
+  status: string;
+  priority: number;
+  assignedToId: string | null;
+  reviewerId: string | null;
+  metadata: Record<string, unknown> | null;
+  dueAt: string | null;
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+    organizationId: string;
+  };
+  dataset: {
+    id: string;
+    name: string;
+    version: number;
+  } | null;
+  asset: {
+    id: string;
+    fileName: string;
+    objectKey: string;
+    mimeType: string;
+    fileSize: string;
+  } | null;
+  assignedTo: {
+    id: string;
+    email: string;
+    name: string;
+  } | null;
+  reviewer: {
+    id: string;
+    email: string;
+    name: string;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GenerateTasksResult {
+  createdCount: number;
+  skippedCount: number;
+  tasks: TaskSummary[];
+}
+
 export interface ClientLogInput {
   entityId?: string;
   entityType?: string;
@@ -397,6 +446,52 @@ export async function getAssetAccessUrl(session: Session, assetId: string) {
   return (await response.json()) as AssetAccessUrl;
 }
 
+export async function listTasks(session: Session, input: { datasetId?: string; projectId?: string } = {}) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/tasks${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load tasks."));
+  }
+
+  return ((await response.json()) as { tasks: TaskSummary[] }).tasks;
+}
+
+export async function generateTasksFromDataset(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, "/api/tasks/generate-from-dataset", {
+    method: "POST",
+    body: JSON.stringify({ datasetId })
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to generate tasks."));
+  }
+
+  return (await response.json()) as GenerateTasksResult;
+}
+
+export async function assignTaskToSelf(session: Session, taskId: string) {
+  return updateTask(session, taskId, "assign-self");
+}
+
+export async function startTask(session: Session, taskId: string) {
+  return updateTask(session, taskId, "start");
+}
+
+export async function submitTask(session: Session, taskId: string) {
+  return updateTask(session, taskId, "submit");
+}
+
 export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["upload"]) {
   let response: Response;
 
@@ -439,6 +534,18 @@ function authenticatedFetch(session: Session, path: string, init: RequestInit = 
       ...init.headers
     }
   });
+}
+
+async function updateTask(session: Session, taskId: string, action: "assign-self" | "start" | "submit") {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/${action}`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update task."));
+  }
+
+  return ((await response.json()) as { task: TaskSummary }).task;
 }
 
 async function getApiError(response: Response, fallback: string) {

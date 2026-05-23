@@ -8,6 +8,7 @@ import { apiRequestLogger, logApiException } from "./logging.js";
 import { logsRouter } from "./logs.js";
 import { organizationsRouter } from "./organizations.js";
 import { projectsRouter } from "./projects.js";
+import { tasksRouter } from "./tasks.js";
 
 export const app = express();
 
@@ -98,6 +99,7 @@ app.use("/api/organizations", organizationsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/datasets", datasetsRouter);
 app.use("/api/assets", assetsRouter);
+app.use("/api/tasks", tasksRouter);
 app.use("/api/logs", logsRouter);
 
 app.use(
