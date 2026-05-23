@@ -516,86 +516,84 @@ export function ProjectDetailPage() {
 
   return (
     <section className="page-stack">
-      <div className="page-actions">
-        <Link className="secondary-button compact-button" to="/projects">
-          <ArrowLeft size={16} />
-          Back to projects
-        </Link>
-      </div>
-      {(projectError ?? datasetsError) && <p className="form-error">{projectError ?? datasetsError}</p>}
-      {projectLoading ? (
-        <section className="panel">
-          <p className="muted-copy">Loading project details.</p>
-        </section>
-      ) : project ? (
-        <div className="detail-layout">
-          <section className="content-column">
-            <section className="panel">
-              <div>
-                <p className="eyebrow">Project</p>
-                <h2>{project.name}</h2>
-              </div>
-              <dl className="detail-list">
-                <div>
-                  <dt>Organization</dt>
-                  <dd>{project.organization.name}</dd>
-                </div>
-                <div>
-                  <dt>Data type</dt>
-                  <dd>{formatEnum(project.dataType)}</dd>
-                </div>
-                <div>
-                  <dt>Status</dt>
-                  <dd>{formatEnum(project.status)}</dd>
-                </div>
-                <div>
-                  <dt>Privacy</dt>
-                  <dd>{formatEnum(project.accessMode)}</dd>
-                </div>
-                <div>
-                  <dt>Members</dt>
-                  <dd>
-                    {project.counts.members}
-                    {project.memberLimit ? ` / ${project.memberLimit}` : ""}
-                  </dd>
-                </div>
-                <div>
-                  <dt>External access</dt>
-                  <dd>{project.allowExternalMembers ? "Allowed" : "Organization only"}</dd>
-                </div>
-                <div>
-                  <dt>Join code</dt>
-                  <dd>{project.joinCodeEnabled ? project.joinCode ?? "Generating" : "Disabled"}</dd>
-                </div>
-              </dl>
-            </section>
-            <DatasetsTable
-              action={
-                <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
-                  <Database size={18} />
-                  New dataset
-                </button>
-              }
-              datasets={datasets}
-              loading={datasetsLoading}
-              projectScoped
-            />
-          </section>
-          <aside className="side-column">
-            <ProjectSettingsPanel
-              onChanged={reloadProject}
-              onDeleted={() => navigate("/projects")}
-              project={project}
-              session={session}
-              setPageError={setDatasetsError}
-            />
-          </aside>
+      <section className="panel project-detail-frame">
+        <div className="organization-detail-nav">
+          <Link className="secondary-button compact-button" to="/projects">
+            <ArrowLeft size={16} />
+            Back to projects
+          </Link>
         </div>
-      ) : !projectError ? (
-        <section className="panel">
+        {(projectError ?? datasetsError) && <p className="form-error">{projectError ?? datasetsError}</p>}
+        {projectLoading ? (
+          <p className="muted-copy">Loading project details.</p>
+        ) : project ? (
+          <div className="detail-layout project-detail-layout">
+            <section className="content-column">
+              <section className="panel">
+                <div>
+                  <p className="eyebrow">Project</p>
+                  <h2>{project.name}</h2>
+                </div>
+                <dl className="detail-list">
+                  <div>
+                    <dt>Organization</dt>
+                    <dd>{project.organization.name}</dd>
+                  </div>
+                  <div>
+                    <dt>Data type</dt>
+                    <dd>{formatEnum(project.dataType)}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{formatEnum(project.status)}</dd>
+                  </div>
+                  <div>
+                    <dt>Privacy</dt>
+                    <dd>{formatEnum(project.accessMode)}</dd>
+                  </div>
+                  <div>
+                    <dt>Members</dt>
+                    <dd>
+                      {project.counts.members}
+                      {project.memberLimit ? ` / ${project.memberLimit}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>External access</dt>
+                    <dd>{project.allowExternalMembers ? "Allowed" : "Organization only"}</dd>
+                  </div>
+                  <div>
+                    <dt>Join code</dt>
+                    <dd>{project.joinCodeEnabled ? project.joinCode ?? "Generating" : "Disabled"}</dd>
+                  </div>
+                </dl>
+              </section>
+              <DatasetsTable
+                action={
+                  <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
+                    <Database size={18} />
+                    New dataset
+                  </button>
+                }
+                datasets={datasets}
+                loading={datasetsLoading}
+                projectScoped
+              />
+            </section>
+            <aside className="side-column">
+              <ProjectSettingsPanel
+                onChanged={reloadProject}
+                onDeleted={() => navigate("/projects")}
+                project={project}
+                session={session}
+                setPageError={setDatasetsError}
+              />
+            </aside>
+          </div>
+        ) : !projectError ? (
           <p className="muted-copy">Project was not found.</p>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
       {project && showDatasetModal && (
         <DatasetCreateModal
           defaultProjectId={project.id}

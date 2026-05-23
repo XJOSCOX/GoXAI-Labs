@@ -1096,6 +1096,11 @@ textarea:focus {
   width: min(1440px, 100%);
 }
 
+.project-detail-frame {
+  gap: 18px;
+  width: min(1440px, 100%);
+}
+
 .project-directory-frame,
 .project-create-frame {
   gap: 18px;
@@ -1123,6 +1128,11 @@ textarea:focus {
 
 .organization-detail-layout {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+  width: 100%;
+}
+
+.project-detail-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
   width: 100%;
 }
 
