@@ -49,9 +49,13 @@ export function OrganizationSetupPage() {
     setJoining(true);
 
     try {
-      await joinOrganizationWithCode(session, code);
+      const result = await joinOrganizationWithCode(session, code);
       formElement.reset();
-      setJoinMessage("Organization joined. Your access is active.");
+      setJoinMessage(
+        result.requiresApproval
+          ? "Join request sent. An organization owner or admin needs to approve your access."
+          : "Organization joined. Your access is active."
+      );
       await reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to join organization.");
@@ -105,7 +109,13 @@ export function OrganizationSetupPage() {
                     <span>{formatEnum(organization.type)}</span>
                     <span>{formatEnum(organization.planTier)}</span>
                     <span>{formatEnum(organization.accessMode)}</span>
-                    <span>{organization.joinCodeEnabled ? "Join code on" : "Invite managed"}</span>
+                    <span>
+                      {organization.joinCodeEnabled
+                        ? organization.joinRequiresApproval
+                          ? "Code approval"
+                          : "Join code on"
+                        : "Invite managed"}
+                    </span>
                   </span>
                   <span className="org-card-stats">
                     <span>
@@ -476,6 +486,7 @@ function OrganizationManagementPanel({
         type: getFormValue(event, "type"),
         accessMode: getFormValue(event, "accessMode"),
         joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
+        joinRequiresApproval: new FormData(event.currentTarget).get("joinRequiresApproval") === "on",
         planTier: getFormValue(event, "planTier")
       });
       setMessage("Organization settings updated.");
@@ -586,7 +597,13 @@ function OrganizationManagementPanel({
             </div>
             <div>
               <dt>Join code</dt>
-              <dd>{organization.joinCodeEnabled ? organization.joinCode ?? "Generating" : "Disabled"}</dd>
+              <dd>
+                {organization.joinCodeEnabled
+                  ? `${organization.joinCode ?? "Generating"}${
+                      organization.joinRequiresApproval ? " (approval required)" : ""
+                    }`
+                  : "Disabled"}
+              </dd>
             </div>
             <div>
               <dt>Email</dt>
@@ -691,6 +708,14 @@ function OrganizationManagementPanel({
                 <label className="check-row">
                   <input name="joinCodeEnabled" type="checkbox" defaultChecked={organization.joinCodeEnabled} />
                   Enable join code
+                </label>
+                <label className="check-row">
+                  <input
+                    name="joinRequiresApproval"
+                    type="checkbox"
+                    defaultChecked={organization.joinRequiresApproval}
+                  />
+                  Require approval for join-code requests
                 </label>
                 <label className="wide">
                   Description
@@ -841,7 +866,7 @@ function MemberRow({
     setSaving(true);
 
     try {
-      await updateOrganizationMember(session, organizationId, member.id, role);
+      await updateOrganizationMember(session, organizationId, member.id, { role });
       await onChanged();
     } catch (reason) {
       setPageError(reason instanceof Error ? reason.message : "Unable to update member.");
@@ -873,6 +898,24 @@ function MemberRow({
     }
   }
 
+  async function approveMember() {
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      await updateOrganizationMember(session, organizationId, member.id, { role, status: "ACTIVE" });
+      await onChanged();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to approve member.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <article className="table-row member-head project-row">
       <span>
@@ -896,6 +939,11 @@ function MemberRow({
           <span className="status-pill compact">Current user</span>
         ) : (
           <>
+            {member.status === "INVITED" && (
+              <button className="secondary-button compact-button" type="button" onClick={approveMember} disabled={saving}>
+                Approve
+              </button>
+            )}
             <button className="secondary-button compact-button" type="button" onClick={saveRole} disabled={saving}>
               Save
             </button>

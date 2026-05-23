@@ -3,6 +3,7 @@ import {
   getPrismaClient,
   GlobalRole,
   MembershipRole,
+  MembershipStatus,
   type Membership,
   OrganizationAccessMode,
   OrganizationType,
@@ -143,6 +144,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       type: membership.organization.type,
       accessMode: membership.organization.accessMode,
       joinCodeEnabled: membership.organization.joinCodeEnabled,
+      joinRequiresApproval: membership.organization.joinRequiresApproval,
       planTier: membership.organization.planTier,
       role: membership.role,
       capabilities: getOrganizationCapabilities(membership),
@@ -311,6 +313,8 @@ router.post("/join-code", async (request: AuthenticatedRequest, response) => {
   }
 
   const workspace = organization.workspaces[0] ?? null;
+  const pendingApproval = organization.joinRequiresApproval;
+  const nextStatus = pendingApproval ? MembershipStatus.INVITED : MembershipStatus.ACTIVE;
   const membership = await prisma.$transaction(async (tx) => {
     const existing = await tx.membership.findFirst({
       where: {
@@ -326,9 +330,9 @@ router.post("/join-code", async (request: AuthenticatedRequest, response) => {
         },
         data: {
           role: existing.role === MembershipRole.OWNER ? MembershipRole.OWNER : MembershipRole.VIEWER,
-          status: "ACTIVE",
+          status: existing.role === MembershipRole.OWNER ? MembershipStatus.ACTIVE : nextStatus,
           workspaceId: existing.workspaceId ?? workspace?.id,
-          joinedAt: existing.joinedAt ?? new Date()
+          joinedAt: existing.role === MembershipRole.OWNER || !pendingApproval ? existing.joinedAt ?? new Date() : existing.joinedAt
         }
       });
     }
@@ -339,8 +343,8 @@ router.post("/join-code", async (request: AuthenticatedRequest, response) => {
         organizationId: organization.id,
         workspaceId: workspace?.id,
         role: MembershipRole.VIEWER,
-        status: "ACTIVE",
-        joinedAt: new Date()
+        status: nextStatus,
+        joinedAt: pendingApproval ? null : new Date()
       }
     });
 
@@ -349,7 +353,7 @@ router.post("/join-code", async (request: AuthenticatedRequest, response) => {
         organizationId: organization.id,
         workspaceId: workspace?.id,
         userId: user.id,
-        action: "organization.joined_with_code",
+        action: pendingApproval ? "organization.join_requested_with_code" : "organization.joined_with_code",
         entityType: "organization",
         entityId: organization.id,
         metadata: {
@@ -363,7 +367,9 @@ router.post("/join-code", async (request: AuthenticatedRequest, response) => {
 
   response.status(200).json({
     organization: serializeOrganization(organization),
-    membershipId: membership.id
+    membershipId: membership.id,
+    status: membership.status,
+    requiresApproval: pendingApproval && membership.status !== MembershipStatus.ACTIVE
   });
 });
 
@@ -599,7 +605,9 @@ router.post("/:organizationId/members", async (request: AuthenticatedRequest, re
     return;
   }
 
-  if (parsed.value.role === MembershipRole.OWNER && !canGrantOwnerRole(manager)) {
+  const memberRole = parsed.value.role ?? MembershipRole.VIEWER;
+
+  if (memberRole === MembershipRole.OWNER && !canGrantOwnerRole(manager)) {
     response.status(403).json({ error: "Only an owner can grant the owner role." });
     return;
   }
@@ -652,7 +660,7 @@ router.post("/:organizationId/members", async (request: AuthenticatedRequest, re
             id: existing.id
           },
           data: {
-            role: parsed.value.role,
+            role: memberRole,
             status: "ACTIVE",
             workspaceId: existing.workspaceId ?? workspace?.id,
             joinedAt: existing.joinedAt ?? new Date()
@@ -664,7 +672,7 @@ router.post("/:organizationId/members", async (request: AuthenticatedRequest, re
             userId: targetUser.id,
             organizationId,
             workspaceId: workspace?.id,
-            role: parsed.value.role,
+            role: memberRole,
             status: "ACTIVE",
             invitedById: user.id,
             joinedAt: new Date()
@@ -681,7 +689,7 @@ router.post("/:organizationId/members", async (request: AuthenticatedRequest, re
         entityId: saved.id,
         metadata: {
           email: parsed.value.email,
-          role: parsed.value.role
+          role: memberRole
         }
       }
     });
@@ -744,12 +752,15 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
     return;
   }
 
-  if ((membership.role === MembershipRole.OWNER || parsed.value.role === MembershipRole.OWNER) && !canGrantOwnerRole(manager)) {
+  const nextRole = parsed.value.role ?? membership.role;
+  const nextStatus = parsed.value.status ?? membership.status;
+
+  if ((membership.role === MembershipRole.OWNER || nextRole === MembershipRole.OWNER) && !canGrantOwnerRole(manager)) {
     response.status(403).json({ error: "Only an owner can grant or remove the owner role." });
     return;
   }
 
-  if (membership.role === MembershipRole.OWNER && parsed.value.role !== MembershipRole.OWNER) {
+  if (membership.role === MembershipRole.OWNER && nextRole !== MembershipRole.OWNER) {
     const ownerCount = await prisma.membership.count({
       where: {
         organizationId,
@@ -777,7 +788,7 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
     if (
       organization?.ownerId === membership.userId &&
       membership.role === MembershipRole.OWNER &&
-      parsed.value.role !== MembershipRole.OWNER
+      nextRole !== MembershipRole.OWNER
     ) {
       const replacementOwner = await tx.membership.findFirst({
         where: {
@@ -813,7 +824,11 @@ router.patch("/:organizationId/members/:membershipId", async (request: Authentic
         id: membershipId
       },
       data: {
-        role: parsed.value.role
+        role: nextRole,
+        status: nextStatus,
+        ...(membership.status !== MembershipStatus.ACTIVE && nextStatus === MembershipStatus.ACTIVE
+          ? { joinedAt: membership.joinedAt ?? new Date() }
+          : {})
       },
       include: membershipIncludes
     });
@@ -961,6 +976,7 @@ type UpdateOrganizationBody =
       type?: unknown;
       accessMode?: unknown;
       joinCodeEnabled?: unknown;
+      joinRequiresApproval?: unknown;
       planTier?: unknown;
       completeOnboarding?: unknown;
     }
@@ -970,6 +986,7 @@ type MemberBody =
   | {
       email?: unknown;
       role?: unknown;
+      status?: unknown;
     }
   | undefined;
 
@@ -1036,6 +1053,7 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
         type?: OrganizationType;
         accessMode?: OrganizationAccessMode;
         joinCodeEnabled?: boolean;
+        joinRequiresApproval?: boolean;
         planTier?: PlanTier;
         completeOnboarding?: boolean;
       };
@@ -1047,6 +1065,8 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
   const type = parseOptionalEnumValue(OrganizationType, body?.type);
   const accessMode = parseOptionalEnumValue(OrganizationAccessMode, body?.accessMode);
   const joinCodeEnabled = typeof body?.joinCodeEnabled === "boolean" ? body.joinCodeEnabled : undefined;
+  const joinRequiresApproval =
+    typeof body?.joinRequiresApproval === "boolean" ? body.joinRequiresApproval : undefined;
   const planTier = parseOptionalEnumValue(PlanTier, body?.planTier);
   const completeOnboarding = body?.completeOnboarding === true;
 
@@ -1083,6 +1103,7 @@ function parseUpdateOrganizationBody(body: UpdateOrganizationBody):
       ...(type ? { type } : {}),
       ...(accessMode ? { accessMode } : {}),
       ...(joinCodeEnabled !== undefined ? { joinCodeEnabled } : {}),
+      ...(joinRequiresApproval !== undefined ? { joinRequiresApproval } : {}),
       ...(planTier ? { planTier } : {}),
       ...(completeOnboarding ? { completeOnboarding } : {})
     }
@@ -1094,26 +1115,37 @@ function parseMemberBody(body: MemberBody, requireEmail = true):
       ok: true;
       value: {
         email?: string;
-        role: MembershipRole;
+        role?: MembershipRole;
+        status?: MembershipStatus;
       };
     }
   | { ok: false; error: string } {
   const email = normalizeEmail(body?.email);
   const role = parseOptionalEnumValue(MembershipRole, body?.role);
+  const status = parseOptionalEnumValue(MembershipStatus, body?.status);
 
   if (requireEmail && !email) {
     return { ok: false, error: "Member email is required." };
   }
 
-  if (!role) {
+  if (requireEmail && !role) {
     return { ok: false, error: "Choose a valid member role." };
+  }
+
+  if (body?.role && !role) {
+    return { ok: false, error: "Choose a valid member role." };
+  }
+
+  if (body?.status && !status) {
+    return { ok: false, error: "Choose a valid member status." };
   }
 
   return {
     ok: true,
     value: {
       email,
-      role
+      ...(role ? { role } : {}),
+      ...(status ? { status } : {})
     }
   };
 }
@@ -1144,6 +1176,7 @@ function serializeOrganization(organization: Organization) {
     accessMode: organization.accessMode,
     joinCode: organization.joinCode,
     joinCodeEnabled: organization.joinCodeEnabled,
+    joinRequiresApproval: organization.joinRequiresApproval,
     planTier: organization.planTier,
     ownerId: organization.ownerId,
     createdAt: organization.createdAt,
@@ -1181,13 +1214,15 @@ const membershipIncludes = {
   }
 } as const;
 
+const visibleMembershipStatuses: MembershipStatus[] = [MembershipStatus.ACTIVE, MembershipStatus.INVITED];
+
 const organizationDetailIncludes = {
   _count: {
     select: {
       datasets: true,
       memberships: {
         where: {
-          status: "ACTIVE"
+          status: MembershipStatus.ACTIVE
         }
       },
       projects: true
@@ -1196,7 +1231,9 @@ const organizationDetailIncludes = {
   workspaces: true,
   memberships: {
     where: {
-      status: "ACTIVE"
+      status: {
+        in: visibleMembershipStatuses
+      }
     },
     include: membershipIncludes,
     orderBy: {

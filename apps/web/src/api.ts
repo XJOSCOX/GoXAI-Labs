@@ -92,6 +92,7 @@ export interface OrganizationSummary {
   accessMode: string;
   joinCode?: string | null;
   joinCodeEnabled: boolean;
+  joinRequiresApproval: boolean;
   planTier: string;
   role: string;
   capabilities: OrganizationCapabilities;
@@ -170,6 +171,7 @@ export interface UpdateOrganizationInput {
   type?: string;
   accessMode?: string;
   joinCodeEnabled?: boolean;
+  joinRequiresApproval?: boolean;
   planTier?: string;
   completeOnboarding?: boolean;
 }
@@ -177,6 +179,11 @@ export interface UpdateOrganizationInput {
 export interface AddMemberInput {
   email: string;
   role: string;
+}
+
+export interface UpdateMemberInput {
+  role?: string;
+  status?: string;
 }
 
 export interface ProjectSummary {
@@ -636,6 +643,12 @@ export async function joinOrganizationWithCode(session: Session, code: string) {
   if (!response.ok) {
     throw new Error(await getApiError(response, "Unable to join organization."));
   }
+
+  return (await response.json()) as {
+    membershipId: string;
+    status: string;
+    requiresApproval: boolean;
+  };
 }
 
 export async function updateOrganization(session: Session, organizationId: string, input: UpdateOrganizationInput) {
@@ -678,14 +691,14 @@ export async function updateOrganizationMember(
   session: Session,
   organizationId: string,
   membershipId: string,
-  role: string
+  input: UpdateMemberInput
 ) {
   const response = await authenticatedFetch(
     session,
     `/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(membershipId)}`,
     {
       method: "PATCH",
-      body: JSON.stringify({ role })
+      body: JSON.stringify(removeEmptyValues(input))
     }
   );
 
