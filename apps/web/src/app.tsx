@@ -381,7 +381,7 @@ function AppShell() {
   const ownsOrganization = organizations.some((organization) => organization.role === "OWNER");
   const accountKind = organizations.length === 0 ? "Simple user" : ownsOrganization ? "Organization owner" : "Organization user";
   const onboardingOrganization = organizations.find(
-    (organization) => organization.role === "OWNER" && !organization.onboardingComplete
+    (organization) => organization.role === "OWNER" && organization.onboardingComplete === false
   );
 
   if (organizationsLoading) {
@@ -479,7 +479,7 @@ function OnboardingPage() {
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
-  const organization = organizations.find((item) => item.role === "OWNER" && !item.onboardingComplete);
+  const organization = organizations.find((item) => item.role === "OWNER" && item.onboardingComplete === false);
 
   if (loading) {
     return (
