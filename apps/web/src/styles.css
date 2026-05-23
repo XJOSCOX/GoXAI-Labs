@@ -2024,6 +2024,11 @@ textarea:focus {
   width: 100%;
 }
 
+.task-folder-panel .section-actions {
+  justify-content: space-between;
+  width: 100%;
+}
+
 .task-folder-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
