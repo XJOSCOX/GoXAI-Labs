@@ -185,6 +185,9 @@ export interface ProjectSummary {
   joinCode: string | null;
   joinCodeEnabled: boolean;
   instructions: string | null;
+  currentUserRole: string | null;
+  canManage: boolean;
+  canCreateDataset: boolean;
   counts: {
     members: number;
     datasets: number;

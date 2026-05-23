@@ -16,30 +16,33 @@ export function DatasetsPage() {
     setError: setDatasetsError
   } = useDatasets(session);
   const [showDatasetModal, setShowDatasetModal] = useState(false);
+  const datasetCreateProjects = projects.filter((project) => project.canCreateDataset);
 
   return (
     <section className="page-stack">
       {(projectsError ?? datasetsError) && <p className="form-error">{projectsError ?? datasetsError}</p>}
-      {showDatasetModal && (
+      {showDatasetModal && datasetCreateProjects.length > 0 && (
         <DatasetCreateModal
           onClose={() => setShowDatasetModal(false)}
           onCreated={reloadDatasets}
-          projects={projects}
+          projects={datasetCreateProjects}
           session={session}
           setPageError={setDatasetsError}
         />
       )}
       <DatasetsTable
         action={
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => setShowDatasetModal(true)}
-            disabled={projects.length === 0 || projectsLoading}
-          >
-            <Database size={18} />
-            New dataset
-          </button>
+          datasetCreateProjects.length > 0 ? (
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setShowDatasetModal(true)}
+              disabled={projectsLoading}
+            >
+              <Database size={18} />
+              New dataset
+            </button>
+          ) : null
         }
         datasets={datasets}
         loading={datasetsLoading || projectsLoading}

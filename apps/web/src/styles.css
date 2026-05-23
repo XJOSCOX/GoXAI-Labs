@@ -1181,6 +1181,10 @@ textarea:focus {
   width: 100%;
 }
 
+.detail-layout.single-pane {
+  grid-template-columns: 1fr;
+}
+
 .side-column {
   position: sticky;
   top: 82px;

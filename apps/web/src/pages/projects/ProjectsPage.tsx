@@ -516,6 +516,8 @@ export function ProjectDetailPage() {
     reload: reloadDatasets,
     setError: setDatasetsError
   } = useDatasets(session, projectId);
+  const canManageProject = project?.canManage ?? false;
+  const canCreateDataset = project?.canCreateDataset ?? false;
 
   return (
     <section className="page-stack">
@@ -530,7 +532,7 @@ export function ProjectDetailPage() {
         {projectLoading ? (
           <p className="muted-copy">Loading project details.</p>
         ) : project ? (
-          <div className="detail-layout project-detail-layout">
+          <div className={`detail-layout project-detail-layout${canManageProject ? "" : " single-pane"}`}>
             <section className="content-column">
               <section className="panel">
                 <div>
@@ -573,31 +575,35 @@ export function ProjectDetailPage() {
               </section>
               <DatasetsTable
                 action={
-                  <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
-                    <Database size={18} />
-                    New dataset
-                  </button>
+                  canCreateDataset ? (
+                    <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
+                      <Database size={18} />
+                      New dataset
+                    </button>
+                  ) : null
                 }
                 datasets={datasets}
                 loading={datasetsLoading}
                 projectScoped
               />
             </section>
-            <aside className="side-column">
-              <ProjectSettingsPanel
-                onChanged={reloadProject}
-                onDeleted={() => navigate("/projects")}
-                project={project}
-                session={session}
-                setPageError={setDatasetsError}
-              />
-            </aside>
+            {canManageProject ? (
+              <aside className="side-column">
+                <ProjectSettingsPanel
+                  onChanged={reloadProject}
+                  onDeleted={() => navigate("/projects")}
+                  project={project}
+                  session={session}
+                  setPageError={setDatasetsError}
+                />
+              </aside>
+            ) : null}
           </div>
         ) : !projectError ? (
           <p className="muted-copy">Project was not found.</p>
         ) : null}
       </section>
-      {project && showDatasetModal && (
+      {project && canCreateDataset && showDatasetModal && (
         <DatasetCreateModal
           defaultProjectId={project.id}
           onClose={() => setShowDatasetModal(false)}

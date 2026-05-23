@@ -74,7 +74,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(200).json({
-    projects: projects.map(serializeProject)
+    projects: projects.map((project) => serializeProject(project, user.id))
   });
 });
 
@@ -152,7 +152,7 @@ router.post("/join-code", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(200).json({
-    project: serializeProject(joinedProject)
+    project: serializeProject(joinedProject, user.id)
   });
 });
 
@@ -208,7 +208,7 @@ router.get("/:projectId", async (request: AuthenticatedRequest, response) => {
   }
 
   response.status(200).json({
-    project: serializeProject(project)
+    project: serializeProject(project, user.id)
   });
 });
 
@@ -325,7 +325,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(201).json({
-    project: serializeProject(project)
+    project: serializeProject(project, user.id)
   });
 });
 
@@ -412,7 +412,7 @@ router.patch("/:projectId", async (request: AuthenticatedRequest, response) => {
   });
 
   response.status(200).json({
-    project: serializeProject(updatedProject)
+    project: serializeProject(updatedProject, user.id)
   });
 });
 
@@ -536,7 +536,7 @@ router.post("/:projectId/members", async (request: AuthenticatedRequest, respons
   });
 
   response.status(existing ? 200 : 201).json({
-    project: serializeProject(savedProject)
+    project: serializeProject(savedProject, user.id)
   });
 });
 
@@ -596,7 +596,7 @@ router.post("/:projectId/archive", async (request: AuthenticatedRequest, respons
   });
 
   response.status(200).json({
-    project: serializeProject(archivedProject)
+    project: serializeProject(archivedProject, user.id)
   });
 });
 
@@ -656,7 +656,7 @@ router.post("/:projectId/restore", async (request: AuthenticatedRequest, respons
   });
 
   response.status(200).json({
-    project: serializeProject(restoredProject)
+    project: serializeProject(restoredProject, user.id)
   });
 });
 
@@ -1017,6 +1017,13 @@ const projectIncludes = {
       slug: true
     }
   },
+  projectMemberships: {
+    select: {
+      userId: true,
+      role: true,
+      status: true
+    }
+  },
   _count: {
     select: {
       projectMemberships: true,
@@ -1037,6 +1044,11 @@ type ProjectWithRelations = Project & {
     name: string;
     slug: string;
   } | null;
+  projectMemberships: {
+    userId: string;
+    role: MembershipRole;
+    status: string;
+  }[];
   _count: {
     projectMemberships: number;
     datasets: number;
@@ -1044,7 +1056,14 @@ type ProjectWithRelations = Project & {
   };
 };
 
-function serializeProject(project: ProjectWithRelations) {
+function serializeProject(project: ProjectWithRelations, currentUserId?: string) {
+  const currentMembership = currentUserId
+    ? project.projectMemberships.find((membership) => membership.userId === currentUserId && membership.status === "ACTIVE")
+    : undefined;
+  const canManage = Boolean(
+    currentUserId && (project.createdById === currentUserId || (currentMembership && canManageProjectScope(currentMembership)))
+  );
+
   return {
     id: project.id,
     organizationId: project.organizationId,
@@ -1061,6 +1080,9 @@ function serializeProject(project: ProjectWithRelations) {
     joinCode: project.joinCode,
     joinCodeEnabled: project.joinCodeEnabled,
     instructions: project.instructions,
+    currentUserRole: currentMembership?.role ?? null,
+    canManage,
+    canCreateDataset: canManage,
     counts: {
       members: project._count.projectMemberships,
       datasets: project._count.datasets,
