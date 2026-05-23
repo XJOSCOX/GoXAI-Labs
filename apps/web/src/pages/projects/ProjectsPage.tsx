@@ -1,9 +1,9 @@
 import { type FormEvent, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Database, FolderKanban, Save } from "lucide-react";
+import { ArrowLeft, Database, FolderKanban, Save } from "lucide-react";
 import { createProject, archiveProject, updateProject, type ProjectSummary } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
-import { projectStatuses } from "../../constants/options";
+import { projectAccessModes, projectStatuses } from "../../constants/options";
 import { useDatasets, useFormDraft, useOrganizations, useProject, useProjects } from "../../hooks/useResources";
 import { DatasetCreateModal } from "../datasets/DatasetCreateModal";
 import { DatasetsTable } from "../datasets/DatasetsTable";
@@ -19,11 +19,13 @@ export function ProjectsPage() {
     reload: reloadProjects,
     setError: setProjectsError
   } = useProjects(session);
-  const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const projectDraft = useFormDraft("goxai-draft-project");
-  const defaultOrganization = organizations[0];
+  const creatableOrganizations = organizations.filter((organization) =>
+    ["OWNER", "ADMIN", "MANAGER"].includes(organization.role)
+  );
+  const defaultOrganization = creatableOrganizations[0];
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -53,13 +55,16 @@ export function ProjectsPage() {
         name: getFormValue(event, "name"),
         description: getFormValue(event, "description"),
         dataType: getFormValue(event, "dataType"),
+        accessMode: getFormValue(event, "accessMode"),
+        memberLimit: parseOptionalInteger(getFormValue(event, "memberLimit")),
+        allowExternalMembers: new FormData(event.currentTarget).get("allowExternalMembers") === "on",
+        joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
         instructions: getFormValue(event, "instructions")
       });
 
       form.reset();
       projectDraft.clearDraft();
       setSavedMessage(`${project.name} was created as a draft.`);
-      setShowForm(false);
       await reloadProjects();
     } catch (reason) {
       setProjectsError(reason instanceof Error ? reason.message : "Unable to create project.");
@@ -74,17 +79,56 @@ export function ProjectsPage() {
         <p className="form-error">{organizationError ?? projectsError}</p>
       )}
       {savedMessage && <p className="form-success">{savedMessage}</p>}
-      {showForm && (
+      <section className="project-workspace-layout">
+        <section className="table-panel">
+          <div className="table-toolbar">
+            <div>
+              <p className="eyebrow">Projects</p>
+              <h2>Project records</h2>
+              <p className="muted-copy">Your accessible records plus projects public to signed-in users.</p>
+            </div>
+          </div>
+          <div className="table-row project-head table-head">
+            <span>Name</span>
+            <span>Access</span>
+            <span>Status</span>
+            <span>Members</span>
+            <span>Updated</span>
+          </div>
+          {projectsLoading || organizationsLoading ? (
+            <div className="empty-state">
+              <FolderKanban size={28} />
+              <strong>Loading projects</strong>
+              <span>Checking your organization access and project records.</span>
+            </div>
+          ) : projects.length > 0 ? (
+            projects.map((project) => <ProjectRow key={project.id} project={project} />)
+          ) : (
+            <div className="empty-state">
+              <FolderKanban size={28} />
+              <strong>No projects yet</strong>
+              <span>
+                {creatableOrganizations.length > 0
+                  ? "Create the first draft project to prepare dataset ingestion."
+                  : "You can view signed-in public projects, but need owner, admin, or manager access to create one."}
+              </span>
+            </div>
+          )}
+        </section>
         <form
-          className="panel project-form"
+          className="panel project-form compact-project-form"
           onChange={projectDraft.saveDraft}
           onSubmit={handleSubmit}
           ref={projectDraft.formRef}
         >
+          <div className="wide">
+            <p className="eyebrow">Create</p>
+            <h2>New project</h2>
+          </div>
           <label>
             Organization
-            <select name="organizationId" defaultValue={defaultOrganization?.id ?? ""} required>
-              {organizations.map((organization) => (
+            <select name="organizationId" defaultValue={defaultOrganization?.id ?? ""} required disabled={creatableOrganizations.length === 0}>
+              {creatableOrganizations.map((organization) => (
                 <option key={organization.id} value={organization.id}>
                   {organization.name}
                 </option>
@@ -93,7 +137,7 @@ export function ProjectsPage() {
           </label>
           <label>
             Data type
-            <select name="dataType" defaultValue="IMAGE">
+            <select name="dataType" defaultValue="IMAGE" disabled={creatableOrganizations.length === 0}>
               <option value="IMAGE">Image</option>
               <option value="VIDEO">Video</option>
               <option value="AUDIO">Audio</option>
@@ -105,63 +149,48 @@ export function ProjectsPage() {
           </label>
           <label className="wide">
             Project name
-            <input name="name" placeholder="Vehicle damage labeling" required />
+            <input name="name" placeholder="Vehicle damage labeling" required disabled={creatableOrganizations.length === 0} />
+          </label>
+          <label>
+            Privacy
+            <select name="accessMode" defaultValue="ORGANIZATION" disabled={creatableOrganizations.length === 0}>
+              {projectAccessModes.map((mode) => (
+                <option key={mode} value={mode}>
+                  {formatEnum(mode)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Member limit
+            <input name="memberLimit" min={1} placeholder="No limit" type="number" disabled={creatableOrganizations.length === 0} />
+          </label>
+          <label className="check-row wide">
+            <input name="allowExternalMembers" type="checkbox" disabled={creatableOrganizations.length === 0} />
+            Allow members outside the organization
+          </label>
+          <label className="check-row wide">
+            <input name="joinCodeEnabled" type="checkbox" disabled={creatableOrganizations.length === 0} />
+            Enable join code
           </label>
           <label className="wide">
             Description
-            <textarea name="description" placeholder="Short internal summary" rows={3} />
+            <textarea name="description" placeholder="Short internal summary" rows={3} disabled={creatableOrganizations.length === 0} />
           </label>
           <label className="wide">
             Instructions
-            <textarea name="instructions" placeholder="Labeling rules, review expectations, or QA notes" rows={4} />
+            <textarea
+              name="instructions"
+              placeholder="Labeling rules, review expectations, or QA notes"
+              rows={4}
+              disabled={creatableOrganizations.length === 0}
+            />
           </label>
-          <button className="primary-button wide" type="submit" disabled={saving}>
+          <button className="primary-button wide" type="submit" disabled={saving || creatableOrganizations.length === 0}>
             <FolderKanban size={18} />
             {saving ? "Creating" : "Create draft project"}
           </button>
         </form>
-      )}
-      <section className="table-panel">
-        <div className="table-toolbar">
-          <div>
-            <p className="eyebrow">Projects</p>
-            <h2>Project records</h2>
-          </div>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => setShowForm((value) => !value)}
-            disabled={organizations.length === 0 || organizationsLoading}
-          >
-            <FolderKanban size={18} />
-            {showForm ? "Close" : "New project"}
-          </button>
-        </div>
-        <div className="table-row table-head">
-          <span>Name</span>
-          <span>Data type</span>
-          <span>Status</span>
-          <span>Updated</span>
-        </div>
-        {projectsLoading || organizationsLoading ? (
-          <div className="empty-state">
-            <FolderKanban size={28} />
-            <strong>Loading projects</strong>
-            <span>Checking your organization access and project records.</span>
-          </div>
-        ) : projects.length > 0 ? (
-          projects.map((project) => <ProjectRow key={project.id} project={project} />)
-        ) : (
-          <div className="empty-state">
-            <FolderKanban size={28} />
-            <strong>No projects yet</strong>
-            <span>
-              {organizations.length > 0
-                ? "Create the first draft project to prepare dataset ingestion."
-                : "Create an organization first, then projects and datasets come next."}
-            </span>
-          </div>
-        )}
       </section>
     </section>
   );
@@ -169,16 +198,23 @@ export function ProjectsPage() {
 
 function ProjectRow({ project }: { project: ProjectSummary }) {
   return (
-    <article className="table-row project-row">
+    <article className="table-row project-head project-row">
       <span>
         <Link className="table-link" to={`/projects/${project.id}`}>
           {project.name}
         </Link>
         <small>{project.organization.name}</small>
       </span>
-      <span>{formatEnum(project.dataType)}</span>
+      <span>
+        <span className="status-pill compact">{formatEnum(project.accessMode)}</span>
+        <small>{formatEnum(project.dataType)}</small>
+      </span>
       <span>
         <span className="status-pill compact">{formatEnum(project.status)}</span>
+      </span>
+      <span>
+        {project.counts.members}
+        {project.memberLimit ? ` / ${project.memberLimit}` : ""}
       </span>
       <span>{formatDate(project.updatedAt)}</span>
     </article>
@@ -216,6 +252,10 @@ function ProjectSettingsPanel({
         name: getFormValue(event, "name"),
         description: getFormValue(event, "description"),
         status: getFormValue(event, "status"),
+        accessMode: getFormValue(event, "accessMode"),
+        memberLimit: parseNullableInteger(getFormValue(event, "memberLimit")),
+        allowExternalMembers: new FormData(event.currentTarget).get("allowExternalMembers") === "on",
+        joinCodeEnabled: new FormData(event.currentTarget).get("joinCodeEnabled") === "on",
         instructions: getFormValue(event, "instructions")
       });
       setMessage("Project updated.");
@@ -269,6 +309,32 @@ function ProjectSettingsPanel({
           ))}
         </select>
       </label>
+      <label>
+        Privacy
+        <select name="accessMode" defaultValue={project.accessMode}>
+          {projectAccessModes.map((mode) => (
+            <option key={mode} value={mode}>
+              {formatEnum(mode)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Member limit
+        <input name="memberLimit" defaultValue={project.memberLimit ?? ""} min={1} placeholder="No limit" type="number" />
+      </label>
+      <label className="check-row">
+        <input name="allowExternalMembers" type="checkbox" defaultChecked={project.allowExternalMembers} />
+        Allow external members
+      </label>
+      <label className="check-row">
+        <input name="joinCodeEnabled" type="checkbox" defaultChecked={project.joinCodeEnabled} />
+        Enable join code
+      </label>
+      <div className="wide description-block">
+        <span>Join code</span>
+        <p>{project.joinCodeEnabled ? project.joinCode ?? "Will generate on save" : "Disabled"}</p>
+      </div>
       <label className="wide">
         Description
         <textarea name="description" defaultValue={project.description ?? ""} rows={3} />
@@ -307,8 +373,9 @@ export function ProjectDetailPage() {
   return (
     <section className="page-stack">
       <div className="page-actions">
-        <Link className="back-link" to="/projects">
-          Projects
+        <Link className="secondary-button compact-button" to="/projects">
+          <ArrowLeft size={16} />
+          Back to projects
         </Link>
       </div>
       {(projectError ?? datasetsError) && <p className="form-error">{projectError ?? datasetsError}</p>}
@@ -336,6 +403,25 @@ export function ProjectDetailPage() {
                 <div>
                   <dt>Status</dt>
                   <dd>{formatEnum(project.status)}</dd>
+                </div>
+                <div>
+                  <dt>Privacy</dt>
+                  <dd>{formatEnum(project.accessMode)}</dd>
+                </div>
+                <div>
+                  <dt>Members</dt>
+                  <dd>
+                    {project.counts.members}
+                    {project.memberLimit ? ` / ${project.memberLimit}` : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt>External access</dt>
+                  <dd>{project.allowExternalMembers ? "Allowed" : "Organization only"}</dd>
+                </div>
+                <div>
+                  <dt>Join code</dt>
+                  <dd>{project.joinCodeEnabled ? project.joinCode ?? "Generating" : "Disabled"}</dd>
                 </div>
               </dl>
             </section>
@@ -377,4 +463,12 @@ export function ProjectDetailPage() {
       )}
     </section>
   );
+}
+
+function parseOptionalInteger(value: string) {
+  return value ? Number(value) : undefined;
+}
+
+function parseNullableInteger(value: string) {
+  return value ? Number(value) : null;
 }

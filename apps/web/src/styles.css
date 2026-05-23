@@ -1123,6 +1123,19 @@ textarea:focus {
   width: min(860px, 100%);
 }
 
+.project-workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  align-items: start;
+  gap: 16px;
+  width: min(1440px, 100%);
+}
+
+.compact-project-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
 .dataset-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   width: min(760px, 100%);
@@ -1715,6 +1728,10 @@ textarea:focus {
   grid-template-columns: minmax(0, 2fr) 1fr 1fr 1.2fr;
 }
 
+.table-row.project-head {
+  grid-template-columns: minmax(0, 2fr) 1.1fr 0.9fr 0.8fr 1fr;
+}
+
 .table-head {
   background: var(--surface-soft);
   color: var(--muted);
@@ -1731,6 +1748,12 @@ textarea:focus {
 .project-row > span:first-child {
   display: grid;
   gap: 3px;
+}
+
+.project-row > span:nth-child(2) {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
 }
 
 .table-row.assets-head > span:nth-child(2) {
@@ -1871,7 +1894,8 @@ textarea:focus {
   }
 
   .detail-layout,
-  .organization-layout {
+  .organization-layout,
+  .project-workspace-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1917,6 +1941,7 @@ textarea:focus {
   .role-grid,
   .table-row.assets-head,
   .table-row.member-head,
+  .table-row.project-head,
   .table-row.task-head,
   .table-row {
     grid-template-columns: 1fr;

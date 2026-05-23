@@ -127,7 +127,17 @@ export interface ProjectSummary {
   description: string | null;
   dataType: string;
   status: string;
+  accessMode: string;
+  memberLimit: number | null;
+  allowExternalMembers: boolean;
+  joinCode: string | null;
+  joinCodeEnabled: boolean;
   instructions: string | null;
+  counts: {
+    members: number;
+    datasets: number;
+    tasks: number;
+  };
   organization: {
     id: string;
     name: string;
@@ -148,6 +158,10 @@ export interface CreateProjectInput {
   name: string;
   description?: string;
   dataType: string;
+  accessMode?: string;
+  memberLimit?: number;
+  allowExternalMembers?: boolean;
+  joinCodeEnabled?: boolean;
   instructions?: string;
 }
 
@@ -155,6 +169,10 @@ export interface UpdateProjectInput {
   name?: string;
   description?: string;
   status?: string;
+  accessMode?: string;
+  memberLimit?: number | null;
+  allowExternalMembers?: boolean;
+  joinCodeEnabled?: boolean;
   instructions?: string;
 }
 

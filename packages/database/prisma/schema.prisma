@@ -70,6 +70,13 @@ enum ProjectStatus {
   ARCHIVED
 }
 
+enum ProjectAccessMode {
+  ORGANIZATION
+  INVITE_ONLY
+  PUBLIC
+  PRIVATE
+}
+
 enum DataType {
   IMAGE
   VIDEO
@@ -283,6 +290,8 @@ model User {
 
   ownedOrganizations Organization[]    @relation("OrganizationOwner")
   memberships         Membership[]
+  projectMemberships  ProjectMembership[] @relation("ProjectMemberUser")
+  invitedProjectMemberships ProjectMembership[] @relation("ProjectMemberInviter")
   createdProjects     Project[]         @relation("ProjectCreator")
   createdDatasets     Dataset[]         @relation("DatasetCreator")
   createdVersions      DatasetVersion[] @relation("DatasetVersionCreator")
@@ -424,6 +433,11 @@ model Project {
   description     String?
   dataType        DataType      @map("data_type")
   status          ProjectStatus @default(DRAFT)
+  accessMode      ProjectAccessMode @default(ORGANIZATION) @map("access_mode")
+  memberLimit     Int?          @map("member_limit")
+  allowExternalMembers Boolean  @default(false) @map("allow_external_members")
+  joinCode        String?       @unique @map("join_code")
+  joinCodeEnabled Boolean       @default(false) @map("join_code_enabled")
   labelingConfig  Json?         @map("labeling_config")
   instructions    String?
   createdById     String        @map("created_by_id")
@@ -441,6 +455,7 @@ model Project {
   exports      ExportJob[]
   jobPosts     JobPost[]
   auditLogs    AuditLog[]
+  projectMemberships ProjectMembership[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -450,8 +465,34 @@ model Project {
   @@index([createdById])
   @@index([status])
   @@index([dataType])
+  @@index([accessMode])
+  @@index([joinCode])
   @@unique([organizationId, slug])
   @@map("projects")
+}
+
+model ProjectMembership {
+  id          String           @id @default(cuid())
+  projectId   String           @map("project_id")
+  userId      String           @map("user_id")
+  role        MembershipRole   @default(ANNOTATOR)
+  status      MembershipStatus @default(ACTIVE)
+  invitedById String?          @map("invited_by_id")
+  joinedAt    DateTime?        @map("joined_at") @db.Timestamptz(6)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User    @relation("ProjectMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy User?   @relation("ProjectMemberInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([role])
+  @@index([status])
+  @@unique([projectId, userId])
+  @@map("project_memberships")
 }
 
 model Dataset {

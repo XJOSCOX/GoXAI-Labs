@@ -40,4 +40,5 @@ export const rolePrivileges = [
 ];
 
 export const projectStatuses = ["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"];
+export const projectAccessModes = ["ORGANIZATION", "INVITE_ONLY", "PUBLIC", "PRIVATE"];
 export const datasetStatuses = ["DRAFT", "IMPORTING", "READY", "PROCESSING", "ARCHIVED", "FAILED"];
