@@ -272,11 +272,10 @@ function RegisterPage() {
 }
 
 function AppShell() {
-  const { dbUser, logout, session } = useAuth();
-  const { organizations } = useOrganizations(session);
+  const { dbUser, logout } = useAuth();
   const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email || "Signed in user";
   const email = dbUser?.email ?? "No email";
-  const role = organizations[0]?.role ?? dbUser?.globalRole ?? "USER";
+  const role = dbUser?.globalRole ?? "USER";
 
   return (
     <main className="app-shell">
