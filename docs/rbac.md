@@ -19,10 +19,12 @@ GoXAi Lab uses organization membership roles for app-level authorization.
 - Owners and admins can edit organization settings.
 - Owners and admins can add, update, and remove non-owner members.
 - Only owners can grant Owner, remove Owner, or delete an empty organization.
-- Owners, admins, and managers can create/edit/archive projects and datasets.
+- Organization owners can create projects under their organization.
+- Project owners and admins can edit, archive, restore, and delete projects when deletion requirements are met.
+- Project owners and admins can create, edit, archive, restore, and delete datasets.
 - Owners, admins, and managers can upload/register R2 assets.
 - Owners, admins, and managers can generate tasks from datasets.
 - Owners, admins, managers, reviewers, and annotators can assign/start/submit tasks.
 - Viewers cannot mutate records.
 
-Hard delete remains intentionally narrow. Projects and datasets are archived, while organizations can only be deleted when empty.
+Hard delete remains intentionally narrow. Dataset deletion removes the dataset, registered dataset assets, and dataset tasks. Project deletion is blocked until all datasets and registered project files are gone. Organizations can only be deleted when empty.

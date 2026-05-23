@@ -10,20 +10,21 @@ export const roleCapabilities = {
     "Manage organization settings and billing plan",
     "Add, update, and remove members",
     "Grant or remove owner role",
-    "Create, edit, and archive projects and datasets",
+    "Create organization projects",
+    "Manage owned project settings, datasets, assets, and tasks",
     "Upload/register assets",
     "Generate and work tasks"
   ],
   ADMIN: [
     "Manage organization settings",
     "Add, update, and remove non-owner members",
-    "Create, edit, and archive projects and datasets",
+    "Manage assigned project settings, datasets, assets, and tasks",
     "Upload/register assets",
     "Generate and work tasks"
   ],
   MANAGER: [
-    "Create, edit, and archive projects and datasets",
-    "Upload/register assets",
+    "Manage assigned project operations",
+    "Upload/register assets when granted project access",
     "Generate tasks",
     "Assign and work tasks"
   ],
