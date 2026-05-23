@@ -25,6 +25,8 @@ import { formatAssetKind, formatBytes, formatDate, formatEnum, getUrlHost } from
 import { buildUploadObjectKey, getFileKey, mergeFiles, toSafeObjectKeyPart } from "../../utils/upload";
 import { TasksTable } from "../tasks/TasksPage";
 
+const assetPageSize = 12;
+
 function DatasetTasksPanel({
   dataset,
   loading,
@@ -293,6 +295,10 @@ export function DatasetDetailPage() {
   const navigate = useNavigate();
   const { session } = useAuth();
   const [showEditModal, setShowEditModal] = useState(false);
+  const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
+  const [previewAccessUrl, setPreviewAccessUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
   const {
     assets,
@@ -308,6 +314,45 @@ export function DatasetDetailPage() {
     setError: setTasksError,
     tasks
   } = useTasks(session, { datasetId });
+
+  async function handleInspectAsset(asset: AssetSummary) {
+    setPreviewAsset(asset);
+    setPreviewAccessUrl(null);
+    setPreviewError(null);
+    setAssetsError(null);
+
+    if (!session) {
+      setPreviewError("Authentication required.");
+      return;
+    }
+
+    setPreviewLoading(true);
+
+    try {
+      const result = await getAssetAccessUrl(session, asset.id);
+      setPreviewAccessUrl(result.accessUrl);
+    } catch (reason) {
+      setPreviewError(reason instanceof Error ? reason.message : "Unable to create asset preview URL.");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function clearAssetPreview() {
+    setPreviewAsset(null);
+    setPreviewAccessUrl(null);
+    setPreviewError(null);
+  }
+
+  function handleAssetsDeleted(input: { assetIds?: string[]; folderPrefix?: string }) {
+    if (!previewAsset) {
+      return;
+    }
+
+    if (input.assetIds?.includes(previewAsset.id) || (input.folderPrefix && previewAsset.objectKey.startsWith(input.folderPrefix))) {
+      clearAssetPreview();
+    }
+  }
 
   return (
     <section className="page-stack">
@@ -365,11 +410,24 @@ export function DatasetDetailPage() {
                 datasetId={dataset.id}
                 loading={assetsLoading}
                 onChanged={reloadAssets}
+                onDeleted={handleAssetsDeleted}
+                onInspectAsset={(asset) => {
+                  void handleInspectAsset(asset);
+                }}
                 session={session}
                 setPageError={setAssetsError}
               />
             </section>
             <aside className="side-column">
+              {previewAsset && (
+                <AssetPreview
+                  accessError={previewError}
+                  accessLoading={previewLoading}
+                  accessUrl={previewAccessUrl}
+                  asset={previewAsset}
+                  onClose={clearAssetPreview}
+                />
+              )}
               <AssetForm
                 dataset={dataset}
                 onCreated={async () => {
@@ -882,6 +940,8 @@ function AssetsTable({
   datasetId,
   loading,
   onChanged,
+  onDeleted,
+  onInspectAsset,
   session,
   setPageError
 }: {
@@ -889,18 +949,17 @@ function AssetsTable({
   datasetId: string;
   loading: boolean;
   onChanged: () => Promise<void>;
+  onDeleted: (input: { assetIds?: string[]; folderPrefix?: string }) => void;
+  onInspectAsset: (asset: AssetSummary) => void;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [deleting, setDeleting] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [folderPrefix, setFolderPrefix] = useState("");
-  const [selectedAsset, setSelectedAsset] = useState<AssetSummary | null>(null);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-  const [accessUrl, setAccessUrl] = useState<string | null>(null);
-  const [accessError, setAccessError] = useState<string | null>(null);
-  const [accessLoading, setAccessLoading] = useState(false);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredAssets = normalizedQuery
     ? assets.filter((asset) =>
@@ -910,36 +969,28 @@ function AssetsTable({
           .includes(normalizedQuery)
       )
     : assets;
+  const pageCount = Math.max(1, Math.ceil(filteredAssets.length / assetPageSize));
+  const pageStart = (currentPage - 1) * assetPageSize;
+  const pageAssets = filteredAssets.slice(pageStart, pageStart + assetPageSize);
+  const pageEnd = pageStart + pageAssets.length;
+  const visiblePageStart = filteredAssets.length > 0 ? pageStart + 1 : 0;
   const totalBytes = assets.reduce((total, asset) => total + Number(asset.fileSize || 0), 0);
   const folderOptions = [
     ...new Set(assets.map((asset) => getAssetFolderPrefix(asset.objectKey)).filter((prefix) => prefix.length > 0))
   ].sort();
-  const selectedVisibleAssets = filteredAssets.filter((asset) => selectedAssetIds.includes(asset.id));
-  const selectedVisibleCount = selectedVisibleAssets.length;
-  const allVisibleSelected = filteredAssets.length > 0 && filteredAssets.every((asset) => selectedAssetIds.includes(asset.id));
+  const selectedPageAssets = pageAssets.filter((asset) => selectedAssetIds.includes(asset.id));
+  const selectedPageCount = selectedPageAssets.length;
+  const allPageSelected = pageAssets.length > 0 && pageAssets.every((asset) => selectedAssetIds.includes(asset.id));
 
-  async function handleInspect(asset: AssetSummary) {
-    setSelectedAsset(asset);
-    setAccessUrl(null);
-    setAccessError(null);
-    setPageError(null);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [normalizedQuery, assets.length]);
 
-    if (!session) {
-      setAccessError("Authentication required.");
-      return;
+  useEffect(() => {
+    if (currentPage > pageCount) {
+      setCurrentPage(pageCount);
     }
-
-    setAccessLoading(true);
-
-    try {
-      const result = await getAssetAccessUrl(session, asset.id);
-      setAccessUrl(result.accessUrl);
-    } catch (reason) {
-      setAccessError(reason instanceof Error ? reason.message : "Unable to create asset preview URL.");
-    } finally {
-      setAccessLoading(false);
-    }
-  }
+  }, [currentPage, pageCount]);
 
   function toggleAsset(assetId: string, checked: boolean) {
     setSelectedAssetIds((current) =>
@@ -948,7 +999,7 @@ function AssetsTable({
   }
 
   function toggleVisibleAssets(checked: boolean) {
-    const visibleIds = filteredAssets.map((asset) => asset.id);
+    const visibleIds = pageAssets.map((asset) => asset.id);
 
     setSelectedAssetIds((current) =>
       checked ? [...new Set([...current, ...visibleIds])] : current.filter((selectedId) => !visibleIds.includes(selectedId))
@@ -978,9 +1029,10 @@ function AssetsTable({
     setPageError(null);
 
     try {
-      const result = await deleteAssets(session, { assetIds: selectedAssetIds });
+      const deletedAssetIds = selectedAssetIds;
+      const result = await deleteAssets(session, { assetIds: deletedAssetIds });
       setSelectedAssetIds([]);
-      setSelectedAsset((current) => (current && selectedAssetIds.includes(current.id) ? null : current));
+      onDeleted({ assetIds: deletedAssetIds });
       await onChanged();
       setDeleteMessage(`Deleted ${result.deletedCount} registered file${result.deletedCount === 1 ? "" : "s"}.`);
     } catch (reason) {
@@ -1009,7 +1061,7 @@ function AssetsTable({
     try {
       await deleteAssets(session, { assetIds: [asset.id] });
       setSelectedAssetIds((current) => current.filter((assetId) => assetId !== asset.id));
-      setSelectedAsset((current) => (current?.id === asset.id ? null : current));
+      onDeleted({ assetIds: [asset.id] });
       await onChanged();
       setDeleteMessage("File deleted.");
     } catch (reason) {
@@ -1046,7 +1098,7 @@ function AssetsTable({
       const result = await deleteAssets(session, { datasetId, folderPrefix });
       setFolderPrefix("");
       setSelectedAssetIds([]);
-      setSelectedAsset((current) => (current && current.objectKey.startsWith(folderPrefix) ? null : current));
+      onDeleted({ folderPrefix });
       await onChanged();
       setDeleteMessage(`Deleted ${result.deletedCount} registered file${result.deletedCount === 1 ? "" : "s"} from ${folderPrefix}.`);
     } catch (reason) {
@@ -1105,9 +1157,9 @@ function AssetsTable({
         <div className="table-row assets-head table-head">
           <span>
             <input
-              aria-label="Select visible assets"
-              checked={allVisibleSelected}
-              disabled={filteredAssets.length === 0}
+              aria-label="Select assets on this page"
+              checked={allPageSelected}
+              disabled={pageAssets.length === 0}
               onChange={(event) => toggleVisibleAssets(event.currentTarget.checked)}
               type="checkbox"
             />
@@ -1117,9 +1169,9 @@ function AssetsTable({
           <span>Size</span>
           <span>Action</span>
         </div>
-        {selectedVisibleCount > 0 && (
+        {selectedPageCount > 0 && (
           <div className="selection-summary">
-            {selectedVisibleCount} visible file{selectedVisibleCount === 1 ? "" : "s"} selected.
+            {selectedPageCount} file{selectedPageCount === 1 ? "" : "s"} selected on this page.
           </div>
         )}
         {loading ? (
@@ -1129,7 +1181,7 @@ function AssetsTable({
             <span>Checking registered R2 objects for this dataset.</span>
           </div>
         ) : filteredAssets.length > 0 ? (
-          filteredAssets.map((asset) => (
+          pageAssets.map((asset) => (
             <AssetRow
               asset={asset}
               checked={selectedAssetIds.includes(asset.id)}
@@ -1138,7 +1190,7 @@ function AssetsTable({
                 void handleDeleteOne(asset);
               }}
               onInspect={() => {
-                void handleInspect(asset);
+                onInspectAsset(asset);
               }}
               onToggle={(checked) => toggleAsset(asset.id, checked)}
             />
@@ -1156,20 +1208,35 @@ function AssetsTable({
             <span>Upload an R2 object to start building annotation tasks.</span>
           </div>
         )}
+        {filteredAssets.length > assetPageSize && (
+          <div className="pagination-bar">
+            <span>
+              Showing {visiblePageStart}-{pageEnd} of {filteredAssets.length}
+            </span>
+            <div>
+              <button
+                className="secondary-button compact-button"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                type="button"
+              >
+                Previous
+              </button>
+              <span>
+                Page {currentPage} of {pageCount}
+              </span>
+              <button
+                className="secondary-button compact-button"
+                disabled={currentPage === pageCount}
+                onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
+                type="button"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </section>
-      {selectedAsset && (
-        <AssetPreview
-          accessError={accessError}
-          accessLoading={accessLoading}
-          accessUrl={accessUrl}
-          asset={selectedAsset}
-          onClose={() => {
-            setSelectedAsset(null);
-            setAccessUrl(null);
-            setAccessError(null);
-          }}
-        />
-      )}
     </section>
   );
 }
