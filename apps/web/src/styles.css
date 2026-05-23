@@ -808,7 +808,6 @@ textarea:focus {
   gap: 16px;
   min-height: calc(100vh - 66px);
   width: 100%;
-  max-width: min(1400px, calc(100vw - 48px));
   padding: 20px 24px 28px;
 }
 
@@ -1735,10 +1734,6 @@ textarea:focus {
   .page-stack,
   .topbar {
     padding: 16px;
-  }
-
-  .page-stack {
-    max-width: 100%;
   }
 
   .auth-form.two-column,
