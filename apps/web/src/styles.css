@@ -1005,10 +1005,6 @@ textarea:focus {
   width: 100%;
 }
 
-.organization-page > .detail-layout {
-  width: 100%;
-}
-
 .detail-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1042,10 +1038,6 @@ textarea:focus {
 
 .organization-layout {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
-}
-
-.organization-detail-layout {
-  grid-template-columns: minmax(0, 760px) minmax(320px, 390px);
 }
 
 .content-column,
@@ -1093,6 +1085,22 @@ textarea:focus {
 
 .account-detail-list {
   grid-template-columns: 1fr;
+}
+
+.organization-detail-frame {
+  gap: 18px;
+  width: min(1440px, 100%);
+}
+
+.organization-detail-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.organization-detail-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+  width: 100%;
 }
 
 .side-column {

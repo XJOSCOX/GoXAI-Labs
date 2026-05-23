@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { Building2, Save, ShieldCheck, UserCheck, UserRoundPlus, X } from "lucide-react";
+import { ArrowLeft, Building2, Save, ShieldCheck, UserCheck, UserRoundPlus, X } from "lucide-react";
 import {
   addOrganizationMember,
   createOrganization,
@@ -59,19 +59,6 @@ export function OrganizationSetupPage() {
 
   return (
     <section className="page-stack organization-page">
-      {organizationId && (
-        <div className="page-actions">
-          <Link className="back-link" to="/organization">
-            All organizations
-          </Link>
-          {organizations.length > 0 && (
-            <button className="primary-button" type="button" onClick={() => setShowCreateModal(true)}>
-              <Building2 size={18} />
-              New organization
-            </button>
-          )}
-        </div>
-      )}
       {error && <p className="form-error">{error}</p>}
       {loading ? (
         <section className="panel empty-state compact-empty">
@@ -170,7 +157,13 @@ export function OrganizationSetupPage() {
           </section>
         </>
       ) : organizations.length > 0 && organizationId ? (
-        <>
+        <section className="panel organization-detail-frame">
+          <div className="organization-detail-nav">
+            <Link className="secondary-button compact-button" to="/organization">
+              <ArrowLeft size={16} />
+              Back to organizations
+            </Link>
+          </div>
           {(organizationDetailError || organizationDetailLoading) && (
             <p className={organizationDetailError ? "form-error" : "muted-copy"}>
               {organizationDetailError ?? "Loading organization details."}
@@ -188,7 +181,7 @@ export function OrganizationSetupPage() {
             />
           )}
           {!organization && !organizationDetailLoading && !organizationDetailError && (
-            <section className="panel empty-state compact-empty">
+            <section className="empty-state compact-empty">
               <Building2 size={28} />
               <strong>Organization not found</strong>
               <span>Choose an organization from the directory.</span>
@@ -197,7 +190,7 @@ export function OrganizationSetupPage() {
               </Link>
             </section>
           )}
-        </>
+        </section>
       ) : (
         <>
           <section className="panel join-code-panel">
