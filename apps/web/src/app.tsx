@@ -3,6 +3,7 @@ import {
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
+  Database,
   FolderKanban,
   LogOut,
   Moon,
@@ -12,12 +13,16 @@ import {
   UserRoundPlus
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
+  createDataset,
   createOrganization,
   createProject,
+  getProject,
+  listDatasets,
   listOrganizations,
   listProjects,
+  type DatasetSummary,
   type OrganizationSummary,
   type ProjectSummary
 } from "./api";
@@ -41,6 +46,8 @@ export function App() {
           <Route index element={<DashboardPage />} />
           <Route path="organization" element={<OrganizationSetupPage />} />
           <Route path="projects" element={<ProjectsPage />} />
+          <Route path="projects/:projectId" element={<ProjectDetailPage />} />
+          <Route path="datasets" element={<DatasetsPage />} />
         </Route>
       </Routes>
     </AuthProvider>
@@ -234,6 +241,10 @@ function AppShell() {
             <FolderKanban size={18} />
             Projects
           </NavLink>
+          <NavLink to="/datasets">
+            <Database size={18} />
+            Datasets
+          </NavLink>
         </nav>
         <button className="ghost-button" type="button" onClick={() => void logout()}>
           <LogOut size={18} />
@@ -281,6 +292,7 @@ function DashboardPage() {
   const { dbUser, session } = useAuth();
   const { organizations } = useOrganizations(session);
   const { projects } = useProjects(session);
+  const { datasets } = useDatasets(session);
   const primaryMembership = organizations[0]?.role ?? "Not assigned";
 
   return (
@@ -304,8 +316,8 @@ function DashboardPage() {
         </article>
         <article className="stat-card">
           <BriefcaseBusiness size={20} />
-          <span>Tasks</span>
-          <strong>0</strong>
+          <span>Datasets</span>
+          <strong>{datasets.length}</strong>
         </article>
         <article className="stat-card">
           <Sparkles size={20} />
@@ -595,7 +607,9 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
   return (
     <article className="table-row project-row">
       <span>
-        <strong>{project.name}</strong>
+        <Link className="table-link" to={`/projects/${project.id}`}>
+          {project.name}
+        </Link>
         <small>{project.organization.name}</small>
       </span>
       <span>{formatEnum(project.dataType)}</span>
@@ -603,6 +617,248 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
         <span className="status-pill compact">{formatEnum(project.status)}</span>
       </span>
       <span>{formatDate(project.updatedAt)}</span>
+    </article>
+  );
+}
+
+function ProjectDetailPage() {
+  const { projectId = "" } = useParams();
+  const { session } = useAuth();
+  const { error: projectError, loading: projectLoading, project } = useProject(session, projectId);
+  const {
+    datasets,
+    error: datasetsError,
+    loading: datasetsLoading,
+    reload: reloadDatasets,
+    setError: setDatasetsError
+  } = useDatasets(session, projectId);
+
+  return (
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <Link className="back-link" to="/projects">
+            Projects
+          </Link>
+          <h1>{project?.name ?? "Project detail"}</h1>
+        </div>
+      </div>
+      {(projectError ?? datasetsError) && <p className="form-error">{projectError ?? datasetsError}</p>}
+      {projectLoading ? (
+        <section className="panel">
+          <p className="muted-copy">Loading project details.</p>
+        </section>
+      ) : project ? (
+        <>
+          <section className="panel">
+            <div>
+              <p className="eyebrow">Project</p>
+              <h2>{project.name}</h2>
+            </div>
+            <dl className="detail-list">
+              <div>
+                <dt>Organization</dt>
+                <dd>{project.organization.name}</dd>
+              </div>
+              <div>
+                <dt>Data type</dt>
+                <dd>{formatEnum(project.dataType)}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>{formatEnum(project.status)}</dd>
+              </div>
+            </dl>
+          </section>
+          <DatasetForm
+            defaultProjectId={project.id}
+            onCreated={reloadDatasets}
+            projects={[project]}
+            session={session}
+            setPageError={setDatasetsError}
+          />
+          <DatasetsTable datasets={datasets} loading={datasetsLoading} projectScoped />
+        </>
+      ) : (
+        <section className="panel">
+          <p className="muted-copy">Project was not found.</p>
+        </section>
+      )}
+    </section>
+  );
+}
+
+function DatasetsPage() {
+  const { session } = useAuth();
+  const { error: projectsError, loading: projectsLoading, projects } = useProjects(session);
+  const {
+    datasets,
+    error: datasetsError,
+    loading: datasetsLoading,
+    reload: reloadDatasets,
+    setError: setDatasetsError
+  } = useDatasets(session);
+  const [showForm, setShowForm] = useState(false);
+
+  return (
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">Datasets</p>
+          <h1>Datasets list</h1>
+        </div>
+        <button
+          className="primary-button"
+          type="button"
+          onClick={() => setShowForm((value) => !value)}
+          disabled={projects.length === 0 || projectsLoading}
+        >
+          <Database size={18} />
+          {showForm ? "Close" : "New dataset"}
+        </button>
+      </div>
+      {(projectsError ?? datasetsError) && <p className="form-error">{projectsError ?? datasetsError}</p>}
+      {showForm && (
+        <DatasetForm
+          onCreated={async () => {
+            await reloadDatasets();
+            setShowForm(false);
+          }}
+          projects={projects}
+          session={session}
+          setPageError={setDatasetsError}
+        />
+      )}
+      <DatasetsTable datasets={datasets} loading={datasetsLoading || projectsLoading} />
+    </section>
+  );
+}
+
+function DatasetForm({
+  defaultProjectId,
+  onCreated,
+  projects,
+  session,
+  setPageError
+}: {
+  defaultProjectId?: string;
+  onCreated: () => Promise<void>;
+  projects: ProjectSummary[];
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setSavedMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const dataset = await createDataset(session, {
+        projectId: defaultProjectId ?? getFormValue(event, "projectId"),
+        name: getFormValue(event, "name"),
+        description: getFormValue(event, "description")
+      });
+
+      form.reset();
+      setSavedMessage(`${dataset.name} was created as a draft.`);
+      await onCreated();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to create dataset.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="panel dataset-form" onSubmit={handleSubmit}>
+      {!defaultProjectId && (
+        <label>
+          Project
+          <select name="projectId" defaultValue={projects[0]?.id ?? ""} required>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className={defaultProjectId ? "wide" : undefined}>
+        Dataset name
+        <input name="name" placeholder="Training set v1" required />
+      </label>
+      <label className="wide">
+        Description
+        <textarea name="description" placeholder="Source, scope, or ingestion notes" rows={3} />
+      </label>
+      {savedMessage && <p className="form-success wide">{savedMessage}</p>}
+      <button className="primary-button wide" type="submit" disabled={saving || projects.length === 0}>
+        <Database size={18} />
+        {saving ? "Creating" : "Create draft dataset"}
+      </button>
+    </form>
+  );
+}
+
+function DatasetsTable({
+  datasets,
+  loading,
+  projectScoped = false
+}: {
+  datasets: DatasetSummary[];
+  loading: boolean;
+  projectScoped?: boolean;
+}) {
+  return (
+    <section className="table-panel">
+      <div className="table-row table-head">
+        <span>Name</span>
+        <span>{projectScoped ? "Version" : "Project"}</span>
+        <span>Status</span>
+        <span>Updated</span>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <Database size={28} />
+          <strong>Loading datasets</strong>
+          <span>Checking dataset records and project access.</span>
+        </div>
+      ) : datasets.length > 0 ? (
+        datasets.map((dataset) => <DatasetRow dataset={dataset} key={dataset.id} projectScoped={projectScoped} />)
+      ) : (
+        <div className="empty-state">
+          <Database size={28} />
+          <strong>No datasets yet</strong>
+          <span>Create a draft dataset before adding file ingestion.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DatasetRow({ dataset, projectScoped }: { dataset: DatasetSummary; projectScoped: boolean }) {
+  return (
+    <article className="table-row project-row">
+      <span>
+        <strong>{dataset.name}</strong>
+        <small>{dataset.organization.name}</small>
+      </span>
+      <span>{projectScoped ? `v${dataset.version}` : dataset.project.name}</span>
+      <span>
+        <span className="status-pill compact">{formatEnum(dataset.status)}</span>
+      </span>
+      <span>{formatDate(dataset.updatedAt)}</span>
     </article>
   );
 }
@@ -674,6 +930,77 @@ function useProjects(session: ReturnType<typeof useAuth>["session"]) {
     error,
     loading,
     projects,
+    reload,
+    setError
+  };
+}
+
+function useProject(session: ReturnType<typeof useAuth>["session"], projectId: string) {
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!session || !projectId) {
+      setProject(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setProject(await getProject(session, projectId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load project.");
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, session]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    project,
+    reload
+  };
+}
+
+function useDatasets(session: ReturnType<typeof useAuth>["session"], projectId?: string) {
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!session) {
+      setDatasets([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setDatasets(await listDatasets(session, projectId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load datasets.");
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, session]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    datasets,
+    error,
+    loading,
     reload,
     setError
   };

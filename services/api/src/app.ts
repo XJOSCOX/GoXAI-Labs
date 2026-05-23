@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { getSupabaseConfig } from "@goxai/database";
 import { getBearerToken, syncUserFromAccessToken } from "./auth.js";
+import { datasetsRouter } from "./datasets.js";
 import { organizationsRouter } from "./organizations.js";
 import { projectsRouter } from "./projects.js";
 
@@ -91,6 +92,7 @@ app.post("/api/auth/sync", async (request, response) => {
 
 app.use("/api/organizations", organizationsRouter);
 app.use("/api/projects", projectsRouter);
+app.use("/api/datasets", datasetsRouter);
 
 app.use(
   (

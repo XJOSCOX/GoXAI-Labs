@@ -68,6 +68,62 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.get("/:projectId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.params.projectId);
+
+  if (!projectId) {
+    response.status(400).json({ error: "Project is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      organization: {
+        memberships: {
+          some: {
+            userId: user.id,
+            status: "ACTIVE"
+          }
+        }
+      }
+    },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      },
+      workspace: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      }
+    }
+  });
+
+  if (!project) {
+    response.status(404).json({ error: "Project was not found or you do not have access." });
+    return;
+  }
+
+  response.status(200).json({
+    project: serializeProject(project)
+  });
+});
+
 router.post("/", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
 

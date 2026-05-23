@@ -511,15 +511,43 @@ textarea:focus {
   width: min(860px, 100%);
 }
 
+.dataset-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(760px, 100%);
+}
+
 .project-form > label:not(.wide) {
   grid-column: auto;
 }
 
 .project-form .primary-button.wide,
+.dataset-form .primary-button.wide,
 .setup-form .primary-button {
   justify-self: start;
   width: auto;
   min-width: 220px;
+}
+
+.back-link,
+.table-link {
+  color: var(--accent-deep);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.back-link {
+  display: inline-flex;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.table-link:hover {
+  text-decoration: underline;
+}
+
+.muted-copy {
+  margin-bottom: 0;
+  color: var(--muted);
 }
 
 .org-list {
@@ -623,7 +651,7 @@ textarea:focus {
   }
 
   .nav-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .ghost-button {
@@ -634,7 +662,8 @@ textarea:focus {
   .stat-grid,
   .detail-list,
   .setup-form,
-  .project-form {
+  .project-form,
+  .dataset-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -651,6 +680,7 @@ textarea:focus {
   .detail-list,
   .setup-form,
   .project-form,
+  .dataset-form,
   .table-row {
     grid-template-columns: 1fr;
   }

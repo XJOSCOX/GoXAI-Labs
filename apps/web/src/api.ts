@@ -78,6 +78,36 @@ export interface CreateProjectInput {
   instructions?: string;
 }
 
+export interface DatasetSummary {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  name: string;
+  description: string | null;
+  version: number;
+  status: string;
+  metadata: Record<string, unknown> | null;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+    dataType: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateDatasetInput {
+  projectId: string;
+  name: string;
+  description?: string;
+}
+
 export async function createSupabaseBrowserClient() {
   const response = await fetch(`${apiUrl}/api/config`);
 
@@ -155,6 +185,16 @@ export async function listProjects(session: Session) {
   return ((await response.json()) as { projects: ProjectSummary[] }).projects;
 }
 
+export async function getProject(session: Session, projectId: string) {
+  const response = await authenticatedFetch(session, `/api/projects/${encodeURIComponent(projectId)}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load project."));
+  }
+
+  return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
 export async function createProject(session: Session, input: CreateProjectInput) {
   const response = await authenticatedFetch(session, "/api/projects", {
     method: "POST",
@@ -166,6 +206,36 @@ export async function createProject(session: Session, input: CreateProjectInput)
   }
 
   return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
+export async function listDatasets(session: Session, projectId?: string) {
+  const params = new URLSearchParams();
+
+  if (projectId) {
+    params.set("projectId", projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/datasets${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load datasets."));
+  }
+
+  return ((await response.json()) as { datasets: DatasetSummary[] }).datasets;
+}
+
+export async function createDataset(session: Session, input: CreateDatasetInput) {
+  const response = await authenticatedFetch(session, "/api/datasets", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create dataset."));
+  }
+
+  return ((await response.json()) as { dataset: DatasetSummary }).dataset;
 }
 
 function authenticatedFetch(session: Session, path: string, init: RequestInit = {}) {
