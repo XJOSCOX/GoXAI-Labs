@@ -6,141 +6,1048 @@ datasource db {
   provider = "postgresql"
 }
 
-model User {
-  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email       String       @unique
-  fullName    String?      @map("full_name")
-  avatarUrl   String?      @map("avatar_url")
-  memberships Membership[]
-  workspaces  Workspace[]  @relation("WorkspaceCreator")
-  projects    Project[]    @relation("ProjectCreator")
-  auditLogs   AuditLog[]
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+// =========================
+// ENUMS
+// =========================
 
+enum GlobalRole {
+  USER
+  SUPER_ADMIN
+  SYSTEM
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DELETED
+}
+
+enum OrganizationType {
+  PERSONAL
+  COMPANY
+  ENTERPRISE
+  MARKETPLACE_VENDOR
+}
+
+enum PlanTier {
+  FREE
+  STARTER
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MANAGER
+  REVIEWER
+  ANNOTATOR
+  VIEWER
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  LEFT
+  REMOVED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum DataType {
+  IMAGE
+  VIDEO
+  AUDIO
+  TEXT
+  PDF
+  TIME_SERIES
+  MULTIMODAL
+}
+
+enum DatasetStatus {
+  DRAFT
+  IMPORTING
+  READY
+  PROCESSING
+  ARCHIVED
+  FAILED
+}
+
+enum StorageProvider {
+  LOCAL
+  R2
+  S3
+  MINIO
+  GCS
+  AZURE
+}
+
+enum TaskStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  SUBMITTED
+  REVIEWING
+  APPROVED
+  REJECTED
+  SKIPPED
+  ARCHIVED
+}
+
+enum AnnotationStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+  SUPERSEDED
+}
+
+enum AnnotationRegionType {
+  BBOX
+  POLYGON
+  POLYLINE
+  KEYPOINT
+  MASK
+  TEXT_SPAN
+  AUDIO_REGION
+  VIDEO_REGION
+  TIMESERIES_RANGE
+  CLASSIFICATION
+  RELATION
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_CHANGES
+}
+
+enum WorkflowActionType {
+  ANNOTATE
+  REVIEW
+  QA
+  APPROVE
+  REJECT
+  EXPORT
+}
+
+enum AIProviderType {
+  INTERNAL
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+  HUGGINGFACE
+  CUSTOM
+}
+
+enum AIJobType {
+  OBJECT_DETECTION
+  SEGMENTATION
+  OCR
+  TRANSCRIPTION
+  CLASSIFICATION
+  EMBEDDING
+  LLM_PRELABEL
+  VIDEO_TRACKING
+  QUALITY_CHECK
+}
+
+enum AIJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum MarketplaceListingType {
+  DATASET
+  ANNOTATION_SERVICE
+  MODEL
+  JOB
+}
+
+enum MarketplaceStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  SOLD
+  ARCHIVED
+  REJECTED
+}
+
+enum JobPostStatus {
+  DRAFT
+  OPEN
+  PAUSED
+  FILLED
+  CLOSED
+  ARCHIVED
+}
+
+enum JobApplicationStatus {
+  SUBMITTED
+  REVIEWING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum WalletOwnerType {
+  USER
+  ORGANIZATION
+}
+
+enum LedgerEntryType {
+  CREDIT
+  DEBIT
+  HOLD
+  RELEASE
+  PAYOUT
+  REFUND
+  FEE
+}
+
+enum PayoutStatus {
+  REQUESTED
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+  INVITE
+  TASK_ASSIGNED
+  REVIEW_REQUESTED
+  PAYMENT
+  SYSTEM
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum ExportStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// =========================
+// IDENTITY / AUTH
+// =========================
+
+model User {
+  id              String      @id @default(cuid())
+  supabaseAuthId  String?     @unique @map("supabase_auth_id") @db.Uuid
+  email           String      @unique
+  username        String?     @unique
+  firstName       String?     @map("first_name")
+  lastName        String?     @map("last_name")
+  avatarUrl       String?     @map("avatar_url")
+  globalRole      GlobalRole  @default(USER) @map("global_role")
+  status          UserStatus  @default(ACTIVE)
+  lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz(6)
+
+  ownedOrganizations Organization[]    @relation("OrganizationOwner")
+  memberships         Membership[]
+  createdProjects     Project[]         @relation("ProjectCreator")
+  createdDatasets     Dataset[]         @relation("DatasetCreator")
+  createdVersions      DatasetVersion[] @relation("DatasetVersionCreator")
+  uploadedAssets      StorageAsset[]    @relation("AssetUploader")
+  assignedTasks       Task[]            @relation("TaskAssignee")
+  reviewTasks         Task[]            @relation("TaskReviewer")
+  annotations         Annotation[]
+  reviews             Review[]
+  comments            Comment[]
+  presenceSessions    PresenceSession[]
+  modelProviders      ModelProvider[]   @relation("ModelProviderCreator")
+  aiJobs              AIJob[]           @relation("AIJobRequester")
+  exportJobs          ExportJob[]       @relation("ExportRequester")
+  jobApplications     JobApplication[]
+  wallets             Wallet[]
+  payouts             Payout[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  apiKeys             ApiKey[]
+  invitedMemberships  Membership[]      @relation("MembershipInviter")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([email])
+  @@index([supabaseAuthId])
+  @@index([status])
   @@map("users")
 }
 
-model Organization {
-  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String
-  slug        String       @unique
-  roles       Role[]
-  memberships Membership[]
-  workspaces  Workspace[]
-  projects    Project[]
-  auditLogs   AuditLog[]
-  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+// =========================
+// ORGANIZATIONS / WORKSPACES
+// =========================
 
+model Organization {
+  id       String           @id @default(cuid())
+  name     String
+  slug     String           @unique
+  type     OrganizationType @default(PERSONAL)
+  planTier PlanTier         @default(FREE) @map("plan_tier")
+  ownerId  String           @map("owner_id")
+
+  owner               User                 @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  workspaces          Workspace[]
+  memberships         Membership[]
+  projects            Project[]
+  datasets            Dataset[]
+  assets              StorageAsset[]
+  modelProviders      ModelProvider[]
+  marketplaceListings MarketplaceListing[] @relation("SellerOrgListings")
+  jobPosts            JobPost[]
+  wallets             Wallet[]
+  auditLogs           AuditLog[]
+  apiKeys             ApiKey[]
+  webhooks            Webhook[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([ownerId])
+  @@index([type])
+  @@index([planTier])
   @@map("organizations")
 }
 
-model Role {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String
-  description    String?
-  permissions    Json         @default("{}")
-  memberships    Membership[]
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  @@unique([organizationId, name])
-  @@index([organizationId])
-  @@map("roles")
-}
-
-model Membership {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId         String       @map("user_id") @db.Uuid
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organizationId String       @map("organization_id") @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  roleId         String       @map("role_id") @db.Uuid
-  role           Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  invitedEmail   String?      @map("invited_email")
-  joinedAt       DateTime?    @map("joined_at") @db.Timestamptz(6)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  @@unique([userId, organizationId])
-  @@index([organizationId])
-  @@index([roleId])
-  @@map("memberships")
-}
-
 model Workspace {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdById    String?      @map("created_by_id") @db.Uuid
-  createdBy      User?        @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
   name           String
   slug           String
-  projects       Project[]
-  auditLogs      AuditLog[]
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  description    String?
 
-  @@unique([organizationId, slug])
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships  Membership[]
+  projects     Project[]
+  auditLogs    AuditLog[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
   @@index([organizationId])
-  @@index([createdById])
+  @@unique([organizationId, slug])
   @@map("workspaces")
 }
 
-model Project {
-  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  workspaceId    String       @map("workspace_id") @db.Uuid
-  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdById    String?      @map("created_by_id") @db.Uuid
-  createdBy      User?        @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  name           String
-  slug           String
-  description    String?
-  auditLogs      AuditLog[]
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+model Membership {
+  id             String           @id @default(cuid())
+  userId         String           @map("user_id")
+  organizationId String           @map("organization_id")
+  workspaceId    String?          @map("workspace_id")
+  role           MembershipRole   @default(VIEWER)
+  status         MembershipStatus @default(ACTIVE)
+  invitedById    String?          @map("invited_by_id")
+  invitedEmail   String?          @map("invited_email")
+  joinedAt       DateTime?        @map("joined_at") @db.Timestamptz(6)
 
-  @@unique([workspaceId, slug])
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy    User?        @relation("MembershipInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([workspaceId])
+  @@index([role])
+  @@index([status])
+  @@unique([userId, organizationId, workspaceId])
+  @@map("memberships")
+}
+
+// =========================
+// PROJECTS / DATASETS
+// =========================
+
+model Project {
+  id              String        @id @default(cuid())
+  organizationId  String        @map("organization_id")
+  workspaceId     String?       @map("workspace_id")
+  name            String
+  slug            String
+  description     String?
+  dataType        DataType      @map("data_type")
+  status          ProjectStatus @default(DRAFT)
+  labelingConfig  Json?         @map("labeling_config")
+  instructions    String?
+  createdById     String        @map("created_by_id")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?      @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  createdBy    User            @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  datasets     Dataset[]
+  assets       StorageAsset[]
+  tasks        Task[]
+  annotations  Annotation[]
+  workflows    Workflow[]
+  modelProviders ModelProvider[]
+  aiJobs       AIJob[]
+  exports      ExportJob[]
+  jobPosts     JobPost[]
+  auditLogs    AuditLog[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
   @@index([organizationId])
   @@index([workspaceId])
   @@index([createdById])
+  @@index([status])
+  @@index([dataType])
+  @@unique([organizationId, slug])
   @@map("projects")
 }
 
-model AuditLog {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId String        @map("organization_id") @db.Uuid
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  workspaceId    String?       @map("workspace_id") @db.Uuid
-  workspace      Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
-  projectId      String?       @map("project_id") @db.Uuid
-  project        Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  actorUserId    String?       @map("actor_user_id") @db.Uuid
-  actorUser      User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
-  action         String
-  targetType     AuditTarget   @map("target_type")
-  targetId       String?       @map("target_id") @db.Uuid
-  metadata       Json          @default("{}")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+model Dataset {
+  id             String        @id @default(cuid())
+  organizationId String        @map("organization_id")
+  projectId      String        @map("project_id")
+  name           String
+  description    String?
+  version        Int           @default(1)
+  status         DatasetStatus @default(DRAFT)
+  createdById    String        @map("created_by_id")
+  metadata       Json?
 
-  @@index([organizationId, createdAt])
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy    User             @relation("DatasetCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  versions     DatasetVersion[]
+  assets       StorageAsset[]
+  tasks        Task[]
+  aiJobs       AIJob[]
+  exports      ExportJob[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([createdById])
+  @@index([status])
+  @@map("datasets")
+}
+
+model DatasetVersion {
+  id           String  @id @default(cuid())
+  datasetId    String  @map("dataset_id")
+  version      Int
+  snapshotJson Json    @map("snapshot_json")
+  createdById  String? @map("created_by_id")
+
+  dataset   Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("DatasetVersionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([datasetId])
+  @@index([createdById])
+  @@unique([datasetId, version])
+  @@map("dataset_versions")
+}
+
+// =========================
+// STORAGE / FILES
+// =========================
+
+model StorageAsset {
+  id             String          @id @default(cuid())
+  organizationId String          @map("organization_id")
+  projectId      String?         @map("project_id")
+  datasetId      String?         @map("dataset_id")
+  uploadedById   String?         @map("uploaded_by_id")
+  provider       StorageProvider
+  bucket         String
+  objectKey      String          @map("object_key")
+  fileName       String          @map("file_name")
+  mimeType       String          @map("mime_type")
+  fileSize       BigInt          @map("file_size")
+  checksum       String?
+  width          Int?
+  height         Int?
+  duration       Float?
+  metadata       Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  dataset      Dataset?     @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  uploadedBy   User?        @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  tasks        Task[]
+  exportOutputs ExportJob[] @relation("ExportOutputAsset")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([datasetId])
+  @@index([uploadedById])
+  @@unique([provider, bucket, objectKey])
+  @@map("storage_assets")
+}
+
+// =========================
+// TASKS / ANNOTATIONS
+// =========================
+
+model Task {
+  id           String     @id @default(cuid())
+  projectId    String     @map("project_id")
+  datasetId    String?    @map("dataset_id")
+  assetId      String?    @map("asset_id")
+  status       TaskStatus @default(PENDING)
+  priority     Int        @default(0)
+  assignedToId String?    @map("assigned_to_id")
+  reviewerId   String?    @map("reviewer_id")
+  metadata     Json?
+  dueAt        DateTime?  @map("due_at") @db.Timestamptz(6)
+
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dataset    Dataset?      @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  asset      StorageAsset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  assignedTo User?         @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  reviewer   User?         @relation("TaskReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  annotations Annotation[]
+  reviews     Review[]
+  comments    Comment[]
+  presenceSessions PresenceSession[]
+  aiJobs      AIJob[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([datasetId])
+  @@index([assetId])
+  @@index([assignedToId])
+  @@index([reviewerId])
+  @@index([status])
+  @@index([priority])
+  @@map("tasks")
+}
+
+model Annotation {
+  id              String           @id @default(cuid())
+  taskId          String           @map("task_id")
+  projectId       String           @map("project_id")
+  userId          String           @map("user_id")
+  status          AnnotationStatus @default(DRAFT)
+  resultJson      Json             @map("result_json")
+  leadTimeSeconds Float?           @map("lead_time_seconds")
+  version         Int              @default(1)
+  submittedAt     DateTime?        @map("submitted_at") @db.Timestamptz(6)
+
+  task       Task               @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project    Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  regions    AnnotationRegion[]
+  reviews    Review[]
+  comments   Comment[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([taskId])
+  @@index([projectId])
+  @@index([userId])
+  @@index([status])
+  @@unique([taskId, userId, version])
+  @@map("annotations")
+}
+
+model AnnotationRegion {
+  id           String               @id @default(cuid())
+  annotationId String               @map("annotation_id")
+  type         AnnotationRegionType
+  label        String?
+  geometryJson Json                 @map("geometry_json")
+  confidence   Float?
+  metadata     Json?
+
+  annotation Annotation @relation(fields: [annotationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([annotationId])
+  @@index([type])
+  @@index([label])
+  @@map("annotation_regions")
+}
+
+// =========================
+// REVIEW / WORKFLOW
+// =========================
+
+model Review {
+  id           String       @id @default(cuid())
+  annotationId String       @map("annotation_id")
+  taskId       String       @map("task_id")
+  reviewerId   String       @map("reviewer_id")
+  status       ReviewStatus @default(PENDING)
+  score        Float?
+  feedback     String?
+  metadata     Json?
+
+  annotation Annotation @relation(fields: [annotationId], references: [id], onDelete: Cascade)
+  task       Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  reviewer   User       @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([annotationId])
+  @@index([taskId])
+  @@index([reviewerId])
+  @@index([status])
+  @@map("reviews")
+}
+
+model Workflow {
+  id         String  @id @default(cuid())
+  projectId  String  @map("project_id")
+  name       String
+  configJson Json?   @map("config_json")
+  active     Boolean @default(true)
+
+  project Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  steps   WorkflowStep[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([active])
+  @@map("workflows")
+}
+
+model WorkflowStep {
+  id           String             @id @default(cuid())
+  workflowId   String             @map("workflow_id")
+  name         String
+  order        Int
+  roleRequired MembershipRole?    @map("role_required")
+  actionType   WorkflowActionType @map("action_type")
+  configJson   Json?              @map("config_json")
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([workflowId])
+  @@unique([workflowId, order])
+  @@map("workflow_steps")
+}
+
+// =========================
+// COMMENTS / COLLABORATION
+// =========================
+
+model Comment {
+  id           String  @id @default(cuid())
+  taskId       String? @map("task_id")
+  annotationId String? @map("annotation_id")
+  userId       String  @map("user_id")
+  parentId     String? @map("parent_id")
+  body         String
+  resolved     Boolean @default(false)
+  metadata     Json?
+
+  task       Task?       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  annotation Annotation? @relation(fields: [annotationId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent     Comment?    @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies    Comment[]   @relation("CommentThread")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([taskId])
+  @@index([annotationId])
+  @@index([userId])
+  @@index([parentId])
+  @@index([resolved])
+  @@map("comments")
+}
+
+model PresenceSession {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  taskId     String   @map("task_id")
+  socketId   String   @map("socket_id")
+  status     String   @default("ONLINE")
+  metadata   Json?
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([taskId])
+  @@index([socketId])
+  @@index([lastSeenAt])
+  @@map("presence_sessions")
+}
+
+// =========================
+// AI / ML JOBS
+// =========================
+
+model ModelProvider {
+  id             String         @id @default(cuid())
+  organizationId String         @map("organization_id")
+  projectId      String?        @map("project_id")
+  createdById    String?        @map("created_by_id")
+  name           String
+  type           AIProviderType
+  configJson     Json?          @map("config_json")
+  active         Boolean        @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("ModelProviderCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  aiJobs       AIJob[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([createdById])
+  @@index([type])
+  @@index([active])
+  @@map("model_providers")
+}
+
+model AIJob {
+  id              String      @id @default(cuid())
+  projectId       String?     @map("project_id")
+  datasetId       String?     @map("dataset_id")
+  taskId          String?     @map("task_id")
+  modelProviderId String?     @map("model_provider_id")
+  requestedById   String?     @map("requested_by_id")
+  type            AIJobType
+  status          AIJobStatus @default(QUEUED)
+  inputJson       Json?       @map("input_json")
+  outputJson      Json?       @map("output_json")
+  errorMessage    String?     @map("error_message")
+  startedAt       DateTime?   @map("started_at") @db.Timestamptz(6)
+  completedAt     DateTime?   @map("completed_at") @db.Timestamptz(6)
+
+  project       Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  dataset       Dataset?       @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  task          Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  modelProvider ModelProvider? @relation(fields: [modelProviderId], references: [id], onDelete: SetNull)
+  requestedBy   User?          @relation("AIJobRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([datasetId])
+  @@index([taskId])
+  @@index([modelProviderId])
+  @@index([requestedById])
+  @@index([status])
+  @@index([type])
+  @@map("ai_jobs")
+}
+
+// =========================
+// MARKETPLACE
+// =========================
+
+model MarketplaceListing {
+  id          String                 @id @default(cuid())
+  sellerOrgId String                 @map("seller_org_id")
+  title       String
+  description String?
+  type        MarketplaceListingType
+  price       Decimal?               @db.Decimal(12, 2)
+  currency    String                 @default("USD")
+  status      MarketplaceStatus      @default(DRAFT)
+  metadata    Json?
+
+  sellerOrg Organization @relation("SellerOrgListings", fields: [sellerOrgId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([sellerOrgId])
+  @@index([type])
+  @@index([status])
+  @@map("marketplace_listings")
+}
+
+model JobPost {
+  id             String        @id @default(cuid())
+  organizationId String        @map("organization_id")
+  projectId      String?       @map("project_id")
+  title          String
+  description    String?
+  budget         Decimal?      @db.Decimal(12, 2)
+  currency       String        @default("USD")
+  status         JobPostStatus @default(DRAFT)
+  metadata       Json?
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  project      Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  applications JobApplication[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([status])
+  @@map("job_posts")
+}
+
+model JobApplication {
+  id          String               @id @default(cuid())
+  jobPostId   String               @map("job_post_id")
+  userId      String               @map("user_id")
+  coverLetter String?              @map("cover_letter")
+  status      JobApplicationStatus @default(SUBMITTED)
+  metadata    Json?
+
+  jobPost JobPost @relation(fields: [jobPostId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([jobPostId])
+  @@index([userId])
+  @@index([status])
+  @@unique([jobPostId, userId])
+  @@map("job_applications")
+}
+
+// =========================
+// BILLING / WALLET
+// =========================
+
+model Wallet {
+  id             String          @id @default(cuid())
+  ownerType      WalletOwnerType @map("owner_type")
+  userId         String?         @map("user_id")
+  organizationId String?         @map("organization_id")
+  balance        Decimal         @default(0) @db.Decimal(12, 2)
+  currency       String          @default("USD")
+
+  user          User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ledgerEntries LedgerEntry[]
+  payouts       Payout[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([ownerType])
+  @@map("wallets")
+}
+
+model LedgerEntry {
+  id          String          @id @default(cuid())
+  walletId    String          @map("wallet_id")
+  type        LedgerEntryType
+  amount      Decimal         @db.Decimal(12, 2)
+  currency    String          @default("USD")
+  description String?
+  referenceId String?         @map("reference_id")
+  metadata    Json?
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([walletId])
+  @@index([type])
+  @@index([referenceId])
+  @@map("ledger_entries")
+}
+
+model Payout {
+  id          String       @id @default(cuid())
+  userId      String       @map("user_id")
+  walletId    String       @map("wallet_id")
+  amount      Decimal      @db.Decimal(12, 2)
+  currency    String       @default("USD")
+  status      PayoutStatus @default(REQUESTED)
+  provider    String?
+  providerRef String?      @map("provider_ref")
+  metadata    Json?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([status])
+  @@map("payouts")
+}
+
+// =========================
+// NOTIFICATIONS / AUDIT
+// =========================
+
+model Notification {
+  id       String           @id @default(cuid())
+  userId   String           @map("user_id")
+  type     NotificationType @default(INFO)
+  title    String
+  message  String?
+  readAt   DateTime?        @map("read_at") @db.Timestamptz(6)
+  metadata Json?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([readAt])
+  @@index([type])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String  @id @default(cuid())
+  organizationId String? @map("organization_id")
+  workspaceId    String? @map("workspace_id")
+  projectId      String? @map("project_id")
+  userId         String? @map("user_id")
+  action         String
+  entityType     String? @map("entity_type")
+  entityId       String? @map("entity_id")
+  ipAddress      String? @map("ip_address")
+  userAgent      String? @map("user_agent")
+  metadata       Json?
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  workspace    Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
   @@index([workspaceId])
   @@index([projectId])
-  @@index([actorUserId])
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
   @@map("audit_logs")
 }
 
-enum AuditTarget {
-  USER
-  ORGANIZATION
-  MEMBERSHIP
-  ROLE
-  WORKSPACE
-  PROJECT
-  SYSTEM
+// =========================
+// API KEYS / WEBHOOKS / EXPORTS
+// =========================
+
+model ApiKey {
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  createdById    String?      @map("created_by_id")
+  name           String
+  keyHash        String       @unique @map("key_hash")
+  scopes         String[]
+  status         ApiKeyStatus @default(ACTIVE)
+  lastUsedAt     DateTime?    @map("last_used_at") @db.Timestamptz(6)
+  expiresAt      DateTime?    @map("expires_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([createdById])
+  @@index([status])
+  @@map("api_keys")
+}
+
+model Webhook {
+  id             String  @id @default(cuid())
+  organizationId String  @map("organization_id")
+  url            String
+  events         String[]
+  secret         String
+  active         Boolean @default(true)
+  metadata       Json?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([active])
+  @@map("webhooks")
+}
+
+model ExportJob {
+  id            String       @id @default(cuid())
+  projectId     String       @map("project_id")
+  datasetId     String?      @map("dataset_id")
+  requestedById String?      @map("requested_by_id")
+  format        String
+  status        ExportStatus @default(QUEUED)
+  outputAssetId String?      @map("output_asset_id")
+  metadata      Json?
+  errorMessage  String?      @map("error_message")
+  startedAt     DateTime?    @map("started_at") @db.Timestamptz(6)
+  completedAt   DateTime?    @map("completed_at") @db.Timestamptz(6)
+
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dataset     Dataset?      @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  requestedBy User?         @relation("ExportRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  outputAsset StorageAsset? @relation("ExportOutputAsset", fields: [outputAssetId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([projectId])
+  @@index([datasetId])
+  @@index([requestedById])
+  @@index([outputAssetId])
+  @@index([status])
+  @@map("export_jobs")
 }
