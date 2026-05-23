@@ -275,8 +275,11 @@ function RegisterPage() {
 }
 
 function AppShell() {
-  const { dbUser, logout } = useAuth();
-  const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email;
+  const { dbUser, logout, session } = useAuth();
+  const { organizations } = useOrganizations(session);
+  const name = [dbUser?.firstName, dbUser?.lastName].filter(Boolean).join(" ") || dbUser?.email || "Signed in user";
+  const email = dbUser?.email ?? "No email";
+  const role = organizations[0]?.role ?? dbUser?.globalRole ?? "USER";
 
   return (
     <main className="app-shell">
@@ -288,6 +291,14 @@ function AppShell() {
             <strong>Studio Ops</strong>
           </div>
         </div>
+        <section className="sidebar-profile">
+          <div className="avatar">{getInitials(name, email)}</div>
+          <div>
+            <strong>{name}</strong>
+            <span>{email}</span>
+            <small>{formatEnum(role)}</small>
+          </div>
+        </section>
         <nav className="nav-list">
           <NavLink to="/" end>
             <BarChart3 size={18} />
@@ -317,10 +328,7 @@ function AppShell() {
       </aside>
       <section className="workspace">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Signed in</p>
-            <h2>{name}</h2>
-          </div>
+          <div />
           <div className="topbar-actions">
             <ThemeToggle />
             <span className="status-pill">
@@ -3259,6 +3267,16 @@ function formatEnum(value: string) {
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function getInitials(name: string, email: string) {
+  const source = name !== "Signed in user" ? name : email;
+  const parts = source
+    .replace(/@.*/, "")
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+
+  return (parts[0]?.[0] ?? "G").concat(parts[1]?.[0] ?? "X").toUpperCase();
 }
 
 function formatAssetKind(mimeType: string) {
