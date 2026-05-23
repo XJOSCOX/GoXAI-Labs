@@ -377,6 +377,10 @@ function AppShell() {
     (organization) => organization.role === "OWNER" && !organization.onboardingComplete
   );
 
+  if (organizationsLoading) {
+    return <LoadingScreen />;
+  }
+
   if (!organizationsLoading && onboardingOrganization && location.pathname !== "/onboarding") {
     return <Navigate to="/onboarding" replace />;
   }
@@ -3095,7 +3099,7 @@ function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
   const sessionRef = useLatestSessionRef(session);
   const sessionKey = getSessionKey(session);
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(session));
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -3103,6 +3107,7 @@ function useOrganizations(session: ReturnType<typeof useAuth>["session"]) {
 
     if (!activeSession) {
       setOrganizations([]);
+      setLoading(false);
       return;
     }
 
