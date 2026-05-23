@@ -1,0 +1,146 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String       @unique
+  fullName    String?      @map("full_name")
+  avatarUrl   String?      @map("avatar_url")
+  memberships Membership[]
+  workspaces  Workspace[]  @relation("WorkspaceCreator")
+  projects    Project[]    @relation("ProjectCreator")
+  auditLogs   AuditLog[]
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("users")
+}
+
+model Organization {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  slug        String       @unique
+  roles       Role[]
+  memberships Membership[]
+  workspaces  Workspace[]
+  projects    Project[]
+  auditLogs   AuditLog[]
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("organizations")
+}
+
+model Role {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  permissions    Json         @default("{}")
+  memberships    Membership[]
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("roles")
+}
+
+model Membership {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  roleId         String       @map("role_id") @db.Uuid
+  role           Role         @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  invitedEmail   String?      @map("invited_email")
+  joinedAt       DateTime?    @map("joined_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([roleId])
+  @@map("memberships")
+}
+
+model Workspace {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdById    String?      @map("created_by_id") @db.Uuid
+  createdBy      User?        @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  name           String
+  slug           String
+  projects       Project[]
+  auditLogs      AuditLog[]
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([createdById])
+  @@map("workspaces")
+}
+
+model Project {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceId    String       @map("workspace_id") @db.Uuid
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdById    String?      @map("created_by_id") @db.Uuid
+  createdBy      User?        @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  name           String
+  slug           String
+  description    String?
+  auditLogs      AuditLog[]
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([workspaceId, slug])
+  @@index([organizationId])
+  @@index([workspaceId])
+  @@index([createdById])
+  @@map("projects")
+}
+
+model AuditLog {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String        @map("organization_id") @db.Uuid
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspaceId    String?       @map("workspace_id") @db.Uuid
+  workspace      Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  projectId      String?       @map("project_id") @db.Uuid
+  project        Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  actorUserId    String?       @map("actor_user_id") @db.Uuid
+  actorUser      User?         @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  action         String
+  targetType     AuditTarget   @map("target_type")
+  targetId       String?       @map("target_id") @db.Uuid
+  metadata       Json          @default("{}")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([organizationId, createdAt])
+  @@index([workspaceId])
+  @@index([projectId])
+  @@index([actorUserId])
+  @@map("audit_logs")
+}
+
+enum AuditTarget {
+  USER
+  ORGANIZATION
+  MEMBERSHIP
+  ROLE
+  WORKSPACE
+  PROJECT
+  SYSTEM
+}

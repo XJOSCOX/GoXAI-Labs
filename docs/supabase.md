@@ -20,3 +20,20 @@ DATABASE_URL=
 ```
 
 Use the anon key for user-scoped API work. Use the service role key only on trusted backend code.
+
+## Prisma
+
+Prisma connects to Supabase Postgres with `DATABASE_URL`.
+If `DATABASE_URL` uses Supabase's pooled connection string, set `DIRECT_URL` to the direct connection string for Prisma CLI commands.
+
+Run these from the repository root:
+
+```bash
+pnpm --filter @goxai/database db:validate
+pnpm --filter @goxai/database db:generate
+pnpm --filter @goxai/database db:push
+```
+
+The first application schema lives in `packages/database/prisma/schema.prisma`.
+
+Application code should import `getPrismaClient` from `@goxai/database` when it needs database queries.
