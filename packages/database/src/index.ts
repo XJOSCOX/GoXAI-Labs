@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export { createPrismaClient, getPrismaClient } from "./prisma.js";
-export type * from "@prisma/client";
+export * from "@prisma/client";
 
 export type SupabaseEnvironment = Record<string, string | undefined>;
 
