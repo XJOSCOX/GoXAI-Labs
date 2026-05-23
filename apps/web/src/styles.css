@@ -550,6 +550,35 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  align-items: start;
+  gap: 16px;
+}
+
+.organization-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+}
+
+.content-column,
+.side-column,
+.single-column {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+}
+
+.single-column {
+  width: min(780px, 100%);
+}
+
+.side-column {
+  position: sticky;
+  top: 82px;
+}
+
 .setup-form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   width: min(760px, 100%);
@@ -570,6 +599,19 @@ textarea:focus {
   width: min(980px, 100%);
 }
 
+.side-column .setup-form,
+.side-column .project-form,
+.side-column .dataset-form,
+.side-column .asset-form,
+.side-column .management-grid {
+  grid-template-columns: 1fr;
+  width: 100%;
+}
+
+.side-column textarea {
+  min-height: 86px;
+}
+
 .project-form > label:not(.wide) {
   grid-column: auto;
 }
@@ -577,6 +619,13 @@ textarea:focus {
 .management-panel {
   display: grid;
   gap: 14px;
+}
+
+.management-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+  align-items: start;
 }
 
 .management-grid {
@@ -589,9 +638,41 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.compact-management {
+  align-content: start;
+  grid-template-columns: 1fr;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.compact-management h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.management-grid .primary-button,
+.management-grid .secondary-button,
+.management-grid .ghost-button,
+.setup-form .primary-button,
+.project-form .primary-button,
+.dataset-form .primary-button,
+.asset-form .primary-button {
+  justify-self: start;
+  width: auto;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .role-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
   gap: 12px;
 }
 
@@ -621,6 +702,35 @@ textarea:focus {
   justify-self: start;
   width: auto;
   min-width: 220px;
+}
+
+.side-column .primary-button.wide,
+.side-column .setup-form .primary-button {
+  min-width: 0;
+}
+
+.advanced-fields {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px 12px;
+}
+
+.advanced-fields summary {
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.side-column .advanced-grid {
+  grid-template-columns: 1fr;
 }
 
 .back-link,
@@ -884,12 +994,23 @@ textarea:focus {
 
   .stat-grid,
   .detail-list,
+  .detail-layout,
+  .organization-layout,
   .management-grid,
   .setup-form,
   .project-form,
   .dataset-form,
   .asset-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .detail-layout,
+  .organization-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .side-column {
+    position: static;
   }
 }
 
@@ -907,6 +1028,8 @@ textarea:focus {
   .project-form,
   .dataset-form,
   .asset-form,
+  .advanced-grid,
+  .management-split,
   .management-grid,
   .role-grid,
   .table-row.assets-head,

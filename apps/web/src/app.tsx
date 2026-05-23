@@ -441,6 +441,53 @@ function OrganizationSetupPage() {
     }
   }
 
+  const createOrganizationForm = (
+    <form
+      className="panel setup-form"
+      onChange={organizationDraft.saveDraft}
+      onSubmit={handleSubmit}
+      ref={organizationDraft.formRef}
+    >
+      <div className="wide">
+        <p className="eyebrow">Create</p>
+        <h2>New organization</h2>
+      </div>
+      <label>
+        Organization name
+        <input name="name" placeholder="GoXAI Labs" required />
+      </label>
+      <label>
+        Workspace name
+        <input name="workspace" placeholder="Default workspace" required />
+      </label>
+      <label>
+        Type
+        <select name="type" defaultValue="COMPANY">
+          <option value="PERSONAL">Personal</option>
+          <option value="COMPANY">Company</option>
+          <option value="ENTERPRISE">Enterprise</option>
+          <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+        </select>
+      </label>
+      <label>
+        Plan
+        <select name="plan" defaultValue="FREE">
+          <option value="FREE">Free</option>
+          <option value="STARTER">Starter</option>
+          <option value="PRO">Pro</option>
+          <option value="BUSINESS">Business</option>
+          <option value="ENTERPRISE">Enterprise</option>
+        </select>
+      </label>
+      {error && <p className="form-error wide">{error}</p>}
+      {savedMessage && <p className="form-success wide">{savedMessage}</p>}
+      <button className="primary-button" type="submit" disabled={saving || loading}>
+        <Building2 size={18} />
+        {saving ? "Creating" : "Create organization"}
+      </button>
+    </form>
+  );
+
   return (
     <section className="page-stack">
       <div className="page-heading">
@@ -449,94 +496,61 @@ function OrganizationSetupPage() {
           <h1>Setup</h1>
         </div>
       </div>
-      {organizations.length > 0 && (
-        <section className="panel">
-          <div>
-            <p className="eyebrow">Existing organizations</p>
-            <h2>{organizations.length} workspace foundation</h2>
-          </div>
-          <label className="wide">
-            Manage organization
-            <select
-              value={activeOrganizationId}
-              onChange={(event) => setSelectedOrganizationId(event.target.value)}
-            >
-              {organizations.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="org-list">
-            {organizations.map((organization) => (
-              <article className="org-item" key={organization.id}>
-                <div>
-                  <strong>{organization.name}</strong>
-                  <span>{organization.workspace?.name ?? "Organization wide"}</span>
-                </div>
-                <span className="status-pill">{organization.role}</span>
-              </article>
-            ))}
-          </div>
-        </section>
+      {organizations.length > 0 ? (
+        <div className="detail-layout organization-layout">
+          <section className="content-column">
+            <section className="panel">
+              <div>
+                <p className="eyebrow">Existing organizations</p>
+                <h2>{organizations.length} workspace foundation</h2>
+              </div>
+              <label className="wide">
+                Manage organization
+                <select
+                  value={activeOrganizationId}
+                  onChange={(event) => setSelectedOrganizationId(event.target.value)}
+                >
+                  {organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="org-list">
+                {organizations.map((organization) => (
+                  <article className="org-item" key={organization.id}>
+                    <div>
+                      <strong>{organization.name}</strong>
+                      <span>{organization.workspace?.name ?? "Organization wide"}</span>
+                    </div>
+                    <span className="status-pill">{organization.role}</span>
+                  </article>
+                ))}
+              </div>
+            </section>
+            {(organizationDetailError || organizationDetailLoading) && (
+              <p className={organizationDetailError ? "form-error" : "muted-copy"}>
+                {organizationDetailError ?? "Loading organization settings."}
+              </p>
+            )}
+            {organization && (
+              <OrganizationManagementPanel
+                onChanged={async () => {
+                  await reload();
+                  await reloadOrganization();
+                }}
+                organization={organization}
+                session={session}
+                setPageError={setOrganizationDetailError}
+              />
+            )}
+          </section>
+          <aside className="side-column">{createOrganizationForm}</aside>
+        </div>
+      ) : (
+        <div className="single-column">{createOrganizationForm}</div>
       )}
-      {(organizationDetailError || organizationDetailLoading) && (
-        <p className={organizationDetailError ? "form-error" : "muted-copy"}>
-          {organizationDetailError ?? "Loading organization settings."}
-        </p>
-      )}
-      {organization && (
-        <OrganizationManagementPanel
-          onChanged={async () => {
-            await reload();
-            await reloadOrganization();
-          }}
-          organization={organization}
-          session={session}
-          setPageError={setOrganizationDetailError}
-        />
-      )}
-      <form
-        className="panel setup-form"
-        onChange={organizationDraft.saveDraft}
-        onSubmit={handleSubmit}
-        ref={organizationDraft.formRef}
-      >
-        <label>
-          Organization name
-          <input name="name" placeholder="GoXAI Labs" required />
-        </label>
-        <label>
-          Workspace name
-          <input name="workspace" placeholder="Default workspace" required />
-        </label>
-        <label>
-          Type
-          <select name="type" defaultValue="COMPANY">
-            <option value="PERSONAL">Personal</option>
-            <option value="COMPANY">Company</option>
-            <option value="ENTERPRISE">Enterprise</option>
-            <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
-          </select>
-        </label>
-        <label>
-          Plan
-          <select name="plan" defaultValue="FREE">
-            <option value="FREE">Free</option>
-            <option value="STARTER">Starter</option>
-            <option value="PRO">Pro</option>
-            <option value="BUSINESS">Business</option>
-            <option value="ENTERPRISE">Enterprise</option>
-          </select>
-        </label>
-        {error && <p className="form-error">{error}</p>}
-        {savedMessage && <p className="form-success">{savedMessage}</p>}
-        <button className="primary-button" type="submit" disabled={saving || loading}>
-          <Building2 size={18} />
-          {saving ? "Creating" : "Create organization"}
-        </button>
-      </form>
     </section>
   );
 }
@@ -640,58 +654,68 @@ function OrganizationManagementPanel({
         <h2>{organization.name}</h2>
       </div>
       {message && <p className="form-success">{message}</p>}
-      <form className="management-grid" onSubmit={handleUpdate}>
-        <label>
-          Name
-          <input name="name" defaultValue={organization.name} required />
-        </label>
-        <label>
-          Type
-          <select name="type" defaultValue={organization.type}>
-            <option value="PERSONAL">Personal</option>
-            <option value="COMPANY">Company</option>
-            <option value="ENTERPRISE">Enterprise</option>
-            <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
-          </select>
-        </label>
-        <label>
-          Plan
-          <select name="planTier" defaultValue={organization.planTier}>
-            <option value="FREE">Free</option>
-            <option value="STARTER">Starter</option>
-            <option value="PRO">Pro</option>
-            <option value="BUSINESS">Business</option>
-            <option value="ENTERPRISE">Enterprise</option>
-          </select>
-        </label>
-        <button className="primary-button" type="submit" disabled={saving}>
-          <Save size={18} />
-          {saving ? "Saving" : "Save organization"}
-        </button>
-      </form>
-      <form className="management-grid" onSubmit={handleAddMember}>
-        <label>
-          Member email
-          <input name="email" placeholder="teammate@example.com" type="email" required />
-        </label>
-        <label>
-          Role
-          <select name="role" defaultValue="ANNOTATOR">
-            {memberRoles.map((role) => (
-              <option key={role} value={role}>
-                {formatEnum(role)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button className="secondary-button" type="submit" disabled={memberSaving}>
-          <UserRoundPlus size={18} />
-          {memberSaving ? "Adding" : "Add member"}
-        </button>
-        <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
-          Delete empty organization
-        </button>
-      </form>
+      <div className="management-split">
+        <form className="management-grid compact-management" onSubmit={handleUpdate}>
+          <div className="wide">
+            <h3>Settings</h3>
+          </div>
+          <label>
+            Name
+            <input name="name" defaultValue={organization.name} required />
+          </label>
+          <label>
+            Type
+            <select name="type" defaultValue={organization.type}>
+              <option value="PERSONAL">Personal</option>
+              <option value="COMPANY">Company</option>
+              <option value="ENTERPRISE">Enterprise</option>
+              <option value="MARKETPLACE_VENDOR">Marketplace vendor</option>
+            </select>
+          </label>
+          <label>
+            Plan
+            <select name="planTier" defaultValue={organization.planTier}>
+              <option value="FREE">Free</option>
+              <option value="STARTER">Starter</option>
+              <option value="PRO">Pro</option>
+              <option value="BUSINESS">Business</option>
+              <option value="ENTERPRISE">Enterprise</option>
+            </select>
+          </label>
+          <div className="row-actions wide">
+            <button className="primary-button" type="submit" disabled={saving}>
+              <Save size={18} />
+              {saving ? "Saving" : "Save organization"}
+            </button>
+            <button className="ghost-button danger-button" type="button" onClick={handleDeleteOrganization} disabled={saving}>
+              Delete empty organization
+            </button>
+          </div>
+        </form>
+        <form className="management-grid compact-management" onSubmit={handleAddMember}>
+          <div className="wide">
+            <h3>Add member</h3>
+          </div>
+          <label>
+            Member email
+            <input name="email" placeholder="teammate@example.com" type="email" required />
+          </label>
+          <label>
+            Role
+            <select name="role" defaultValue="ANNOTATOR">
+              {memberRoles.map((role) => (
+                <option key={role} value={role}>
+                  {formatEnum(role)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="secondary-button" type="submit" disabled={memberSaving}>
+            <UserRoundPlus size={18} />
+            {memberSaving ? "Adding" : "Add member"}
+          </button>
+        </form>
+      </div>
       <MembersTable
         members={organization.memberships}
         onChanged={onChanged}
@@ -1179,42 +1203,46 @@ function ProjectDetailPage() {
           <p className="muted-copy">Loading project details.</p>
         </section>
       ) : project ? (
-        <>
-          <section className="panel">
-            <div>
-              <p className="eyebrow">Project</p>
-              <h2>{project.name}</h2>
-            </div>
-            <dl className="detail-list">
+        <div className="detail-layout">
+          <section className="content-column">
+            <section className="panel">
               <div>
-                <dt>Organization</dt>
-                <dd>{project.organization.name}</dd>
+                <p className="eyebrow">Project</p>
+                <h2>{project.name}</h2>
               </div>
-              <div>
-                <dt>Data type</dt>
-                <dd>{formatEnum(project.dataType)}</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd>{formatEnum(project.status)}</dd>
-              </div>
-            </dl>
+              <dl className="detail-list">
+                <div>
+                  <dt>Organization</dt>
+                  <dd>{project.organization.name}</dd>
+                </div>
+                <div>
+                  <dt>Data type</dt>
+                  <dd>{formatEnum(project.dataType)}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{formatEnum(project.status)}</dd>
+                </div>
+              </dl>
+            </section>
+            <DatasetsTable datasets={datasets} loading={datasetsLoading} projectScoped />
           </section>
-          <ProjectSettingsPanel
-            onChanged={reloadProject}
-            project={project}
-            session={session}
-            setPageError={setDatasetsError}
-          />
-          <DatasetForm
-            defaultProjectId={project.id}
-            onCreated={reloadDatasets}
-            projects={[project]}
-            session={session}
-            setPageError={setDatasetsError}
-          />
-          <DatasetsTable datasets={datasets} loading={datasetsLoading} projectScoped />
-        </>
+          <aside className="side-column">
+            <ProjectSettingsPanel
+              onChanged={reloadProject}
+              project={project}
+              session={session}
+              setPageError={setDatasetsError}
+            />
+            <DatasetForm
+              defaultProjectId={project.id}
+              onCreated={reloadDatasets}
+              projects={[project]}
+              session={session}
+              setPageError={setDatasetsError}
+            />
+          </aside>
+        </div>
       ) : !projectError ? (
         <section className="panel">
           <p className="muted-copy">Project was not found.</p>
@@ -1758,52 +1786,56 @@ function DatasetDetailPage() {
           <p className="muted-copy">Loading dataset details.</p>
         </section>
       ) : dataset ? (
-        <>
-          <section className="panel">
-            <div>
-              <p className="eyebrow">Dataset</p>
-              <h2>{dataset.name}</h2>
-            </div>
-            <dl className="detail-list">
+        <div className="detail-layout">
+          <section className="content-column">
+            <section className="panel">
               <div>
-                <dt>Project</dt>
-                <dd>{dataset.project.name}</dd>
+                <p className="eyebrow">Dataset</p>
+                <h2>{dataset.name}</h2>
               </div>
-              <div>
-                <dt>Version</dt>
-                <dd>v{dataset.version}</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd>{formatEnum(dataset.status)}</dd>
-              </div>
-            </dl>
+              <dl className="detail-list">
+                <div>
+                  <dt>Project</dt>
+                  <dd>{dataset.project.name}</dd>
+                </div>
+                <div>
+                  <dt>Version</dt>
+                  <dd>v{dataset.version}</dd>
+                </div>
+                <div>
+                  <dt>Status</dt>
+                  <dd>{formatEnum(dataset.status)}</dd>
+                </div>
+              </dl>
+            </section>
+            <DatasetTasksPanel
+              dataset={dataset}
+              loading={tasksLoading}
+              onGenerated={reloadTasks}
+              session={session}
+              setPageError={setTasksError}
+              tasks={tasks}
+            />
+            <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
           </section>
-          <DatasetSettingsPanel
-            dataset={dataset}
-            onChanged={reloadDataset}
-            session={session}
-            setPageError={setTasksError}
-          />
-          <AssetForm
-            dataset={dataset}
-            onCreated={async () => {
-              await reloadAssets();
-              await reloadTasks();
-            }}
-            session={session}
-            setPageError={setAssetsError}
-          />
-          <DatasetTasksPanel
-            dataset={dataset}
-            loading={tasksLoading}
-            onGenerated={reloadTasks}
-            session={session}
-            setPageError={setTasksError}
-            tasks={tasks}
-          />
-          <AssetsTable assets={assets} loading={assetsLoading} session={session} setPageError={setAssetsError} />
-        </>
+          <aside className="side-column">
+            <DatasetSettingsPanel
+              dataset={dataset}
+              onChanged={reloadDataset}
+              session={session}
+              setPageError={setTasksError}
+            />
+            <AssetForm
+              dataset={dataset}
+              onCreated={async () => {
+                await reloadAssets();
+                await reloadTasks();
+              }}
+              session={session}
+              setPageError={setAssetsError}
+            />
+          </aside>
+        </div>
       ) : !datasetError ? (
         <section className="panel">
           <p className="muted-copy">Dataset was not found.</p>
@@ -1894,34 +1926,39 @@ function AssetForm({
         R2 object key
         <input name="objectKey" placeholder="Auto-generated for uploads" />
       </label>
-      <label>
-        File name
-        <input name="fileName" placeholder="image-001.jpg" />
-      </label>
-      <label>
-        MIME type
-        <input name="mimeType" placeholder="image/jpeg" />
-      </label>
-      <label>
-        File size bytes
-        <input name="fileSize" inputMode="numeric" placeholder="2483912" />
-      </label>
-      <label>
-        Checksum
-        <input name="checksum" placeholder="Optional hash" />
-      </label>
-      <label>
-        Width
-        <input name="width" inputMode="numeric" placeholder="Optional" />
-      </label>
-      <label>
-        Height
-        <input name="height" inputMode="numeric" placeholder="Optional" />
-      </label>
-      <label>
-        Duration seconds
-        <input name="duration" inputMode="decimal" placeholder="Optional" />
-      </label>
+      <details className="advanced-fields wide">
+        <summary>Manual registration fields</summary>
+        <div className="advanced-grid">
+          <label>
+            File name
+            <input name="fileName" placeholder="image-001.jpg" />
+          </label>
+          <label>
+            MIME type
+            <input name="mimeType" placeholder="image/jpeg" />
+          </label>
+          <label>
+            File size bytes
+            <input name="fileSize" inputMode="numeric" placeholder="2483912" />
+          </label>
+          <label>
+            Checksum
+            <input name="checksum" placeholder="Optional hash" />
+          </label>
+          <label>
+            Width
+            <input name="width" inputMode="numeric" placeholder="Optional" />
+          </label>
+          <label>
+            Height
+            <input name="height" inputMode="numeric" placeholder="Optional" />
+          </label>
+          <label>
+            Duration seconds
+            <input name="duration" inputMode="decimal" placeholder="Optional" />
+          </label>
+        </div>
+      </details>
       {savedMessage && <p className="form-success wide">{savedMessage}</p>}
       <button className="primary-button wide" type="submit" disabled={saving}>
         <CloudUpload size={18} />
