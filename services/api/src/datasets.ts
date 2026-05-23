@@ -89,6 +89,63 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.get("/:datasetId", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findFirst({
+    where: {
+      id: datasetId,
+      organization: {
+        memberships: {
+          some: {
+            userId: user.id,
+            status: "ACTIVE"
+          }
+        }
+      }
+    },
+    include: {
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      },
+      project: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          dataType: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found or you do not have access." });
+    return;
+  }
+
+  response.status(200).json({
+    dataset: serializeDataset(dataset)
+  });
+});
+
 router.post("/", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
 

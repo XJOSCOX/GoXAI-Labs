@@ -3,8 +3,10 @@ import {
   BriefcaseBusiness,
   Building2,
   CheckCircle2,
+  CloudUpload,
   Database,
   FolderKanban,
+  HardDrive,
   LogOut,
   Moon,
   ShieldCheck,
@@ -15,13 +17,17 @@ import {
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import {
+  createAsset,
   createDataset,
   createOrganization,
   createProject,
+  getDataset,
   getProject,
+  listAssets,
   listDatasets,
   listOrganizations,
   listProjects,
+  type AssetSummary,
   type DatasetSummary,
   type OrganizationSummary,
   type ProjectSummary
@@ -48,6 +54,7 @@ export function App() {
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="projects/:projectId" element={<ProjectDetailPage />} />
           <Route path="datasets" element={<DatasetsPage />} />
+          <Route path="datasets/:datasetId" element={<DatasetDetailPage />} />
         </Route>
       </Routes>
     </AuthProvider>
@@ -679,11 +686,11 @@ function ProjectDetailPage() {
           />
           <DatasetsTable datasets={datasets} loading={datasetsLoading} projectScoped />
         </>
-      ) : (
+      ) : !projectError ? (
         <section className="panel">
           <p className="muted-copy">Project was not found.</p>
         </section>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -851,7 +858,9 @@ function DatasetRow({ dataset, projectScoped }: { dataset: DatasetSummary; proje
   return (
     <article className="table-row project-row">
       <span>
-        <strong>{dataset.name}</strong>
+        <Link className="table-link" to={`/datasets/${dataset.id}`}>
+          {dataset.name}
+        </Link>
         <small>{dataset.organization.name}</small>
       </span>
       <span>{projectScoped ? `v${dataset.version}` : dataset.project.name}</span>
@@ -859,6 +868,212 @@ function DatasetRow({ dataset, projectScoped }: { dataset: DatasetSummary; proje
         <span className="status-pill compact">{formatEnum(dataset.status)}</span>
       </span>
       <span>{formatDate(dataset.updatedAt)}</span>
+    </article>
+  );
+}
+
+function DatasetDetailPage() {
+  const { datasetId = "" } = useParams();
+  const { session } = useAuth();
+  const { dataset, error: datasetError, loading: datasetLoading } = useDataset(session, datasetId);
+  const {
+    assets,
+    error: assetsError,
+    loading: assetsLoading,
+    reload: reloadAssets,
+    setError: setAssetsError
+  } = useAssets(session, { datasetId });
+
+  return (
+    <section className="page-stack">
+      <div className="page-heading">
+        <div>
+          <Link className="back-link" to="/datasets">
+            Datasets
+          </Link>
+          <h1>{dataset?.name ?? "Dataset detail"}</h1>
+        </div>
+      </div>
+      {(datasetError ?? assetsError) && <p className="form-error">{datasetError ?? assetsError}</p>}
+      {datasetLoading ? (
+        <section className="panel">
+          <p className="muted-copy">Loading dataset details.</p>
+        </section>
+      ) : dataset ? (
+        <>
+          <section className="panel">
+            <div>
+              <p className="eyebrow">Dataset</p>
+              <h2>{dataset.name}</h2>
+            </div>
+            <dl className="detail-list">
+              <div>
+                <dt>Project</dt>
+                <dd>{dataset.project.name}</dd>
+              </div>
+              <div>
+                <dt>Version</dt>
+                <dd>v{dataset.version}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>{formatEnum(dataset.status)}</dd>
+              </div>
+            </dl>
+          </section>
+          <AssetForm
+            dataset={dataset}
+            onCreated={reloadAssets}
+            session={session}
+            setPageError={setAssetsError}
+          />
+          <AssetsTable assets={assets} loading={assetsLoading} />
+        </>
+      ) : !datasetError ? (
+        <section className="panel">
+          <p className="muted-copy">Dataset was not found.</p>
+        </section>
+      ) : null}
+    </section>
+  );
+}
+
+function AssetForm({
+  dataset,
+  onCreated,
+  session,
+  setPageError
+}: {
+  dataset: DatasetSummary;
+  onCreated: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    setSavedMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const asset = await createAsset(session, {
+        datasetId: dataset.id,
+        bucket: getFormValue(event, "bucket"),
+        objectKey: getFormValue(event, "objectKey"),
+        fileName: getFormValue(event, "fileName"),
+        mimeType: getFormValue(event, "mimeType"),
+        fileSize: getFormValue(event, "fileSize"),
+        checksum: getFormValue(event, "checksum"),
+        width: getFormValue(event, "width"),
+        height: getFormValue(event, "height"),
+        duration: getFormValue(event, "duration")
+      });
+
+      form.reset();
+      setSavedMessage(`${asset.fileName} was registered from R2.`);
+      await onCreated();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to register R2 asset.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="panel asset-form" onSubmit={handleSubmit}>
+      <label>
+        R2 bucket
+        <input name="bucket" placeholder="Uses R2_BUCKET when empty" />
+      </label>
+      <label>
+        R2 object key
+        <input name="objectKey" placeholder="datasets/training-set-v1/image-001.jpg" required />
+      </label>
+      <label>
+        File name
+        <input name="fileName" placeholder="image-001.jpg" required />
+      </label>
+      <label>
+        MIME type
+        <input name="mimeType" placeholder="image/jpeg" required />
+      </label>
+      <label>
+        File size bytes
+        <input name="fileSize" inputMode="numeric" placeholder="2483912" required />
+      </label>
+      <label>
+        Checksum
+        <input name="checksum" placeholder="Optional hash" />
+      </label>
+      <label>
+        Width
+        <input name="width" inputMode="numeric" placeholder="Optional" />
+      </label>
+      <label>
+        Height
+        <input name="height" inputMode="numeric" placeholder="Optional" />
+      </label>
+      <label>
+        Duration seconds
+        <input name="duration" inputMode="decimal" placeholder="Optional" />
+      </label>
+      {savedMessage && <p className="form-success wide">{savedMessage}</p>}
+      <button className="primary-button wide" type="submit" disabled={saving}>
+        <CloudUpload size={18} />
+        {saving ? "Registering" : "Register R2 asset"}
+      </button>
+    </form>
+  );
+}
+
+function AssetsTable({ assets, loading }: { assets: AssetSummary[]; loading: boolean }) {
+  return (
+    <section className="table-panel">
+      <div className="table-row assets-head table-head">
+        <span>File</span>
+        <span>Provider</span>
+        <span>Size</span>
+        <span>Registered</span>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <HardDrive size={28} />
+          <strong>Loading assets</strong>
+          <span>Checking registered R2 objects for this dataset.</span>
+        </div>
+      ) : assets.length > 0 ? (
+        assets.map((asset) => <AssetRow asset={asset} key={asset.id} />)
+      ) : (
+        <div className="empty-state">
+          <HardDrive size={28} />
+          <strong>No assets registered</strong>
+          <span>Register R2 object metadata before generating upload flows.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AssetRow({ asset }: { asset: AssetSummary }) {
+  return (
+    <article className="table-row assets-head project-row">
+      <span>
+        <strong>{asset.fileName}</strong>
+        <small>{asset.objectKey}</small>
+      </span>
+      <span>{asset.provider}</span>
+      <span>{formatBytes(asset.fileSize)}</span>
+      <span>{formatDate(asset.createdAt)}</span>
     </article>
   );
 }
@@ -1006,6 +1221,80 @@ function useDatasets(session: ReturnType<typeof useAuth>["session"], projectId?:
   };
 }
 
+function useDataset(session: ReturnType<typeof useAuth>["session"], datasetId: string) {
+  const [dataset, setDataset] = useState<DatasetSummary | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!session || !datasetId) {
+      setDataset(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setDataset(await getDataset(session, datasetId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load dataset.");
+    } finally {
+      setLoading(false);
+    }
+  }, [datasetId, session]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    dataset,
+    error,
+    loading,
+    reload
+  };
+}
+
+function useAssets(
+  session: ReturnType<typeof useAuth>["session"],
+  input: { datasetId?: string; projectId?: string } = {}
+) {
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!session) {
+      setAssets([]);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setAssets(await listAssets(session, input));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load assets.");
+    } finally {
+      setLoading(false);
+    }
+  }, [input.datasetId, input.projectId, session]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    assets,
+    error,
+    loading,
+    reload,
+    setError
+  };
+}
+
 function formatEnum(value: string) {
   return value
     .toLowerCase()
@@ -1020,6 +1309,20 @@ function formatDate(value: string) {
     day: "numeric",
     year: "numeric"
   }).format(new Date(value));
+}
+
+function formatBytes(value: string) {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 B";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const amount = bytes / 1024 ** index;
+
+  return `${amount.toFixed(amount >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
 function LoadingScreen() {

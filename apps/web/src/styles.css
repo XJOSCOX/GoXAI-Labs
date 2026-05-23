@@ -516,12 +516,18 @@ textarea:focus {
   width: min(760px, 100%);
 }
 
+.asset-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: min(980px, 100%);
+}
+
 .project-form > label:not(.wide) {
   grid-column: auto;
 }
 
 .project-form .primary-button.wide,
 .dataset-form .primary-button.wide,
+.asset-form .primary-button.wide,
 .setup-form .primary-button {
   justify-self: start;
   width: auto;
@@ -584,6 +590,10 @@ textarea:focus {
   grid-template-columns: 2fr 1fr 1fr 1fr;
   gap: 14px;
   padding: 14px 18px;
+}
+
+.table-row.assets-head {
+  grid-template-columns: minmax(0, 2fr) 1fr 1fr 1fr;
 }
 
 .table-head {
@@ -663,7 +673,8 @@ textarea:focus {
   .detail-list,
   .setup-form,
   .project-form,
-  .dataset-form {
+  .dataset-form,
+  .asset-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -681,6 +692,8 @@ textarea:focus {
   .setup-form,
   .project-form,
   .dataset-form,
+  .asset-form,
+  .table-row.assets-head,
   .table-row {
     grid-template-columns: 1fr;
   }

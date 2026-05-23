@@ -108,6 +108,54 @@ export interface CreateDatasetInput {
   description?: string;
 }
 
+export interface AssetSummary {
+  id: string;
+  organizationId: string;
+  projectId: string | null;
+  datasetId: string | null;
+  provider: string;
+  bucket: string;
+  objectKey: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: string;
+  checksum: string | null;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  metadata: Record<string, unknown> | null;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  dataset: {
+    id: string;
+    name: string;
+    version: number;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAssetInput {
+  datasetId: string;
+  bucket?: string;
+  objectKey: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: string;
+  checksum?: string;
+  width?: string;
+  height?: string;
+  duration?: string;
+}
+
 export async function createSupabaseBrowserClient() {
   const response = await fetch(`${apiUrl}/api/config`);
 
@@ -225,6 +273,16 @@ export async function listDatasets(session: Session, projectId?: string) {
   return ((await response.json()) as { datasets: DatasetSummary[] }).datasets;
 }
 
+export async function getDataset(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load dataset."));
+  }
+
+  return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
 export async function createDataset(session: Session, input: CreateDatasetInput) {
   const response = await authenticatedFetch(session, "/api/datasets", {
     method: "POST",
@@ -236,6 +294,40 @@ export async function createDataset(session: Session, input: CreateDatasetInput)
   }
 
   return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
+export async function listAssets(session: Session, input: { datasetId?: string; projectId?: string } = {}) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/assets${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load assets."));
+  }
+
+  return ((await response.json()) as { assets: AssetSummary[] }).assets;
+}
+
+export async function createAsset(session: Session, input: CreateAssetInput) {
+  const response = await authenticatedFetch(session, "/api/assets", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to register asset."));
+  }
+
+  return ((await response.json()) as { asset: AssetSummary }).asset;
 }
 
 function authenticatedFetch(session: Session, path: string, init: RequestInit = {}) {
@@ -253,6 +345,12 @@ async function getApiError(response: Response, fallback: string) {
   const payload = (await response.json().catch(() => ({}))) as { error?: string };
 
   return payload.error ?? fallback;
+}
+
+function removeEmptyValues<T extends object>(input: T) {
+  return Object.fromEntries(
+    Object.entries(input).filter(([, value]) => value !== undefined && value !== "")
+  );
 }
 
 export type { SupabaseClient };
