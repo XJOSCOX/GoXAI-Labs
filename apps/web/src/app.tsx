@@ -288,7 +288,15 @@ function AppShell() {
           <strong className="brand-wordmark">GoXAi Lab</strong>
         </div>
         <section className="sidebar-profile">
-          <div className="avatar">{getInitials(name, email)}</div>
+          <div className="avatar">
+            <svg className="avatar-orbit" viewBox="0 0 100 100" aria-hidden="true">
+              <circle className="avatar-orbit-dark" cx="50" cy="50" r="42" />
+              <path className="avatar-orbit-line cyan" d="M51 8 C28 6 32 22 43 25 C59 30 50 43 32 43 C14 43 18 61 36 64 C55 68 49 82 31 83 C19 84 27 95 51 92" />
+              <path className="avatar-orbit-line yellow" d="M43 10 C22 12 24 27 39 31 C55 35 49 48 30 48 C13 48 17 66 36 69 C54 72 52 87 34 87 C25 88 31 95 55 91" />
+              <path className="avatar-orbit-line magenta" d="M58 9 C35 6 36 20 49 24 C65 29 55 40 37 39 C19 39 21 56 40 61 C58 66 50 78 32 77 C20 77 25 91 49 93" />
+            </svg>
+            <span>{getInitials(name, email)}</span>
+          </div>
           <div className="sidebar-profile-info">
             <strong>{name}</strong>
             <span>{email}</span>
