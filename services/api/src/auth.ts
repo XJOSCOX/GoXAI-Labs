@@ -5,7 +5,8 @@ import {
   GlobalRole,
   MembershipRole,
   OrganizationType,
-  PlanTier
+  PlanTier,
+  Prisma
 } from "@goxai/database";
 import type { Request, Response, NextFunction } from "express";
 
@@ -199,63 +200,81 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
   const organizationDescription = getMetadataString(metadata.organization_description);
   const jobTitle = getMetadataString(metadata.job_title);
 
-  await prisma.$transaction(async (tx) => {
-    const organization = await tx.organization.create({
-      data: {
-        name: organizationName,
-        slug: organizationSlug,
-        email: organizationEmail,
-        description: organizationDescription,
-        type: organizationType,
-        planTier,
-        ownerId: userId,
-        onboardingComplete: false,
-        onboardingJson: {
-          signupType: "organization",
-          founderTitle: jobTitle,
-          organizationEmail,
-          createdFrom: "signup",
-          completed: false
+  try {
+    await prisma.$transaction(async (tx) => {
+      const organization = await tx.organization.create({
+        data: {
+          name: organizationName,
+          slug: organizationSlug,
+          email: organizationEmail,
+          description: organizationDescription,
+          type: organizationType,
+          planTier,
+          ownerId: userId,
+          onboardingComplete: false,
+          onboardingJson: {
+            signupType: "organization",
+            founderTitle: jobTitle,
+            organizationEmail,
+            createdFrom: "signup",
+            completed: false
+          }
         }
-      }
-    });
+      });
 
-    const workspace = await tx.workspace.create({
-      data: {
-        name: workspaceName,
-        slug: workspaceSlug,
-        description: organizationDescription,
-        organizationId: organization.id
-      }
-    });
-
-    const membership = await tx.membership.create({
-      data: {
-        userId,
-        organizationId: organization.id,
-        workspaceId: workspace.id,
-        role: MembershipRole.OWNER,
-        status: "ACTIVE",
-        joinedAt: new Date()
-      }
-    });
-
-    await tx.auditLog.create({
-      data: {
-        organizationId: organization.id,
-        workspaceId: workspace.id,
-        userId,
-        action: "organization.created_from_signup",
-        entityType: "organization",
-        entityId: organization.id,
-        metadata: {
-          organizationName,
-          organizationEmail,
-          membershipId: membership.id
+      const workspace = await tx.workspace.create({
+        data: {
+          name: workspaceName,
+          slug: workspaceSlug,
+          description: organizationDescription,
+          organizationId: organization.id
         }
+      });
+
+      const membership = await tx.membership.create({
+        data: {
+          userId,
+          organizationId: organization.id,
+          workspaceId: workspace.id,
+          role: MembershipRole.OWNER,
+          status: "ACTIVE",
+          joinedAt: new Date()
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          organizationId: organization.id,
+          workspaceId: workspace.id,
+          userId,
+          action: "organization.created_from_signup",
+          entityType: "organization",
+          entityId: organization.id,
+          metadata: {
+            organizationName,
+            organizationEmail,
+            membershipId: membership.id
+          }
+        }
+      });
+    });
+  } catch (reason) {
+    const membership = await prisma.membership.findFirst({
+      where: {
+        userId,
+        status: "ACTIVE"
+      },
+      select: {
+        id: true
       }
     });
-  });
+
+    if (membership && reason instanceof Prisma.PrismaClientKnownRequestError && reason.code === "P2002") {
+      return;
+    }
+
+    throw reason;
+  }
 }
 
 async function getUniqueOrganizationSlug(name: string) {

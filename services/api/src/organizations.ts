@@ -50,6 +50,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
       slug: membership.organization.slug,
       email: membership.organization.email,
       description: membership.organization.description,
+      onboardingComplete: membership.organization.onboardingComplete,
       type: membership.organization.type,
       planTier: membership.organization.planTier,
       role: membership.role,
