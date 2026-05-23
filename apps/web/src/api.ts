@@ -174,6 +174,15 @@ export interface AssetUploadUrl {
   asset: CreateAssetInput;
 }
 
+export interface ClientLogInput {
+  entityId?: string;
+  entityType?: string;
+  event: string;
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  metadata?: Record<string, unknown>;
+}
+
 export async function createSupabaseBrowserClient() {
   const response = await fetch(`${apiUrl}/api/config`);
 
@@ -378,6 +387,17 @@ export async function uploadFileToSignedUrl(file: File, upload: AssetUploadUrl["
 
   if (!response.ok) {
     throw new Error(`R2 upload failed with status ${response.status}. Check the bucket CORS settings and R2 credentials.`);
+  }
+}
+
+export async function logClientEvent(session: Session, input: ClientLogInput) {
+  const response = await authenticatedFetch(session, "/api/logs/client", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to save client log."));
   }
 }
 

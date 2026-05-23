@@ -4,6 +4,8 @@ import { getSupabaseConfig } from "@goxai/database";
 import { assetsRouter } from "./assets.js";
 import { getBearerToken, syncUserFromAccessToken } from "./auth.js";
 import { datasetsRouter } from "./datasets.js";
+import { apiRequestLogger, logApiException } from "./logging.js";
+import { logsRouter } from "./logs.js";
 import { organizationsRouter } from "./organizations.js";
 import { projectsRouter } from "./projects.js";
 
@@ -16,6 +18,7 @@ app.use(
   })
 );
 app.use(express.json());
+app.use(apiRequestLogger);
 
 app.get("/health", (_request, response) => {
   response.status(200).json({
@@ -95,15 +98,17 @@ app.use("/api/organizations", organizationsRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/datasets", datasetsRouter);
 app.use("/api/assets", assetsRouter);
+app.use("/api/logs", logsRouter);
 
 app.use(
   (
     error: unknown,
-    _request: express.Request,
+    request: express.Request,
     response: express.Response,
     _next: express.NextFunction
   ) => {
     console.error(error);
+    void logApiException(request, error);
 
     if (response.headersSent) {
       return;

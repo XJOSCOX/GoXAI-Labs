@@ -8,6 +8,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { getRequestId, saveAuditLog } from "./logging.js";
 
 const router = Router();
 
@@ -31,6 +32,19 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
   const config = getR2Config();
 
   if (!config.ok) {
+    void saveAuditLog({
+      action: "asset.upload_url.config_missing",
+      userId: user.id,
+      entityType: "dataset",
+      entityId: parsed.value.datasetId,
+      metadata: {
+        requestId: getRequestId(request),
+        error: config.error,
+        fileName: parsed.value.fileName,
+        mimeType: parsed.value.mimeType,
+        fileSize: parsed.value.fileSize.toString()
+      }
+    });
     response.status(503).json({ error: config.error });
     return;
   }
@@ -101,6 +115,23 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
     ContentType: parsed.value.mimeType
   });
   const uploadUrl = await getSignedUrl(client, command, { expiresIn: 60 * 10 });
+  void saveAuditLog({
+    action: "asset.upload_url.created",
+    organizationId: dataset.organizationId,
+    projectId: dataset.projectId,
+    userId: user.id,
+    entityType: "dataset",
+    entityId: dataset.id,
+    metadata: {
+      requestId: getRequestId(request),
+      bucket: config.value.bucket,
+      objectKey,
+      fileName: parsed.value.fileName,
+      mimeType: parsed.value.mimeType,
+      fileSize: parsed.value.fileSize.toString(),
+      expiresInSeconds: 60 * 10
+    }
+  });
 
   response.status(201).json({
     upload: {

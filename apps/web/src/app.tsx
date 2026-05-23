@@ -28,6 +28,7 @@ import {
   listDatasets,
   listOrganizations,
   listProjects,
+  logClientEvent,
   uploadFileToSignedUrl,
   type AssetSummary,
   type DatasetSummary,
@@ -1059,7 +1060,26 @@ async function uploadAndRegisterAsset(
     fileSize: file.size.toString()
   });
 
-  await uploadFileToSignedUrl(file, signedUpload.upload);
+  try {
+    await uploadFileToSignedUrl(file, signedUpload.upload);
+  } catch (error) {
+    await logClientEvent(session, {
+      entityId: datasetId,
+      entityType: "dataset",
+      event: "r2_upload_failed",
+      level: "error",
+      message: error instanceof Error ? error.message : "R2 upload failed.",
+      metadata: {
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || "application/octet-stream",
+        objectKey: signedUpload.asset.objectKey,
+        uploadHost: getUrlHost(signedUpload.upload.uploadUrl)
+      }
+    }).catch(() => {});
+
+    throw error;
+  }
 
   return createAsset(session, signedUpload.asset);
 }
@@ -1358,6 +1378,14 @@ function getFormFile(event: FormEvent<HTMLFormElement>, name: string) {
   const value = form.get(name);
 
   return value instanceof File && value.size > 0 ? value : null;
+}
+
+function getUrlHost(value: string) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "unknown";
+  }
 }
 
 function LoadingScreen() {
