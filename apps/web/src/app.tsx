@@ -71,6 +71,14 @@ const maxBulkUploadFiles = 100;
 const maxBulkUploadBytes = 1024 ** 3;
 const folderInputAttributes = { directory: "", webkitdirectory: "" } as Record<string, string>;
 
+type UploadProgress = {
+  completed: number;
+  currentFile: string;
+  failed: number;
+  status: "uploading" | "complete" | "error";
+  total: number;
+};
+
 export function App() {
   return (
     <AuthProvider>
@@ -1184,6 +1192,7 @@ const projectStatuses = ["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "ARCHIVED"];
 function ProjectDetailPage() {
   const { projectId = "" } = useParams();
   const { session } = useAuth();
+  const [showDatasetModal, setShowDatasetModal] = useState(false);
   const { error: projectError, loading: projectLoading, project, reload: reloadProject } = useProject(session, projectId);
   const {
     datasets,
@@ -1202,6 +1211,12 @@ function ProjectDetailPage() {
           </Link>
           <h1>{project?.name ?? "Project detail"}</h1>
         </div>
+        {project && (
+          <button className="primary-button" type="button" onClick={() => setShowDatasetModal(true)}>
+            <Database size={18} />
+            New dataset
+          </button>
+        )}
       </div>
       {(projectError ?? datasetsError) && <p className="form-error">{projectError ?? datasetsError}</p>}
       {projectLoading ? (
@@ -1240,13 +1255,6 @@ function ProjectDetailPage() {
               session={session}
               setPageError={setDatasetsError}
             />
-            <DatasetForm
-              defaultProjectId={project.id}
-              onCreated={reloadDatasets}
-              projects={[project]}
-              session={session}
-              setPageError={setDatasetsError}
-            />
           </aside>
         </div>
       ) : !projectError ? (
@@ -1254,6 +1262,16 @@ function ProjectDetailPage() {
           <p className="muted-copy">Project was not found.</p>
         </section>
       ) : null}
+      {project && showDatasetModal && (
+        <DatasetCreateModal
+          defaultProjectId={project.id}
+          onClose={() => setShowDatasetModal(false)}
+          onCreated={reloadDatasets}
+          projects={[project]}
+          session={session}
+          setPageError={setDatasetsError}
+        />
+      )}
     </section>
   );
 }
@@ -1268,7 +1286,7 @@ function DatasetsPage() {
     reload: reloadDatasets,
     setError: setDatasetsError
   } = useDatasets(session);
-  const [showForm, setShowForm] = useState(false);
+  const [showDatasetModal, setShowDatasetModal] = useState(false);
 
   return (
     <section className="page-stack">
@@ -1280,20 +1298,18 @@ function DatasetsPage() {
         <button
           className="primary-button"
           type="button"
-          onClick={() => setShowForm((value) => !value)}
+          onClick={() => setShowDatasetModal(true)}
           disabled={projects.length === 0 || projectsLoading}
         >
           <Database size={18} />
-          {showForm ? "Close" : "New dataset"}
+          New dataset
         </button>
       </div>
       {(projectsError ?? datasetsError) && <p className="form-error">{projectsError ?? datasetsError}</p>}
-      {showForm && (
-        <DatasetForm
-          onCreated={async () => {
-            await reloadDatasets();
-            setShowForm(false);
-          }}
+      {showDatasetModal && (
+        <DatasetCreateModal
+          onClose={() => setShowDatasetModal(false)}
+          onCreated={reloadDatasets}
           projects={projects}
           session={session}
           setPageError={setDatasetsError}
@@ -1322,14 +1338,86 @@ function TasksPage() {
   );
 }
 
-function DatasetForm({
+function DatasetCreateModal({
   defaultProjectId,
+  onClose,
   onCreated,
   projects,
   session,
   setPageError
 }: {
   defaultProjectId?: string;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+  projects: ProjectSummary[];
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="dataset-modal-title"
+        aria-modal="true"
+        className="modal-panel"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Datasets</p>
+            <h2 id="dataset-modal-title">Create dataset</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close dataset form">
+            <X size={17} />
+          </button>
+        </div>
+        {modalError && <p className="form-error">{modalError}</p>}
+        <DatasetForm
+          defaultProjectId={defaultProjectId}
+          embedded
+          onCreated={async () => {
+            setModalError(null);
+            setPageError(null);
+            await onCreated();
+            onClose();
+          }}
+          projects={projects}
+          session={session}
+          setPageError={(error) => {
+            setModalError(error);
+            if (!error) {
+              setPageError(null);
+            }
+          }}
+        />
+      </section>
+    </div>
+  );
+}
+
+function DatasetForm({
+  defaultProjectId,
+  embedded = false,
+  onCreated,
+  projects,
+  session,
+  setPageError
+}: {
+  defaultProjectId?: string;
+  embedded?: boolean;
   onCreated: () => Promise<void>;
   projects: ProjectSummary[];
   session: ReturnType<typeof useAuth>["session"];
@@ -1374,7 +1462,7 @@ function DatasetForm({
 
   return (
     <form
-      className="panel dataset-form"
+      className={embedded ? "dataset-form" : "panel dataset-form"}
       onChange={datasetDraft.saveDraft}
       onSubmit={handleSubmit}
       ref={datasetDraft.formRef}
@@ -1868,6 +1956,7 @@ function AssetForm({
   const [dragActive, setDragActive] = useState(false);
   const [renameFiles, setRenameFiles] = useState(false);
   const [uploadFolder, setUploadFolder] = useState(`datasets/v${dataset.version}`);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [renamePrefix, setRenamePrefix] = useState(toSafeObjectKeyPart(dataset.name) || "asset");
   const assetDraft = useFormDraft(`goxai-draft-asset-${dataset.id}`);
   const selectedFilesRef = useRef<File[]>([]);
@@ -1910,7 +1999,23 @@ function AssetForm({
           throw new Error(`Upload up to ${formatBytes(String(maxBulkUploadBytes))} per batch.`);
         }
 
-        for (const file of selectedFiles) {
+        setUploadProgress({
+          completed: 0,
+          currentFile: selectedFiles[0]?.name ?? "",
+          failed: 0,
+          status: "uploading",
+          total: selectedFiles.length
+        });
+
+        for (const [index, file] of selectedFiles.entries()) {
+          setUploadProgress({
+            completed: uploaded.length,
+            currentFile: file.webkitRelativePath || file.name,
+            failed: failed.length,
+            status: "uploading",
+            total: selectedFiles.length
+          });
+
           try {
             uploaded.push(
               await uploadAndRegisterAsset(
@@ -1927,6 +2032,14 @@ function AssetForm({
           } catch (reason) {
             failed.push(`${file.name}: ${reason instanceof Error ? reason.message : "Upload failed."}`);
           }
+
+          setUploadProgress({
+            completed: uploaded.length,
+            currentFile: selectedFiles[index + 1]?.webkitRelativePath || selectedFiles[index + 1]?.name || file.name,
+            failed: failed.length,
+            status: "uploading",
+            total: selectedFiles.length
+          });
         }
 
         if (uploaded.length > 0) {
@@ -1940,6 +2053,14 @@ function AssetForm({
           );
           await onCreated();
         }
+
+        setUploadProgress({
+          completed: uploaded.length,
+          currentFile: "",
+          failed: failed.length,
+          status: failed.length > 0 ? "error" : "complete",
+          total: selectedFiles.length
+        });
 
         if (failed.length > 0) {
           setPageError(failed.slice(0, 3).join(" "));
@@ -1970,6 +2091,14 @@ function AssetForm({
       setSavedMessage(`${asset.fileName} was registered from R2.`);
       await onCreated();
     } catch (reason) {
+      setUploadProgress((current) =>
+        current
+          ? {
+              ...current,
+              status: "error"
+            }
+          : null
+      );
       setPageError(reason instanceof Error ? reason.message : "Unable to register R2 asset.");
     } finally {
       setSaving(false);
@@ -1997,6 +2126,7 @@ function AssetForm({
 
     setSelectedFiles(limited);
     setSavedMessage(null);
+    setUploadProgress(null);
   }
 
   return (
@@ -2075,6 +2205,7 @@ function AssetForm({
               onClick={() => {
                 setSelectedFiles([]);
                 setPageError(null);
+                setUploadProgress(null);
               }}
             >
               <X size={16} />
@@ -2118,6 +2249,9 @@ function AssetForm({
             value={renamePrefix}
           />
         </label>
+      )}
+      {uploadProgress && (
+        <UploadProgressPanel progress={uploadProgress} />
       )}
       <details className="advanced-fields wide">
         <summary>Manual registration fields</summary>
@@ -2166,6 +2300,34 @@ function AssetForm({
         {saving ? "Uploading" : selectedFiles.length > 0 ? `Upload ${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"}` : "Register R2 asset"}
       </button>
     </form>
+  );
+}
+
+function UploadProgressPanel({ progress }: { progress: UploadProgress }) {
+  const finished = progress.completed + progress.failed;
+  const percent = progress.total > 0 ? Math.round((finished / progress.total) * 100) : 0;
+  const statusText =
+    progress.status === "complete"
+      ? "Upload complete"
+      : progress.status === "error"
+        ? "Upload finished with errors"
+        : `Uploading ${finished + 1 > progress.total ? progress.total : finished + 1} of ${progress.total}`;
+
+  return (
+    <div className="upload-progress wide">
+      <div className="upload-progress-head">
+        <strong>{statusText}</strong>
+        <span>{percent}%</span>
+      </div>
+      <div className="progress-track" aria-label="Upload progress" aria-valuemax={100} aria-valuemin={0} aria-valuenow={percent} role="progressbar">
+        <span style={{ width: `${percent}%` }} />
+      </div>
+      <div className="upload-progress-meta">
+        <span>{progress.completed} uploaded</span>
+        <span>{progress.failed} failed</span>
+      </div>
+      {progress.currentFile && <p className="muted-copy">Current: {progress.currentFile}</p>}
+    </div>
   );
 }
 
