@@ -209,6 +209,7 @@ async function createSignupOrganizationIfNeeded(userId: string, metadata: Record
         type: organizationType,
         planTier,
         ownerId: userId,
+        onboardingComplete: false,
         onboardingJson: {
           signupType: "organization",
           founderTitle: jobTitle,

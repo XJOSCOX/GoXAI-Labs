@@ -112,6 +112,7 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         type: parsed.value.organizationType,
         planTier: parsed.value.planTier,
         ownerId: user.id,
+        onboardingComplete: true,
         onboardingJson: {
           createdFrom: "app",
           completed: true
@@ -266,6 +267,7 @@ router.patch("/:organizationId", async (request: AuthenticatedRequest, response)
         ...organizationData,
         ...(completeOnboarding
           ? {
+              onboardingComplete: true,
               onboardingJson: {
                 completed: true,
                 completedAt: new Date().toISOString(),
@@ -905,25 +907,13 @@ function serializeOrganization(organization: Organization) {
     slug: organization.slug,
     email: organization.email,
     description: organization.description,
-    onboardingComplete: isOnboardingComplete(organization.onboardingJson),
+    onboardingComplete: organization.onboardingComplete,
     type: organization.type,
     planTier: organization.planTier,
     ownerId: organization.ownerId,
     createdAt: organization.createdAt,
     updatedAt: organization.updatedAt
   };
-}
-
-function isOnboardingComplete(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return true;
-  }
-
-  if (!("createdFrom" in value) || (value as { createdFrom?: unknown }).createdFrom !== "signup") {
-    return true;
-  }
-
-  return (value as { completed?: unknown }).completed === true;
 }
 
 function serializeWorkspace(workspace: Workspace) {

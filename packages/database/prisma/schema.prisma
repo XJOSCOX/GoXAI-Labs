@@ -314,6 +314,7 @@ model Organization {
   type     OrganizationType @default(PERSONAL)
   planTier PlanTier         @default(FREE) @map("plan_tier")
   ownerId  String           @map("owner_id")
+  onboardingComplete Boolean @default(true) @map("onboarding_complete")
   onboardingJson Json?      @map("onboarding_json")
 
   owner               User                 @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
@@ -335,6 +336,7 @@ model Organization {
 
   @@index([ownerId])
   @@index([email])
+  @@index([onboardingComplete])
   @@index([type])
   @@index([planTier])
   @@map("organizations")
