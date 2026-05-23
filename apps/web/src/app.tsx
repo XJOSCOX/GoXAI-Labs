@@ -228,6 +228,19 @@ function RegisterPage() {
       const { firstName, lastName } = splitFullName(fullName);
       const organizationName = getFormValue(event, "organizationName");
       const organizationEmail = getFormValue(event, "organizationEmail");
+      const password = getFormValue(event, "password");
+      const confirmPassword = getFormValue(event, "confirmPassword");
+      const passwordError = getPasswordPolicyError(password);
+
+      if (passwordError) {
+        setFormError(passwordError);
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setFormError("Password and confirm password must match.");
+        return;
+      }
 
       if (signupType === "organization" && !organizationName) {
         setFormError("Organization name is required.");
@@ -242,7 +255,7 @@ function RegisterPage() {
       const result = await register({
         signupType,
         email: getFormValue(event, "email"),
-        password: getFormValue(event, "password"),
+        password,
         firstName,
         lastName,
         organizationName,
@@ -311,10 +324,24 @@ function RegisterPage() {
             </label>
           </>
         )}
-        <label className="wide">
+        <label>
           Password
-          <input name="password" type="password" autoComplete="new-password" minLength={8} required />
+          <input
+            name="password"
+            type="password"
+            autoComplete="new-password"
+            minLength={10}
+            pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[A-Za-z])(?=.*[^A-Za-z0-9]).{10,}"
+            required
+          />
         </label>
+        <label>
+          Confirm password
+          <input name="confirmPassword" type="password" autoComplete="new-password" minLength={10} required />
+        </label>
+        <p className="password-rules wide">
+          Use at least 10 characters with uppercase, lowercase, a number, a letter, and a symbol.
+        </p>
         {(formError ?? error) && <p className="form-error wide">{formError ?? error}</p>}
         {message && <p className="form-success wide">{message}</p>}
         <button className="primary-button wide" type="submit" disabled={loading}>
@@ -3476,6 +3503,34 @@ function splitFullName(fullName: string) {
     firstName,
     lastName: rest.join(" ")
   };
+}
+
+function getPasswordPolicyError(password: string) {
+  if (password.length < 10) {
+    return "Password must be at least 10 characters.";
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return "Password must include at least one uppercase letter.";
+  }
+
+  if (!/[a-z]/.test(password)) {
+    return "Password must include at least one lowercase letter.";
+  }
+
+  if (!/[0-9]/.test(password)) {
+    return "Password must include at least one number.";
+  }
+
+  if (!/[A-Za-z]/.test(password)) {
+    return "Password must include at least one letter.";
+  }
+
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return "Password must include at least one symbol.";
+  }
+
+  return null;
 }
 
 function getInitials(name: string, email: string) {
