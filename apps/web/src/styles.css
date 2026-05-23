@@ -1929,8 +1929,14 @@ textarea:focus {
 .asset-row-actions {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  flex-wrap: nowrap;
   gap: 8px;
+  width: 100%;
+}
+
+.asset-row-actions .ghost-button {
+  width: auto;
 }
 
 .project-row small {
