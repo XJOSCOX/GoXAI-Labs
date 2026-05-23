@@ -222,6 +222,11 @@ select {
   min-height: 40px;
 }
 
+input[type="checkbox"] {
+  min-height: 0;
+  width: auto;
+}
+
 textarea {
   min-height: 84px;
   padding-top: 10px;
@@ -731,6 +736,89 @@ textarea:focus {
 
 .side-column .advanced-grid {
   grid-template-columns: 1fr;
+}
+
+.drop-zone {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-soft));
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.drop-zone svg,
+.drop-zone strong {
+  color: var(--text);
+}
+
+.asset-form.drag-active .drop-zone {
+  border-color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
+}
+
+.upload-picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.file-picker-button {
+  display: inline-flex;
+  cursor: pointer;
+}
+
+.file-picker-button input {
+  display: none;
+}
+
+.selected-files {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.selected-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.selected-files-head div {
+  display: grid;
+  gap: 2px;
+}
+
+.selected-files-head span,
+.file-preview-list {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.file-preview-list {
+  display: grid;
+  gap: 4px;
+}
+
+.file-preview-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
 }
 
 .back-link,

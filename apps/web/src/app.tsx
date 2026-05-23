@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Eye,
   FileText,
+  FolderOpen,
   FolderKanban,
   HardDrive,
   LogOut,
@@ -19,6 +20,7 @@ import {
   Send,
   ShieldCheck,
   Sun,
+  X,
   UserCheck,
   UserRoundPlus
 } from "lucide-react";
@@ -64,6 +66,10 @@ import {
 } from "./api";
 import { AuthProvider, getFormValue, useAuth } from "./auth";
 import { useTheme } from "./theme";
+
+const maxBulkUploadFiles = 100;
+const maxBulkUploadBytes = 1024 ** 3;
+const folderInputAttributes = { directory: "", webkitdirectory: "" } as Record<string, string>;
 
 export function App() {
   return (
@@ -1858,12 +1864,22 @@ function AssetForm({
 }) {
   const [saving, setSaving] = useState(false);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [renameFiles, setRenameFiles] = useState(false);
+  const [uploadFolder, setUploadFolder] = useState(`datasets/v${dataset.version}`);
+  const [renamePrefix, setRenamePrefix] = useState(toSafeObjectKeyPart(dataset.name) || "asset");
   const assetDraft = useFormDraft(`goxai-draft-asset-${dataset.id}`);
+  const selectedFilesRef = useRef<File[]>([]);
+  const selectedBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
+
+  useEffect(() => {
+    selectedFilesRef.current = selectedFiles;
+  }, [selectedFiles]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
-    const file = getFormFile(event, "file");
     const objectKey = getFormValue(event, "objectKey");
     setSavedMessage(null);
     setPageError(null);
@@ -1873,7 +1889,7 @@ function AssetForm({
       return;
     }
 
-    if (!file && !objectKey) {
+    if (selectedFiles.length === 0 && !objectKey) {
       setPageError("R2 object key is required when registering an existing object.");
       return;
     }
@@ -1881,9 +1897,62 @@ function AssetForm({
     setSaving(true);
 
     try {
-      const asset = file
-        ? await uploadAndRegisterAsset(session, dataset.id, file, objectKey)
-        : await createAsset(session, {
+      if (selectedFiles.length > 0) {
+        const uploaded: AssetSummary[] = [];
+        const failed: string[] = [];
+        const batchBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
+
+        if (selectedFiles.length > maxBulkUploadFiles) {
+          throw new Error(`Upload up to ${maxBulkUploadFiles} files at once.`);
+        }
+
+        if (batchBytes > maxBulkUploadBytes) {
+          throw new Error(`Upload up to ${formatBytes(String(maxBulkUploadBytes))} per batch.`);
+        }
+
+        for (const file of selectedFiles) {
+          try {
+            uploaded.push(
+              await uploadAndRegisterAsset(
+                session,
+                dataset.id,
+                file,
+                buildUploadObjectKey(file, {
+                  folder: uploadFolder,
+                  prefix: renamePrefix,
+                  rename: renameFiles
+                })
+              )
+            );
+          } catch (reason) {
+            failed.push(`${file.name}: ${reason instanceof Error ? reason.message : "Upload failed."}`);
+          }
+        }
+
+        if (uploaded.length > 0) {
+          setSelectedFiles([]);
+          form.reset();
+          assetDraft.clearDraft();
+          setSavedMessage(
+            failed.length > 0
+              ? `${uploaded.length} file${uploaded.length === 1 ? "" : "s"} uploaded. ${failed.length} failed.`
+              : `${uploaded.length} file${uploaded.length === 1 ? "" : "s"} uploaded to R2.`
+          );
+          await onCreated();
+        }
+
+        if (failed.length > 0) {
+          setPageError(failed.slice(0, 3).join(" "));
+        }
+
+        if (uploaded.length === 0) {
+          throw new Error("No files uploaded. Check the first error and try again.");
+        }
+
+        return;
+      }
+
+      const asset = await createAsset(session, {
             datasetId: dataset.id,
             bucket: getFormValue(event, "bucket"),
             objectKey,
@@ -1898,7 +1967,7 @@ function AssetForm({
 
       form.reset();
       assetDraft.clearDraft();
-      setSavedMessage(`${asset.fileName} was ${file ? "uploaded to" : "registered from"} R2.`);
+      setSavedMessage(`${asset.fileName} was registered from R2.`);
       await onCreated();
     } catch (reason) {
       setPageError(reason instanceof Error ? reason.message : "Unable to register R2 asset.");
@@ -1907,28 +1976,160 @@ function AssetForm({
     }
   }
 
+  function addFiles(files: FileList | File[]) {
+    const incoming = Array.from(files).filter((file) => file.size > 0);
+
+    if (incoming.length === 0) {
+      return;
+    }
+
+    const merged = mergeFiles(selectedFilesRef.current, incoming);
+    const limited = merged.slice(0, maxBulkUploadFiles);
+    const totalBytes = limited.reduce((total, file) => total + file.size, 0);
+
+    if (merged.length > maxBulkUploadFiles) {
+      setPageError(`Upload up to ${maxBulkUploadFiles} files at once. Extra files were not added.`);
+    } else if (totalBytes > maxBulkUploadBytes) {
+      setPageError(`Upload up to ${formatBytes(String(maxBulkUploadBytes))} per batch. Remove some files before uploading.`);
+    } else {
+      setPageError(null);
+    }
+
+    setSelectedFiles(limited);
+    setSavedMessage(null);
+  }
+
   return (
     <form
-      className="panel asset-form"
+      className={`panel asset-form${dragActive ? " drag-active" : ""}`}
       onChange={assetDraft.saveDraft}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={(event) => {
+        event.preventDefault();
+        if (event.currentTarget === event.target) {
+          setDragActive(false);
+        }
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragActive(false);
+        addFiles(event.dataTransfer.files);
+      }}
       onSubmit={handleSubmit}
       ref={assetDraft.formRef}
     >
+      <div className="wide">
+        <p className="eyebrow">Assets</p>
+        <h2>Bulk upload</h2>
+      </div>
+      <div className="drop-zone wide">
+        <CloudUpload size={22} />
+        <strong>Drop images or files here</strong>
+        <span>Choose many files, or choose a folder to keep the folder paths in R2.</span>
+        <div className="upload-picker-row">
+          <label className="secondary-button file-picker-button">
+            <CloudUpload size={16} />
+            Select files
+            <input
+              multiple
+              name="files"
+              onChange={(event) => {
+                addFiles(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+              }}
+              type="file"
+            />
+          </label>
+          <label className="secondary-button file-picker-button">
+            <FolderOpen size={16} />
+            Select folder
+            <input
+              multiple
+              name="folder"
+              onChange={(event) => {
+                addFiles(event.currentTarget.files ?? []);
+                event.currentTarget.value = "";
+              }}
+              type="file"
+              {...folderInputAttributes}
+            />
+          </label>
+        </div>
+      </div>
+      {selectedFiles.length > 0 && (
+        <div className="selected-files wide">
+          <div className="selected-files-head">
+            <div>
+              <strong>{selectedFiles.length} selected</strong>
+              <span>{formatBytes(String(selectedBytes))}</span>
+            </div>
+            <button
+              className="ghost-button compact-button"
+              type="button"
+              onClick={() => {
+                setSelectedFiles([]);
+                setPageError(null);
+              }}
+            >
+              <X size={16} />
+              Clear
+            </button>
+          </div>
+          <div className="file-preview-list">
+            {selectedFiles.slice(0, 6).map((file) => (
+              <span key={getFileKey(file)}>
+                {file.webkitRelativePath || file.name}
+              </span>
+            ))}
+            {selectedFiles.length > 6 && <span>+{selectedFiles.length - 6} more</span>}
+          </div>
+        </div>
+      )}
       <label className="wide">
-        Upload file
-        <input name="file" type="file" />
+        R2 folder
+        <input
+          name="uploadFolder"
+          onChange={(event) => setUploadFolder(event.currentTarget.value)}
+          placeholder="datasets/v1"
+          value={uploadFolder}
+        />
       </label>
-      <label>
-        R2 bucket
-        <input name="bucket" placeholder="Uses R2_BUCKET when empty" />
+      <label className="checkbox-row wide">
+        <input
+          checked={renameFiles}
+          onChange={(event) => setRenameFiles(event.currentTarget.checked)}
+          type="checkbox"
+        />
+        Rename uploaded files with a prefix and random code
       </label>
-      <label>
-        R2 object key
-        <input name="objectKey" placeholder="Auto-generated for uploads" />
-      </label>
+      {renameFiles && (
+        <label className="wide">
+          Rename prefix
+          <input
+            name="renamePrefix"
+            onChange={(event) => setRenamePrefix(event.currentTarget.value)}
+            placeholder="training"
+            value={renamePrefix}
+          />
+        </label>
+      )}
       <details className="advanced-fields wide">
         <summary>Manual registration fields</summary>
         <div className="advanced-grid">
+          <label>
+            R2 bucket
+            <input name="bucket" placeholder="Uses R2_BUCKET when empty" />
+          </label>
+          <label>
+            Existing R2 object key
+            <input name="objectKey" placeholder="datasets/v1/image-001.jpg" />
+          </label>
           <label>
             File name
             <input name="fileName" placeholder="image-001.jpg" />
@@ -1962,10 +2163,78 @@ function AssetForm({
       {savedMessage && <p className="form-success wide">{savedMessage}</p>}
       <button className="primary-button wide" type="submit" disabled={saving}>
         <CloudUpload size={18} />
-        {saving ? "Uploading" : "Upload or register R2 asset"}
+        {saving ? "Uploading" : selectedFiles.length > 0 ? `Upload ${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"}` : "Register R2 asset"}
       </button>
     </form>
   );
+}
+
+function buildUploadObjectKey(
+  file: File,
+  options: {
+    folder: string;
+    prefix: string;
+    rename: boolean;
+  }
+) {
+  const folder = sanitizeObjectPath(options.folder);
+
+  if (options.rename) {
+    const prefix = toSafeObjectKeyPart(options.prefix) || "asset";
+    return joinObjectKeyParts(folder, `${prefix}-${createRandomCode()}${getFileExtension(file.name)}`);
+  }
+
+  return joinObjectKeyParts(folder, sanitizeObjectPath(file.webkitRelativePath || file.name));
+}
+
+function mergeFiles(current: File[], incoming: File[]) {
+  const filesByKey = new Map(current.map((file) => [getFileKey(file), file]));
+
+  for (const file of incoming) {
+    filesByKey.set(getFileKey(file), file);
+  }
+
+  return Array.from(filesByKey.values());
+}
+
+function getFileKey(file: File) {
+  return `${file.webkitRelativePath || file.name}-${file.size}-${file.lastModified}`;
+}
+
+function joinObjectKeyParts(...parts: string[]) {
+  return parts.filter(Boolean).join("/");
+}
+
+function sanitizeObjectPath(value: string) {
+  return value
+    .split(/[\\/]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, ""))
+    .filter(Boolean)
+    .join("/");
+}
+
+function toSafeObjectKeyPart(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function getFileExtension(fileName: string) {
+  const cleanName = fileName.split(/[\\/]/).pop() ?? "";
+  const dotIndex = cleanName.lastIndexOf(".");
+
+  return dotIndex > 0 ? cleanName.slice(dotIndex).replace(/[^a-zA-Z0-9.]/g, "") : "";
+}
+
+function createRandomCode() {
+  const bytes = new Uint8Array(4);
+
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  return Math.random().toString(36).slice(2, 10);
 }
 
 async function uploadAndRegisterAsset(
