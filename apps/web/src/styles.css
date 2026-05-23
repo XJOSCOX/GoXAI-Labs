@@ -943,11 +943,11 @@ textarea:focus {
 }
 
 .organization-page > .panel {
-  width: min(980px, 100%);
+  width: 100%;
 }
 
 .organization-page > .detail-layout {
-  width: min(1220px, 100%);
+  width: 100%;
 }
 
 .detail-list {
