@@ -2,7 +2,7 @@
   color: #101827;
   background: #f7f9fb;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --bg: #f7f9fb;
@@ -68,6 +68,8 @@ body {
   font-weight: 400;
   line-height: 1.45;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 button,
@@ -126,6 +128,10 @@ a {
   align-items: flex-start;
 }
 
+.brand-row strong {
+  font-weight: 600;
+}
+
 .brand-mark,
 .avatar {
   display: grid;
@@ -136,7 +142,7 @@ a {
   border-radius: 8px;
   background: linear-gradient(135deg, #bae6fd, #38bdf8);
   color: var(--accent-contrast);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .avatar {
@@ -148,7 +154,7 @@ a {
   margin: 0 0 4px;
   color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
 }
@@ -162,14 +168,14 @@ p {
 h1 {
   margin-bottom: 0;
   font-size: 24px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1.2;
 }
 
 h2 {
   margin-bottom: 0;
   font-size: 16px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .auth-copy {
@@ -367,9 +373,10 @@ textarea:focus {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto 1fr;
   align-content: start;
   min-width: 0;
+  min-height: 100vh;
 }
 
 .topbar {
@@ -411,8 +418,9 @@ textarea:focus {
   display: grid;
   align-content: start;
   gap: 16px;
-  padding: 20px;
-  width: min(1120px, 100%);
+  min-height: calc(100vh - 66px);
+  width: 100%;
+  padding: 20px 24px 28px;
 }
 
 .page-heading {
@@ -459,7 +467,7 @@ textarea:focus {
 .stat-card strong {
   grid-column: 2;
   font-size: 22px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -484,7 +492,7 @@ textarea:focus {
 .detail-list dt {
   color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   text-transform: uppercase;
 }
 
@@ -494,12 +502,17 @@ textarea:focus {
 }
 
 .setup-form {
-  max-width: 720px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
 }
 
 .project-form {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  max-width: 760px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+}
+
+.project-form > label:not(.wide) {
+  grid-column: span 2;
 }
 
 .org-list {
@@ -542,7 +555,7 @@ textarea:focus {
   background: var(--surface-soft);
   color: var(--muted);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   text-transform: uppercase;
 }
 
@@ -572,7 +585,7 @@ textarea:focus {
 
 .empty-state strong {
   color: var(--text);
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .loading-screen {
@@ -612,7 +625,9 @@ textarea:focus {
   }
 
   .stat-grid,
-  .detail-list {
+  .detail-list,
+  .setup-form,
+  .project-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -627,8 +642,14 @@ textarea:focus {
   .auth-form.two-column,
   .stat-grid,
   .detail-list,
+  .setup-form,
+  .project-form,
   .table-row {
     grid-template-columns: 1fr;
+  }
+
+  .project-form > label:not(.wide) {
+    grid-column: 1;
   }
 
   .page-heading,
