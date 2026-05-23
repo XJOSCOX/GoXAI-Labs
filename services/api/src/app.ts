@@ -119,15 +119,33 @@ app.patch("/api/auth/profile", requireAuthenticatedUser, async (request: Authent
     return;
   }
 
-  const jobTitle = typeof request.body?.jobTitle === "string" ? request.body.jobTitle.trim() : "";
+  const data: {
+    firstName?: string | null;
+    lastName?: string | null;
+    jobTitle?: string | null;
+  } = {};
+
+  if (typeof request.body?.firstName === "string") {
+    const firstName = request.body.firstName.trim();
+    data.firstName = firstName || null;
+  }
+
+  if (typeof request.body?.lastName === "string") {
+    const lastName = request.body.lastName.trim();
+    data.lastName = lastName || null;
+  }
+
+  if (typeof request.body?.jobTitle === "string") {
+    const jobTitle = request.body.jobTitle.trim();
+    data.jobTitle = jobTitle || null;
+  }
+
   const prisma = getPrismaClient();
   const updated = await prisma.user.update({
     where: {
       id: user.id
     },
-    data: {
-      jobTitle: jobTitle || null
-    }
+    data
   });
 
   response.status(200).json({

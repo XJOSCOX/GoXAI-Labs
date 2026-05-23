@@ -204,15 +204,15 @@ a {
 
 .brand-logo {
   display: block;
-  width: min(150px, 100%);
+  width: min(75px, 100%);
   height: auto;
   object-fit: contain;
 }
 
 .auth-brand-logo {
   display: block;
-  width: 86px;
-  height: 44px;
+  width: 43px;
+  height: 22px;
   object-fit: contain;
 }
 
@@ -773,8 +773,30 @@ textarea:focus {
   text-decoration: none;
 }
 
+.sidebar-footer {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.sidebar-footer .account-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border: 1px solid color-mix(in srgb, var(--sidebar-text) 18%, transparent);
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--sidebar-text);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
 .nav-list a.active,
-.nav-list a:hover {
+.nav-list a:hover,
+.sidebar-footer .account-link.active,
+.sidebar-footer .account-link:hover {
   background: color-mix(in srgb, #7dd3fc 88%, white);
   color: #0f172a;
 }
@@ -1037,6 +1059,40 @@ textarea:focus {
 
 .single-column {
   width: min(780px, 100%);
+}
+
+.account-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+}
+
+.account-form {
+  align-content: start;
+}
+
+.account-save-button {
+  justify-self: start;
+}
+
+.account-status,
+.account-code-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.account-status-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--accent-deep);
+}
+
+.account-detail-list {
+  grid-template-columns: 1fr;
 }
 
 .side-column {

@@ -5,6 +5,7 @@ import { AppShell } from "./components/layout/AppShell";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { OnboardingPage } from "./pages/auth/OnboardingPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
+import { AccountPage } from "./pages/account/AccountPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { DatasetDetailPage } from "./pages/datasets/DatasetDetailPage";
 import { DatasetsPage } from "./pages/datasets/DatasetsPage";
@@ -42,6 +43,7 @@ export function App() {
           <Route path="datasets" element={<DatasetsPage />} />
           <Route path="datasets/:datasetId" element={<DatasetDetailPage />} />
           <Route path="tasks" element={<TasksPage />} />
+          <Route path="account" element={<AccountPage />} />
         </Route>
       </Routes>
     </AuthProvider>

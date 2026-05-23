@@ -1,4 +1,4 @@
-import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, LogOut } from "lucide-react";
+import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, LogOut, UserRound } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import goxaiLogo from "../../assets/goxailab-logo.png";
@@ -72,10 +72,16 @@ export function AppShell() {
             Tasks
           </NavLink>
         </nav>
-        <button className="ghost-button" type="button" onClick={() => void logout()}>
-          <LogOut size={18} />
-          Sign out
-        </button>
+        <div className="sidebar-footer">
+          <NavLink to="/account" className="account-link">
+            <UserRound size={18} />
+            My Account
+          </NavLink>
+          <button className="ghost-button" type="button" onClick={() => void logout()}>
+            <LogOut size={18} />
+            Sign out
+          </button>
+        </div>
       </aside>
       <section className="workspace">
         <header className="topbar">
@@ -128,6 +134,10 @@ function getTopbarTitle(pathname: string) {
 
   if (pathname === "/tasks") {
     return { eyebrow: "Tasks", title: "Labeling tasks" };
+  }
+
+  if (pathname === "/account") {
+    return { eyebrow: "Account", title: "My Account" };
   }
 
   return { eyebrow: "Workspace", title: "GoXAi Lab" };

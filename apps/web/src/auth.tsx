@@ -10,7 +10,7 @@ import {
   useRef,
   useState
 } from "react";
-import { createSupabaseBrowserClient, resolveLoginEmail, syncAuthenticatedUser, type ApiUser } from "./api";
+import { createSupabaseBrowserClient, resolveLoginEmail, syncAuthenticatedUser, updateUserProfile, type ApiUser } from "./api";
 
 interface AuthContextValue {
   dbUser: ApiUser | null;
@@ -22,6 +22,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   register: (input: RegisterInput) => Promise<"signed-in" | "check-email">;
+  updateProfile: (input: { firstName?: string; lastName?: string; jobTitle?: string }) => Promise<void>;
 }
 
 export interface RegisterInput {
@@ -200,6 +201,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return "check-email";
         } catch (reason) {
           const message = reason instanceof Error ? reason.message : "Unable to register.";
+          setError(message);
+          throw new Error(message);
+        } finally {
+          setLoading(false);
+        }
+      },
+      updateProfile: async (input) => {
+        if (!session) {
+          throw new Error("Authentication is required.");
+        }
+
+        setLoading(true);
+        setError(null);
+
+        try {
+          const user = await updateUserProfile(session, input);
+          setDbUser(user);
+        } catch (reason) {
+          const message = reason instanceof Error ? reason.message : "Unable to update profile.";
           setError(message);
           throw new Error(message);
         } finally {

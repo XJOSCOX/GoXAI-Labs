@@ -373,7 +373,10 @@ export async function resolveLoginEmail(identifier: string) {
   return ((await response.json()) as { email: string }).email;
 }
 
-export async function updateUserProfile(session: Session, input: { jobTitle?: string }) {
+export async function updateUserProfile(
+  session: Session,
+  input: { firstName?: string; lastName?: string; jobTitle?: string }
+) {
   const response = await authenticatedFetch(session, "/api/auth/profile", {
     method: "PATCH",
     body: JSON.stringify(removeEmptyValues(input))
