@@ -407,27 +407,28 @@ textarea:focus {
 
 .sidebar-profile {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--sidebar-text) 13%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--sidebar-surface) 62%, transparent);
-  padding: 12px;
+  justify-items: center;
+  gap: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sidebar-text) 13%, transparent);
+  padding: 4px 4px 18px;
+  text-align: center;
 }
 
 .sidebar-profile .avatar {
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
+  width: 58px;
+  height: 58px;
+  border-radius: 999px;
   background: linear-gradient(135deg, #bae6fd, #7dd3fc);
   color: #0f172a;
+  font-size: 17px;
 }
 
-.sidebar-profile div:last-child {
+.sidebar-profile-info {
   display: grid;
   gap: 2px;
+  justify-items: center;
   min-width: 0;
+  max-width: 100%;
 }
 
 .sidebar-profile strong,

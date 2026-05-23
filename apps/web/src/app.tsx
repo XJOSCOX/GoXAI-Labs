@@ -293,7 +293,7 @@ function AppShell() {
         </div>
         <section className="sidebar-profile">
           <div className="avatar">{getInitials(name, email)}</div>
-          <div>
+          <div className="sidebar-profile-info">
             <strong>{name}</strong>
             <span>{email}</span>
             <small>{formatEnum(role)}</small>
