@@ -1,63 +1,173 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Database, Plus, Save, Trash2 } from "lucide-react";
 import {
+  createAnnotationCategory,
   createAnnotationTemplate,
+  deleteAnnotationCategory,
   deleteAnnotationTemplate,
+  listAnnotationCategories,
   listAnnotationTemplates,
+  updateAnnotationCategory,
   updateAnnotationTemplate,
+  type AnnotationCategorySummary,
   type AnnotationTemplateSummary
 } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
-import { buildTemplateConfig, builtInTemplatePresets, parseLabelInputsFromText, type TemplatePreset } from "../../components/labeling/LabelingConfigBuilder";
+import {
+  buildTemplateConfig,
+  builtInTemplatePresets,
+  parseLabelInputsFromText,
+  type TemplatePreset
+} from "../../components/labeling/LabelingConfigBuilder";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
 
 const dataTypes = ["IMAGE", "VIDEO", "AUDIO", "TEXT", "PDF", "TIME_SERIES", "MULTIMODAL"];
-const templateCategories = [
-  "Computer Vision",
-  "Natural Language Processing",
-  "Audio/Speech Processing",
-  "Conversational AI",
-  "Chat",
-  "Ranking & Scoring",
-  "Structured Data Parsing",
-  "Time Series Analysis",
-  "Videos",
-  "Generative AI",
-  "Community Contributions",
-  "Custom Templates"
-];
 const templateTools = ["BBOX", "POLYGON", "BRUSH", "TEXT_SPAN", "KEYPOINT", "CLASSIFICATION", "RELATION"];
+
+type CategoryItem =
+  | {
+      canManage: false;
+      description: string;
+      id: string;
+      key: string;
+      name: string;
+      organizationId: null;
+      source: "builtin";
+      templateCount: number;
+    }
+  | (AnnotationCategorySummary & {
+      key: string;
+      source: "custom";
+    });
 
 export function LabelTemplatesPage() {
   const { dbUser, session } = useAuth();
   const { organizations } = useOrganizations(session);
+  const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
+  const [selectedCategoryKey, setSelectedCategoryKey] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
+  const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
+  const builtInCategories = useMemo(() => getBuiltInCategories(), []);
+  const categoryItems = useMemo<CategoryItem[]>(
+    () => [
+      ...builtInCategories,
+      ...categories.map((category) => ({
+        ...category,
+        key: `custom:${category.id}`,
+        source: "custom" as const
+      }))
+    ],
+    [builtInCategories, categories]
+  );
+  const selectedCategory =
+    categoryItems.find((category) => category.key === selectedCategoryKey) ?? categoryItems[0] ?? null;
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? null;
-  const canCreate = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
-  const groupedBuiltIns = useMemo(() => groupPresetsByCategory(builtInTemplatePresets), []);
+  const selectedTemplates =
+    selectedCategory?.source === "custom"
+      ? templates.filter((template) => template.categoryId === selectedCategory.id)
+      : [];
+  const selectedBuiltIns =
+    selectedCategory?.source === "builtin"
+      ? builtInTemplatePresets.filter((template) => template.category === selectedCategory.name)
+      : [];
+  const canManageSelectedCategory = selectedCategory?.source === "custom" && selectedCategory.canManage;
 
-  async function reloadTemplates() {
+  async function reload() {
     if (!session) {
       return;
     }
 
-    setTemplates(await listAnnotationTemplates(session));
+    const [nextCategories, nextTemplates] = await Promise.all([
+      listAnnotationCategories(session),
+      listAnnotationTemplates(session)
+    ]);
+
+    setCategories(nextCategories);
+    setTemplates(nextTemplates);
+
+    if (!selectedCategoryKey && nextCategories.length > 0) {
+      setSelectedCategoryKey(`custom:${nextCategories[0].id}`);
+    }
   }
 
   useEffect(() => {
-    void reloadTemplates().catch((reason) => {
-      setError(reason instanceof Error ? reason.message : "Unable to load annotation templates.");
+    void reload().catch((reason) => {
+      setError(reason instanceof Error ? reason.message : "Unable to load label settings.");
     });
   }, [session]);
 
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+    const form = event.currentTarget;
+
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    const name = getFormValue(event, "categoryName");
+    const description = getFormValue(event, "categoryDescription");
+    const organizationId = getFormValue(event, "categoryOrganizationId") || null;
+
+    if (!name) {
+      setError("Category name is required.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      if (selectedCategory?.source === "custom" && selectedCategory.canManage) {
+        const updated = await updateAnnotationCategory(session, selectedCategory.id, { description, name });
+        setSelectedCategoryKey(`custom:${updated.id}`);
+        setMessage("Category updated.");
+      } else {
+        const created = await createAnnotationCategory(session, { description, name, organizationId });
+        setSelectedCategoryKey(`custom:${created.id}`);
+        setMessage("Category created.");
+        form.reset();
+      }
+
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save category.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeleteCategory() {
+    if (!session || selectedCategory?.source !== "custom" || !selectedCategory.canManage) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      await deleteAnnotationCategory(session, selectedCategory.id);
+      setSelectedCategoryKey(null);
+      setSelectedTemplateId(null);
+      await reload();
+      setMessage("Category deleted.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to delete category.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setMessage(null);
@@ -67,15 +177,23 @@ export function LabelTemplatesPage() {
       return;
     }
 
+    if (selectedCategory?.source !== "custom") {
+      setError("Select one of your custom categories before adding a template.");
+      return;
+    }
+
+    if (!selectedCategory.canManage) {
+      setError("You can use this category, but only its owner or a super admin can edit it.");
+      return;
+    }
+
     const form = event.currentTarget;
     const name = getFormValue(event, "name");
     const description = getFormValue(event, "description");
-    const category = getFormValue(event, "category") || "Custom Templates";
     const subtype = getFormValue(event, "subtype") || "Custom";
     const dataType = getFormValue(event, "dataType") || "IMAGE";
     const labels = parseLabelInputsFromText(getFormValue(event, "labels"));
     const selectedTools = new FormData(form).getAll("tools").map(String);
-    const organizationId = getFormValue(event, "organizationId") || null;
 
     if (!name) {
       setError("Template name is required.");
@@ -93,7 +211,7 @@ export function LabelTemplatesPage() {
     }
 
     const preset: TemplatePreset = {
-      category,
+      category: selectedCategory.name,
       dataType,
       description,
       id: selectedTemplate?.id ?? `custom-${Date.now()}`,
@@ -108,6 +226,7 @@ export function LabelTemplatesPage() {
     try {
       if (selectedTemplate) {
         await updateAnnotationTemplate(session, selectedTemplate.id, {
+          categoryId: selectedCategory.id,
           configJson: buildTemplateConfig(preset),
           dataType,
           description,
@@ -116,17 +235,17 @@ export function LabelTemplatesPage() {
         setMessage("Template updated.");
       } else {
         await createAnnotationTemplate(session, {
+          categoryId: selectedCategory.id,
           configJson: buildTemplateConfig(preset),
           dataType,
           description,
-          name,
-          organizationId
+          name
         });
         setMessage("Template created.");
         form.reset();
       }
 
-      await reloadTemplates();
+      await reload();
       setSelectedTemplateId(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save template.");
@@ -135,8 +254,8 @@ export function LabelTemplatesPage() {
     }
   }
 
-  async function handleDelete() {
-    if (!session || !selectedTemplate) {
+  async function handleDeleteTemplate() {
+    if (!session || !selectedTemplate || !selectedTemplate.canManage) {
       return;
     }
 
@@ -146,7 +265,7 @@ export function LabelTemplatesPage() {
 
     try {
       await deleteAnnotationTemplate(session, selectedTemplate.id);
-      await reloadTemplates();
+      await reload();
       setSelectedTemplateId(null);
       setMessage("Template deleted.");
     } catch (reason) {
@@ -162,43 +281,55 @@ export function LabelTemplatesPage() {
         <div className="settings-page-head">
           <div>
             <p className="eyebrow">Label settings</p>
-            <h2>Annotation templates</h2>
+            <h2>Categories and templates</h2>
           </div>
-          <span className="status-pill compact">{templates.length} custom templates</span>
+          <span className="status-pill compact">{categoryItems.length} categories</span>
         </div>
         {(error || message) && <p className={error ? "form-error" : "form-success"}>{error ?? message}</p>}
+
         <div className="template-settings-layout">
           <section className="panel template-settings-library">
-            <p className="eyebrow">Built-in template library</p>
-            {groupedBuiltIns.map((group) => (
-              <div className="template-settings-group" key={group.category}>
-                <h3>{group.category}</h3>
-                <div className="template-settings-card-grid">
-                  {group.templates.map((template) => (
-                    <article className="template-settings-card" key={template.id}>
-                      <strong>{template.name}</strong>
-                      <span>{template.subtype}</span>
-                      <small>{template.description}</small>
-                    </article>
-                  ))}
-                </div>
+            <div className="settings-page-head">
+              <div>
+                <p className="eyebrow">Categories</p>
+                <h3>Reusable label groups</h3>
               </div>
-            ))}
+              <Database size={18} />
+            </div>
+            <div className="template-category-list">
+              {categoryItems.map((category) => (
+                <button
+                  className={`template-category-item ${selectedCategory?.key === category.key ? "active" : ""}`}
+                  key={category.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategoryKey(category.key);
+                    setSelectedTemplateId(null);
+                  }}
+                >
+                  <span>
+                    <strong>{category.name}</strong>
+                    <small>{category.description || "No description added."}</small>
+                  </span>
+                  <span className="status-pill compact">{category.templateCount}</span>
+                </button>
+              ))}
+            </div>
           </section>
 
           <aside className="panel template-settings-editor">
-            <p className="eyebrow">{selectedTemplate ? "Edit custom template" : "New custom template"}</p>
-            <h3>{selectedTemplate ? selectedTemplate.name : "Create template"}</h3>
-            {!canCreate && (
-              <p className="muted-copy">Only super admins or organization owners/admins can create custom templates.</p>
+            <p className="eyebrow">{canManageSelectedCategory ? "Edit category" : "New category"}</p>
+            <h3>{canManageSelectedCategory ? selectedCategory.name : "Create category"}</h3>
+            {!canCreateCategory && (
+              <p className="muted-copy">Only super admins or organization owners/admins can create categories.</p>
             )}
-            <form key={selectedTemplate?.id ?? "new-template"} onSubmit={handleSave}>
+            <form key={canManageSelectedCategory ? selectedCategory.id : "new-category"} onSubmit={handleSaveCategory}>
               <label>
                 Scope
                 <select
-                  defaultValue={selectedTemplate?.organizationId ?? (dbUser?.globalRole === "SUPER_ADMIN" ? "" : manageableOrganizations[0]?.id ?? "")}
-                  disabled={!canCreate || Boolean(selectedTemplate)}
-                  name="organizationId"
+                  defaultValue={canManageSelectedCategory ? selectedCategory.organizationId ?? "" : dbUser?.globalRole === "SUPER_ADMIN" ? "" : manageableOrganizations[0]?.id ?? ""}
+                  disabled={!canCreateCategory || canManageSelectedCategory}
+                  name="categoryOrganizationId"
                 >
                   {dbUser?.globalRole === "SUPER_ADMIN" && <option value="">Global</option>}
                   {manageableOrganizations.map((organization) => (
@@ -209,38 +340,127 @@ export function LabelTemplatesPage() {
                 </select>
               </label>
               <label>
-                Template name
-                <input defaultValue={selectedTemplate?.name ?? ""} disabled={!canCreate} name="name" placeholder="Vehicle damage detection" />
+                Category name
+                <input
+                  defaultValue={canManageSelectedCategory ? selectedCategory.name : ""}
+                  disabled={!canCreateCategory}
+                  name="categoryName"
+                  placeholder="Computer Vision"
+                />
               </label>
               <label>
                 Description
                 <textarea
+                  defaultValue={canManageSelectedCategory ? selectedCategory.description ?? "" : ""}
+                  disabled={!canCreateCategory}
+                  name="categoryDescription"
+                  placeholder="Templates for image, video, text, chat, or domain-specific labeling"
+                  rows={3}
+                />
+              </label>
+              <div className="row-actions">
+                <button className="primary-button" disabled={!canCreateCategory || saving} type="submit">
+                  {canManageSelectedCategory ? <Save size={18} /> : <Plus size={18} />}
+                  {canManageSelectedCategory ? "Save category" : "Create category"}
+                </button>
+                {canManageSelectedCategory && (
+                  <button className="danger-button" disabled={saving} type="button" onClick={handleDeleteCategory}>
+                    <Trash2 size={18} />
+                    Delete
+                  </button>
+                )}
+              </div>
+            </form>
+          </aside>
+        </div>
+
+        {selectedCategory && (
+          <section className="panel">
+            <div className="settings-page-head">
+              <div>
+                <p className="eyebrow">{selectedCategory.source === "builtin" ? "Built-in category" : "Category templates"}</p>
+                <h3>{selectedCategory.name}</h3>
+                <p className="muted-copy">
+                  {selectedCategory.source === "builtin"
+                    ? "Built-in templates are reusable starting points. Create your own category to add editable templates."
+                    : selectedCategory.canManage
+                      ? "Add, update, or delete templates inside this category."
+                      : "You can use these templates, but only the owner or a super admin can edit them."}
+                </p>
+              </div>
+              <span className="status-pill compact">
+                {selectedCategory.source === "builtin" ? selectedBuiltIns.length : selectedTemplates.length} templates
+              </span>
+            </div>
+
+            <div className="template-settings-card-grid">
+              {selectedBuiltIns.map((template) => (
+                <article className="template-settings-card" key={template.id}>
+                  <strong>{template.name}</strong>
+                  <span>{template.subtype}</span>
+                  <small>{template.description}</small>
+                </article>
+              ))}
+              {selectedTemplates.map((template) => (
+                <button
+                  className={`template-settings-card selectable ${selectedTemplateId === template.id ? "active" : ""}`}
+                  key={template.id}
+                  type="button"
+                  onClick={() => setSelectedTemplateId(template.id)}
+                >
+                  <strong>{template.name}</strong>
+                  <span>{getTemplateConfigString(template, "subtype") ?? "Custom"}</span>
+                  <small>{template.description ?? "No description added."}</small>
+                </button>
+              ))}
+              {selectedBuiltIns.length === 0 && selectedTemplates.length === 0 && (
+                <p className="muted-copy">No templates in this category yet.</p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {selectedCategory?.source === "custom" && (
+          <section className="panel template-settings-editor wide">
+            <p className="eyebrow">{selectedTemplate ? "Edit template" : "New template"}</p>
+            <h3>{selectedTemplate ? selectedTemplate.name : `Add template to ${selectedCategory.name}`}</h3>
+            {!selectedCategory.canManage && (
+              <p className="muted-copy">This category is reusable, but you cannot edit templates that belong to someone else.</p>
+            )}
+            <form key={selectedTemplate?.id ?? selectedCategory.id} onSubmit={handleSaveTemplate}>
+              <div className="two-column-fields">
+                <label>
+                  Template name
+                  <input
+                    defaultValue={selectedTemplate?.name ?? ""}
+                    disabled={!selectedCategory.canManage}
+                    name="name"
+                    placeholder="Object detection"
+                  />
+                </label>
+                <label>
+                  Type
+                  <input
+                    defaultValue={getTemplateConfigString(selectedTemplate, "subtype") ?? ""}
+                    disabled={!selectedCategory.canManage}
+                    name="subtype"
+                    placeholder="Detection, OCR, Chat..."
+                  />
+                </label>
+              </div>
+              <label>
+                Description
+                <textarea
                   defaultValue={selectedTemplate?.description ?? ""}
-                  disabled={!canCreate}
+                  disabled={!selectedCategory.canManage}
                   name="description"
                   placeholder="What this template helps label"
                   rows={3}
                 />
               </label>
-              <div className="two-column-fields">
-                <label>
-                  Category
-                  <select defaultValue={getTemplateConfigString(selectedTemplate, "category") ?? "Computer Vision"} disabled={!canCreate} name="category">
-                    {templateCategories.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Type
-                  <input defaultValue={getTemplateConfigString(selectedTemplate, "subtype") ?? ""} disabled={!canCreate} name="subtype" placeholder="Detection, OCR, Cinematic..." />
-                </label>
-              </div>
               <label>
                 Data type
-                <select defaultValue={selectedTemplate?.dataType ?? "IMAGE"} disabled={!canCreate} name="dataType">
+                <select defaultValue={selectedTemplate?.dataType ?? "IMAGE"} disabled={!selectedCategory.canManage} name="dataType">
                   {dataTypes.map((dataType) => (
                     <option key={dataType} value={dataType}>
                       {formatEnum(dataType)}
@@ -252,7 +472,7 @@ export function LabelTemplatesPage() {
                 Labels
                 <textarea
                   defaultValue={templateLabelsToText(selectedTemplate)}
-                  disabled={!canCreate}
+                  disabled={!selectedCategory.canManage}
                   name="labels"
                   placeholder="Car&#10;Person&#10;Traffic light"
                   rows={5}
@@ -262,63 +482,47 @@ export function LabelTemplatesPage() {
                 <legend>Tools</legend>
                 {templateTools.map((tool) => (
                   <label className="checkbox-row" key={tool}>
-                    <input defaultChecked={templateHasTool(selectedTemplate, tool)} disabled={!canCreate} name="tools" type="checkbox" value={tool} />
+                    <input
+                      defaultChecked={templateHasTool(selectedTemplate, tool)}
+                      disabled={!selectedCategory.canManage}
+                      name="tools"
+                      type="checkbox"
+                      value={tool}
+                    />
                     {formatEnum(tool)}
                   </label>
                 ))}
               </fieldset>
               <div className="row-actions">
-                <button className="primary-button" disabled={!canCreate || saving} type="submit">
+                <button className="primary-button" disabled={!selectedCategory.canManage || saving} type="submit">
                   {selectedTemplate ? <Save size={18} /> : <Plus size={18} />}
                   {selectedTemplate ? "Save template" : "Create template"}
                 </button>
-                {selectedTemplate && (
-                  <button className="danger-button" disabled={saving} type="button" onClick={handleDelete}>
+                {selectedTemplate && selectedTemplate.canManage && (
+                  <button className="danger-button" disabled={saving} type="button" onClick={handleDeleteTemplate}>
                     <Trash2 size={18} />
                     Delete
                   </button>
                 )}
               </div>
             </form>
-          </aside>
-        </div>
-
-        <section className="panel">
-          <div className="settings-page-head">
-            <div>
-              <p className="eyebrow">Custom templates</p>
-              <h3>Saved templates</h3>
-            </div>
-            <Database size={18} />
-          </div>
-          <div className="template-settings-card-grid">
-            {templates.length > 0 ? (
-              templates.map((template) => (
-                <button
-                  className={`template-settings-card selectable ${selectedTemplateId === template.id ? "active" : ""}`}
-                  key={template.id}
-                  type="button"
-                  onClick={() => setSelectedTemplateId(template.id)}
-                >
-                  <strong>{template.name}</strong>
-                  <span>{getTemplateConfigString(template, "category") ?? "Custom Templates"}</span>
-                  <small>{template.description ?? "No description added."}</small>
-                </button>
-              ))
-            ) : (
-              <p className="muted-copy">No custom templates yet.</p>
-            )}
-          </div>
-        </section>
+          </section>
+        )}
       </section>
     </section>
   );
 }
 
-function groupPresetsByCategory(templates: TemplatePreset[]) {
-  return Array.from(new Set(templates.map((template) => template.category))).map((category) => ({
-    category,
-    templates: templates.filter((template) => template.category === category)
+function getBuiltInCategories(): CategoryItem[] {
+  return Array.from(new Set(builtInTemplatePresets.map((template) => template.category))).map((name) => ({
+    canManage: false,
+    description: `${name} presets included with GoXAi Lab.`,
+    id: name,
+    key: `builtin:${name}`,
+    name,
+    organizationId: null,
+    source: "builtin",
+    templateCount: builtInTemplatePresets.filter((template) => template.category === name).length
   }));
 }
 
@@ -354,7 +558,7 @@ function templateLabelsToText(template: AnnotationTemplateSummary | null) {
 function templateHasTool(template: AnnotationTemplateSummary | null, toolName: string) {
   const tools = template?.configJson.tools;
 
-  if (!Array.isArray(tools)) {
+  if (!template || !Array.isArray(tools)) {
     return toolName === "BBOX";
   }
 

@@ -329,6 +329,7 @@ model User {
   lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz(6)
 
   ownedOrganizations Organization[]    @relation("OrganizationOwner")
+  createdAnnotationCategories AnnotationCategory[] @relation("AnnotationCategoryCreator")
   createdAnnotationTemplates AnnotationTemplate[] @relation("AnnotationTemplateCreator")
   memberships         Membership[]
   projectMemberships  ProjectMembership[] @relation("ProjectMemberUser")
@@ -451,6 +452,7 @@ model Organization {
   apiKeys             ApiKey[]
   webhooks            Webhook[]
   annotationTemplates AnnotationTemplate[]
+  annotationCategories AnnotationCategory[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -565,9 +567,30 @@ model Project {
   @@map("projects")
 }
 
+model AnnotationCategory {
+  id             String   @id @default(cuid())
+  organizationId String?  @map("organization_id")
+  name           String
+  description    String?
+  createdById    String?  @map("created_by_id")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation("AnnotationCategoryCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  templates    AnnotationTemplate[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([organizationId])
+  @@index([createdById])
+  @@unique([organizationId, name])
+  @@map("annotation_categories")
+}
+
 model AnnotationTemplate {
   id             String   @id @default(cuid())
   organizationId String?  @map("organization_id")
+  categoryId     String?  @map("category_id")
   name           String
   description    String?
   dataType       DataType @map("data_type")
@@ -575,6 +598,7 @@ model AnnotationTemplate {
   createdById    String?  @map("created_by_id")
 
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     AnnotationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   createdBy    User?         @relation("AnnotationTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
   datasets     Dataset[]
 
@@ -582,6 +606,7 @@ model AnnotationTemplate {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([organizationId])
+  @@index([categoryId])
   @@index([createdById])
   @@index([dataType])
   @@unique([organizationId, name])

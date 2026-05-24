@@ -2364,6 +2364,44 @@ textarea:focus {
   padding: 8px;
 }
 
+.template-category-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 58px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.template-category-item span:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.template-category-item strong,
+.template-category-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-category-item small {
+  color: var(--muted);
+}
+
+.template-category-item:hover,
+.template-category-item.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+}
+
 .template-category-group {
   display: grid;
   gap: 4px;
@@ -2932,6 +2970,10 @@ textarea:focus {
 .template-settings-editor form {
   display: grid;
   gap: 12px;
+}
+
+.template-settings-editor.wide {
+  width: 100%;
 }
 
 .template-settings-group {

@@ -252,7 +252,7 @@ function templateToPreset(template: AnnotationTemplateSummary): TemplatePreset {
     : [];
 
   return {
-    category: getConfigString(config, "category") ?? "Custom Templates",
+    category: template.category?.name ?? getConfigString(config, "category") ?? "Custom Templates",
     dataType: template.dataType,
     description: template.description ?? "Custom GoXAi Lab labeling template.",
     id: `custom-${template.id}`,

@@ -250,7 +250,12 @@ export interface UpdateProjectInput {
 
 export interface AnnotationTemplateSummary {
   canManage?: boolean;
-  category?: string | null;
+  category?: {
+    id: string;
+    name: string;
+    organizationId: string | null;
+  } | null;
+  categoryId: string | null;
   id: string;
   name: string;
   description: string | null;
@@ -263,6 +268,27 @@ export interface AnnotationTemplateSummary {
   } | null;
   organizationId?: string | null;
   subtype?: string | null;
+}
+
+export interface AnnotationCategorySummary {
+  canManage: boolean;
+  createdAt: string;
+  createdBy: {
+    id: string;
+    email: string;
+    name: string;
+  } | null;
+  description: string | null;
+  id: string;
+  name: string;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  organizationId: string | null;
+  templateCount: number;
+  updatedAt: string;
 }
 
 export interface DatasetLabelSummary {
@@ -718,14 +744,84 @@ export async function listAnnotationTemplates(session: Session) {
   return ((await response.json()) as { templates: AnnotationTemplateSummary[] }).templates;
 }
 
+export async function listAnnotationCategories(session: Session) {
+  const response = await authenticatedFetch(session, "/api/annotation-templates/categories");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load annotation categories."));
+  }
+
+  return ((await response.json()) as { categories: AnnotationCategorySummary[] }).categories;
+}
+
+export async function createAnnotationCategory(
+  session: Session,
+  input: {
+    description?: string;
+    name: string;
+    organizationId?: string | null;
+  }
+) {
+  const response = await authenticatedFetch(session, "/api/annotation-templates/categories", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create annotation category."));
+  }
+
+  return ((await response.json()) as { category: AnnotationCategorySummary }).category;
+}
+
+export async function updateAnnotationCategory(
+  session: Session,
+  categoryId: string,
+  input: {
+    description?: string;
+    name?: string;
+  }
+) {
+  const response = await authenticatedFetch(
+    session,
+    `/api/annotation-templates/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(removeEmptyValues(input))
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update annotation category."));
+  }
+
+  return ((await response.json()) as { category: AnnotationCategorySummary }).category;
+}
+
+export async function deleteAnnotationCategory(session: Session, categoryId: string) {
+  const response = await authenticatedFetch(
+    session,
+    `/api/annotation-templates/categories/${encodeURIComponent(categoryId)}`,
+    {
+      method: "DELETE"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to delete annotation category."));
+  }
+
+  return (await response.json()) as { deleted: boolean };
+}
+
 export async function createAnnotationTemplate(
   session: Session,
   input: {
+    categoryId: string;
     configJson: Record<string, unknown>;
     dataType: string;
     description?: string;
     name: string;
-    organizationId?: string | null;
   }
 ) {
   const response = await authenticatedFetch(session, "/api/annotation-templates", {
@@ -744,6 +840,7 @@ export async function updateAnnotationTemplate(
   session: Session,
   templateId: string,
   input: {
+    categoryId?: string;
     configJson?: Record<string, unknown>;
     dataType?: string;
     description?: string;
