@@ -249,11 +249,20 @@ export interface UpdateProjectInput {
 }
 
 export interface AnnotationTemplateSummary {
+  canManage?: boolean;
+  category?: string | null;
   id: string;
   name: string;
   description: string | null;
   dataType: string;
   configJson: Record<string, unknown>;
+  organization?: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  organizationId?: string | null;
+  subtype?: string | null;
 }
 
 export interface DatasetLabelSummary {
@@ -330,6 +339,7 @@ export interface CreateDatasetInput {
 export interface UpdateDatasetInput {
   name?: string;
   description?: string;
+  annotationTemplateId?: string | null;
   status?: string;
   labelingConfig?: Record<string, unknown> | null;
   labels?: DatasetLabelInput[];
@@ -696,6 +706,72 @@ export async function updateAdminUser(
   }
 
   return ((await response.json()) as { user: AdminUserSummary }).user;
+}
+
+export async function listAnnotationTemplates(session: Session) {
+  const response = await authenticatedFetch(session, "/api/annotation-templates");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load annotation templates."));
+  }
+
+  return ((await response.json()) as { templates: AnnotationTemplateSummary[] }).templates;
+}
+
+export async function createAnnotationTemplate(
+  session: Session,
+  input: {
+    configJson: Record<string, unknown>;
+    dataType: string;
+    description?: string;
+    name: string;
+    organizationId?: string | null;
+  }
+) {
+  const response = await authenticatedFetch(session, "/api/annotation-templates", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create annotation template."));
+  }
+
+  return ((await response.json()) as { template: AnnotationTemplateSummary }).template;
+}
+
+export async function updateAnnotationTemplate(
+  session: Session,
+  templateId: string,
+  input: {
+    configJson?: Record<string, unknown>;
+    dataType?: string;
+    description?: string;
+    name?: string;
+  }
+) {
+  const response = await authenticatedFetch(session, `/api/annotation-templates/${encodeURIComponent(templateId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update annotation template."));
+  }
+
+  return ((await response.json()) as { template: AnnotationTemplateSummary }).template;
+}
+
+export async function deleteAnnotationTemplate(session: Session, templateId: string) {
+  const response = await authenticatedFetch(session, `/api/annotation-templates/${encodeURIComponent(templateId)}`, {
+    method: "DELETE"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to delete annotation template."));
+  }
+
+  return (await response.json()) as { deleted: boolean };
 }
 
 export async function listOrganizations(session: Session) {

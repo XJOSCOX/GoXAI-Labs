@@ -705,6 +705,7 @@ type UpdateDatasetBody =
   | {
       name?: unknown;
       description?: unknown;
+      annotationTemplateId?: unknown;
       status?: unknown;
       labelingConfig?: unknown;
       labels?: unknown;
@@ -771,6 +772,7 @@ function parseUpdateDatasetBody(body: UpdateDatasetBody):
       value: {
         name?: string;
         description?: string | null;
+        annotationTemplateId?: string | null;
         status?: DatasetStatus;
         labelingConfig?: Prisma.InputJsonObject;
         labels?: ParsedDatasetLabel[];
@@ -780,6 +782,7 @@ function parseUpdateDatasetBody(body: UpdateDatasetBody):
   | { ok: false; error: string } {
   const name = normalizeText(body?.name);
   const description = normalizeNullableText(body?.description);
+  const annotationTemplateId = normalizeNullableText(body?.annotationTemplateId);
   const status = parseEnumValue(DatasetStatus, body?.status);
   const labelingConfig = parseLabelingConfig(body?.labelingConfig);
   const annotationConfig = parseDatasetAnnotationConfig(body?.labels, body?.tools, body?.labelingConfig);
@@ -809,6 +812,7 @@ function parseUpdateDatasetBody(body: UpdateDatasetBody):
     value: {
       ...(name ? { name } : {}),
       ...(body?.description !== undefined ? { description } : {}),
+      ...(body?.annotationTemplateId !== undefined ? { annotationTemplateId } : {}),
       ...(status ? { status } : {}),
       ...(labelingConfig.value ? { labelingConfig: labelingConfig.value } : {}),
       ...(body?.labels !== undefined ? { labels: annotationConfig.labels } : {}),

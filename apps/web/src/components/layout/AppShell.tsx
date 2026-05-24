@@ -1,4 +1,4 @@
-import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, LogOut, ShieldCheck, UserRound } from "lucide-react";
+import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, ListChecks, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import goxaiLogo from "../../assets/goxailab-logo.png";
@@ -75,6 +75,12 @@ export function AppShell() {
               Datasets
             </NavLink>
           )}
+          {canUseDatasetWorkspace && (
+            <NavLink to="/label-templates">
+              <ListChecks size={18} />
+              Label settings
+            </NavLink>
+          )}
           <NavLink to="/tasks">
             <ClipboardList size={18} />
             Tasks
@@ -144,7 +150,15 @@ function getTopbarTitle(pathname: string) {
     return { eyebrow: "Datasets", title: "Datasets list" };
   }
 
+  if (normalizedPathname === "/label-templates") {
+    return { eyebrow: "Label settings", title: "Annotation templates" };
+  }
+
   if (normalizedPathname.startsWith("/datasets/")) {
+    if (normalizedPathname.endsWith("/label-config")) {
+      return { eyebrow: "Datasets", title: "Label configuration" };
+    }
+
     return { eyebrow: "Datasets", title: "Dataset detail" };
   }
 

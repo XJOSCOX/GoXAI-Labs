@@ -1,13 +1,18 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle2, Save } from "lucide-react";
-import { updateDataset } from "../../api";
-import { getFormValue, useAuth } from "../../auth";
+import { listAnnotationTemplates, updateDataset, type AnnotationTemplateSummary } from "../../api";
+import { useAuth } from "../../auth";
 import {
   buildLabelingConfig,
+  getAnnotationTemplateIdFromForm,
   LabelingConfigBuilder,
+  parseLabelingSettingsFromForm,
+  parseLabelInputsFromForm,
   parseLabelInputsFromText,
-  parseToolInputsFromForm
+  parseToolInputsFromForm,
+  type LabelingSettings,
+  type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
 import { useDataset } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
@@ -20,6 +25,37 @@ export function DatasetLabelConfigPage() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTemplates() {
+      if (!session) {
+        return;
+      }
+
+      try {
+        const templateList = await listAnnotationTemplates(session);
+
+        if (!cancelled) {
+          setTemplates(templateList);
+        }
+      } catch {
+        if (!cancelled) {
+          setTemplates([]);
+        }
+      }
+    }
+
+    void loadTemplates();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  const templatePresets = useMemo(() => templates.map(templateToPreset), [templates]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,9 +67,12 @@ export function DatasetLabelConfigPage() {
       return;
     }
 
-    const labelsText = getFormValue(event, "labelNames");
-    const labels = parseLabelInputsFromText(labelsText);
+    const form = event.currentTarget;
+    const labels = parseLabelInputsFromForm(form);
     const tools = parseToolInputsFromForm(event.currentTarget);
+    const settings = parseLabelingSettingsFromForm(form);
+    const annotationTemplateId = getAnnotationTemplateIdFromForm(form);
+    const selectedTemplate = templatePresets.find((template) => template.sourceTemplateId === annotationTemplateId) ?? null;
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const markReady = submitter?.value === "ready";
 
@@ -51,7 +90,8 @@ export function DatasetLabelConfigPage() {
 
     try {
       await updateDataset(session, dataset.id, {
-        labelingConfig: buildLabelingConfig(labelsText, tools),
+        annotationTemplateId,
+        labelingConfig: buildLabelingConfig(labels, tools, settings, selectedTemplate),
         labels,
         tools,
         ...(markReady ? { status: "READY" } : {})
@@ -117,7 +157,9 @@ export function DatasetLabelConfigPage() {
             <form className="panel labeling-config-form" onSubmit={handleSubmit}>
               <LabelingConfigBuilder
                 defaultLabels={datasetLabelsToText(dataset)}
+                defaultSettings={getDatasetSettings(dataset.labelingConfig)}
                 selectedTools={dataset.tools.filter((tool) => tool.enabled).map((tool) => tool.tool)}
+                templates={templatePresets}
               />
               {message && <p className="form-success">{message}</p>}
               <div className="row-actions">
@@ -168,4 +210,63 @@ function datasetLabelsToText(dataset: {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function getDatasetSettings(config: Record<string, unknown> | null) {
+  const settings = config?.settings;
+
+  return settings && typeof settings === "object" ? (settings as Partial<LabelingSettings>) : undefined;
+}
+
+function templateToPreset(template: AnnotationTemplateSummary): TemplatePreset {
+  const config = template.configJson;
+  const labels = Array.isArray(config.labels)
+    ? config.labels
+        .map((label) => {
+          if (typeof label === "string") {
+            return label;
+          }
+
+          if (label && typeof label === "object" && "name" in label && typeof label.name === "string") {
+            return label.name;
+          }
+
+          return "";
+        })
+        .filter(Boolean)
+    : [];
+  const tools = Array.isArray(config.tools)
+    ? config.tools
+        .map((tool) => {
+          if (typeof tool === "string") {
+            return tool;
+          }
+
+          if (tool && typeof tool === "object" && "tool" in tool && typeof tool.tool === "string") {
+            return tool.tool;
+          }
+
+          return "";
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    category: getConfigString(config, "category") ?? "Custom Templates",
+    dataType: template.dataType,
+    description: template.description ?? "Custom GoXAi Lab labeling template.",
+    id: `custom-${template.id}`,
+    labels,
+    name: template.name,
+    settings: getDatasetSettings(config),
+    sourceTemplateId: template.id,
+    subtype: getConfigString(config, "subtype") ?? "Custom",
+    tools: tools.length > 0 ? tools : ["BBOX"]
+  };
+}
+
+function getConfigString(config: Record<string, unknown>, key: string) {
+  const value = config[key];
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

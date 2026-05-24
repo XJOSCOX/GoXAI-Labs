@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { getPrismaClient, getSupabaseConfig } from "@goxai/database";
 import { adminRouter } from "./admin.js";
+import { annotationTemplatesRouter } from "./annotationTemplates.js";
 import { applicationsRouter } from "./applications.js";
 import { assetsRouter } from "./assets.js";
 import { getBearerToken, requireAuthenticatedUser, syncUserFromAccessToken, type AuthenticatedRequest } from "./auth.js";
@@ -185,6 +186,7 @@ app.use("/api/assets", assetsRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/applications", applicationsRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/annotation-templates", annotationTemplatesRouter);
 app.use("/api/logs", logsRouter);
 
 app.use(

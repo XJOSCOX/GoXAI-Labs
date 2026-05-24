@@ -444,6 +444,7 @@ textarea:focus {
 .primary-button,
 .secondary-button,
 .ghost-button,
+.danger-button,
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -2346,6 +2347,70 @@ textarea:focus {
   gap: 10px;
 }
 
+.template-browser {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.template-category-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 8px;
+}
+
+.template-category-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.template-category-list button.active,
+.template-category-list button:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
+  color: var(--text);
+}
+
+.template-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.template-empty-state {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  min-height: 180px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  text-align: center;
+}
+
+.template-empty-state strong {
+  color: var(--text);
+}
+
 .template-card {
   display: grid;
   grid-template-rows: 92px auto auto;
@@ -2444,6 +2509,88 @@ textarea:focus {
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
+}
+
+.inline-form-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.label-editor-list {
+  display: grid;
+  gap: 7px;
+}
+
+.label-editor-list > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.label-editor-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.label-editor-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 48px 34px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.label-editor-row input[type="color"] {
+  width: 34px;
+  min-height: 34px;
+  padding: 3px;
+}
+
+.label-editor-row input {
+  min-height: 34px;
+}
+
+.icon-button.danger {
+  color: var(--danger-text);
+}
+
+.label-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.label-settings-grid legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.checkbox-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: var(--text);
+}
+
+.checkbox-row input {
+  width: auto;
+  min-height: auto;
 }
 
 .label-list-preview {
@@ -2682,6 +2829,108 @@ textarea:focus {
 .labeling-config-form {
   display: grid;
   gap: 14px;
+}
+
+.settings-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-page-head h2,
+.settings-page-head h3 {
+  margin: 0;
+}
+
+.template-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  gap: 14px;
+  min-width: 0;
+}
+
+.template-settings-library,
+.template-settings-editor {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.template-settings-editor form {
+  display: grid;
+  gap: 12px;
+}
+
+.template-settings-group {
+  display: grid;
+  gap: 8px;
+}
+
+.template-settings-group h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.template-settings-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+}
+
+.template-settings-card {
+  display: grid;
+  gap: 5px;
+  min-height: 94px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+}
+
+.template-settings-card.selectable {
+  cursor: pointer;
+}
+
+.template-settings-card.selectable:hover,
+.template-settings-card.selectable.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+}
+
+.template-settings-card strong {
+  font-size: 13px;
+}
+
+.template-settings-card span,
+.template-settings-card small {
+  color: var(--muted);
+}
+
+.two-column-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.template-tool-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.template-tool-checks legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .label-option {
@@ -2940,6 +3189,8 @@ textarea:focus {
   .organization-layout,
   .project-workspace-layout,
   .dataset-detail-layout,
+  .template-browser,
+  .template-settings-layout,
   .label-config-layout,
   .task-detail-layout,
   .admin-user-row {
@@ -2991,6 +3242,11 @@ textarea:focus {
   .management-split,
   .management-grid,
   .label-config-layout,
+  .label-settings-grid,
+  .template-browser,
+  .template-settings-layout,
+  .template-tool-checks,
+  .two-column-fields,
   .role-grid,
   .table-row.assets-head,
   .table-row.member-head,

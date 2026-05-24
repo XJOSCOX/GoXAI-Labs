@@ -1,154 +1,301 @@
 import { useMemo, useState } from "react";
-import { Check, GalleryHorizontalEnd, ImageIcon, Shapes } from "lucide-react";
+import { Check, GalleryHorizontalEnd, ImageIcon, Plus, Settings2, Shapes, Trash2 } from "lucide-react";
 
-type LabelingConfigBuilderProps = {
-  defaultLabels?: string;
-  disabled?: boolean;
-  selectedTools?: string[];
+export type LabelInput = {
+  color: string;
+  name: string;
+  shortcutKey?: string;
 };
 
-type TemplatePreset = {
+export type ToolInput = {
+  configJson?: Record<string, unknown>;
+  enabled?: boolean;
+  tool: string;
+};
+
+export type LabelingSettings = {
+  imageZoom: boolean;
+  regionBorderWidth: number;
+  rotateControls: boolean;
+  zoomControls: boolean;
+};
+
+export type TemplatePreset = {
   category: string;
   dataType: string;
   description: string;
   id: string;
   labels: string[];
   name: string;
+  settings?: Partial<LabelingSettings>;
+  sourceTemplateId?: string;
+  subtype: string;
   tools: string[];
+};
+
+type LabelingConfigBuilderProps = {
+  defaultLabels?: string;
+  defaultSettings?: Partial<LabelingSettings>;
+  disabled?: boolean;
+  selectedTools?: string[];
+  templates?: TemplatePreset[];
+};
+
+type LabelRow = {
+  color: string;
+  name: string;
+  shortcutKey: string;
 };
 
 export const annotationLabelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
 
+const defaultSettings: LabelingSettings = {
+  imageZoom: true,
+  regionBorderWidth: 1,
+  rotateControls: false,
+  zoomControls: true
+};
+
 const annotationToolOptions = [
   {
-    description: "Object detection boxes",
+    description: "Thin boxes for object detection.",
     label: "Bounding box",
     value: "BBOX"
   },
   {
-    description: "Precise object outlines",
+    description: "Precise outlines with small points.",
     label: "Polygon",
     value: "POLYGON"
   },
   {
-    description: "Dense mask painting",
+    description: "Dense mask painting.",
     label: "Brush",
     value: "BRUSH"
   },
   {
-    description: "Named text ranges",
+    description: "Named text ranges.",
     label: "Text span",
     value: "TEXT_SPAN"
   },
   {
-    description: "Pose or landmark points",
+    description: "Pose or landmark points.",
     label: "Keypoint",
     value: "KEYPOINT"
   },
   {
-    description: "Whole asset labels",
+    description: "Whole asset labels.",
     label: "Classification",
     value: "CLASSIFICATION"
+  },
+  {
+    description: "Link regions or entities together.",
+    label: "Relation",
+    value: "RELATION"
   }
 ];
 
-const templatePresets: TemplatePreset[] = [
+export const builtInTemplatePresets: TemplatePreset[] = [
   {
-    category: "Computer vision",
+    category: "Computer Vision",
     dataType: "Image",
     description: "Detect objects with thin bounding boxes.",
     id: "object-detection",
-    labels: ["Car", "Person", "Traffic light"],
+    labels: ["Car", "Person", "Traffic Light"],
     name: "Object Detection",
+    subtype: "Bounding boxes",
     tools: ["BBOX"]
   },
   {
-    category: "Computer vision",
+    category: "Computer Vision",
     dataType: "Image",
     description: "Trace object outlines with polygon points.",
     id: "polygon-segmentation",
     labels: ["Road", "Building", "Sidewalk"],
     name: "Semantic Segmentation",
-    tools: ["POLYGON"]
+    subtype: "Polygons",
+    tools: ["POLYGON"],
+    settings: {
+      regionBorderWidth: 1
+    }
   },
   {
-    category: "Computer vision",
+    category: "Computer Vision",
     dataType: "Image",
-    description: "Paint dense regions for masks.",
+    description: "Paint dense object masks.",
     id: "mask-segmentation",
     labels: ["Foreground", "Background", "Defect"],
     name: "Mask Segmentation",
+    subtype: "Masks",
     tools: ["BRUSH", "POLYGON"]
   },
   {
-    category: "Documents",
-    dataType: "PDF/Image",
-    description: "Capture text regions and named fields.",
-    id: "ocr",
-    labels: ["Name", "Address", "Phone number"],
-    name: "OCR Extraction",
-    tools: ["BBOX", "TEXT_SPAN"]
-  },
-  {
-    category: "Computer vision",
+    category: "Computer Vision",
     dataType: "Image",
-    description: "Classify the whole asset.",
-    id: "classification",
-    labels: ["Normal", "Abnormal", "Needs review"],
+    description: "Give the whole asset one label.",
+    id: "image-classification",
+    labels: ["Normal", "Abnormal", "Needs Review"],
     name: "Image Classification",
+    subtype: "Classification",
     tools: ["CLASSIFICATION"]
   },
   {
-    category: "Computer vision",
+    category: "Computer Vision",
     dataType: "Image/Video",
-    description: "Mark landmarks and pose points.",
+    description: "Track posture, landmarks, or pose points.",
     id: "keypoints",
     labels: ["Head", "Hand", "Foot"],
     name: "Keypoint Labeling",
+    subtype: "Landmarks",
     tools: ["KEYPOINT"]
   },
   {
-    category: "Natural language",
+    category: "Computer Vision",
+    dataType: "Video",
+    description: "Label scenes, shots, objects, and cinematic events.",
+    id: "cinematic-video",
+    labels: ["Scene", "Actor", "Product", "Camera Cut"],
+    name: "Cinematic Video Review",
+    subtype: "Cinematic",
+    tools: ["BBOX", "CLASSIFICATION"]
+  },
+  {
+    category: "Natural Language Processing",
     dataType: "Text",
     description: "Tag entities inside text spans.",
     id: "ner",
     labels: ["Person", "Organization", "Location"],
     name: "Named Entity Recognition",
+    subtype: "NER",
     tools: ["TEXT_SPAN"]
   },
   {
-    category: "Audio/Speech",
+    category: "Natural Language Processing",
+    dataType: "Text",
+    description: "Sort documents by intent or type.",
+    id: "text-classification",
+    labels: ["Positive", "Negative", "Neutral"],
+    name: "Text Classification",
+    subtype: "Classification",
+    tools: ["CLASSIFICATION"]
+  },
+  {
+    category: "Audio/Speech Processing",
     dataType: "Audio",
-    description: "Transcribe speech segments.",
+    description: "Transcribe speakers, noise, and important moments.",
     id: "audio-transcription",
     labels: ["Speaker", "Noise", "Important"],
     name: "Audio Transcription",
+    subtype: "Speech",
     tools: ["TEXT_SPAN", "CLASSIFICATION"]
+  },
+  {
+    category: "Structured Data Parsing",
+    dataType: "PDF/Image",
+    description: "Capture document fields and text regions.",
+    id: "ocr",
+    labels: ["Name", "Address", "Phone Number"],
+    name: "OCR Extraction",
+    subtype: "OCR",
+    tools: ["BBOX", "TEXT_SPAN"]
+  },
+  {
+    category: "Time Series Analysis",
+    dataType: "Time Series",
+    description: "Mark ranges, spikes, and events.",
+    id: "time-series-events",
+    labels: ["Spike", "Drop", "Anomaly"],
+    name: "Event Ranges",
+    subtype: "Ranges",
+    tools: ["CLASSIFICATION"]
+  },
+  {
+    category: "Generative AI",
+    dataType: "Multimodal",
+    description: "Rate model output quality and correctness.",
+    id: "llm-quality",
+    labels: ["Correct", "Incorrect", "Unsafe", "Needs Review"],
+    name: "LLM Quality Review",
+    subtype: "Quality",
+    tools: ["CLASSIFICATION", "TEXT_SPAN"]
   }
+];
+
+const fallbackCategories = [
+  "Computer Vision",
+  "Natural Language Processing",
+  "Audio/Speech Processing",
+  "Conversational AI",
+  "Chat",
+  "Ranking & Scoring",
+  "Structured Data Parsing",
+  "Time Series Analysis",
+  "Videos",
+  "Generative AI",
+  "Community Contributions",
+  "Custom Templates"
 ];
 
 export function LabelingConfigBuilder({
   defaultLabels = "",
+  defaultSettings: initialSettings,
   disabled = false,
-  selectedTools = ["BBOX"]
+  selectedTools = ["BBOX"],
+  templates
 }: LabelingConfigBuilderProps) {
-  const [mode, setMode] = useState<"visual" | "code">("visual");
-  const [showTemplates, setShowTemplates] = useState(false);
-  const [labelsText, setLabelsText] = useState(defaultLabels);
-  const [activeTemplate, setActiveTemplate] = useState<string | null>(null);
-  const [activeTools, setActiveTools] = useState<string[]>(selectedTools.length > 0 ? selectedTools : ["BBOX"]);
+  const allTemplates = useMemo(() => [...builtInTemplatePresets, ...(templates ?? [])], [templates]);
+  const categories = useMemo(() => {
+    const extraCategories = allTemplates
+      .map((template) => template.category)
+      .filter((category) => !fallbackCategories.includes(category));
 
-  const labels = useMemo(() => parseLabels(labelsText), [labelsText]);
-  const configCode = useMemo(() => buildConfigCode(labels, activeTools), [activeTools, labels]);
+    return [...fallbackCategories, ...Array.from(new Set(extraCategories))];
+  }, [allTemplates]);
+  const [mode, setMode] = useState<"visual" | "code">("visual");
+  const [activeCategory, setActiveCategory] = useState(categories[0] ?? "Computer Vision");
+  const [activeTemplate, setActiveTemplate] = useState<TemplatePreset | null>(null);
+  const [labelRows, setLabelRows] = useState<LabelRow[]>(() => parseLabelRows(defaultLabels));
+  const [newLabelName, setNewLabelName] = useState("");
+  const [activeTools, setActiveTools] = useState<string[]>(selectedTools.length > 0 ? selectedTools : ["BBOX"]);
+  const [settings, setSettings] = useState<LabelingSettings>({ ...defaultSettings, ...initialSettings });
+
+  const visibleTemplates = allTemplates.filter((template) => template.category === activeCategory);
+  const configCode = useMemo(() => buildConfigCode(labelRows, activeTools, settings), [activeTools, labelRows, settings]);
 
   function applyTemplate(template: TemplatePreset) {
     if (disabled) {
       return;
     }
 
-    setActiveTemplate(template.id);
-    setLabelsText(template.labels.join("\n"));
+    setActiveTemplate(template);
+    setLabelRows(parseLabelRows(template.labels.join("\n")));
     setActiveTools(template.tools);
+    setSettings({ ...defaultSettings, ...template.settings });
+  }
+
+  function addLabel() {
+    const name = newLabelName.trim();
+
+    if (!name || disabled) {
+      return;
+    }
+
+    setLabelRows((current) => [
+      ...current,
+      {
+        color: annotationLabelColors[current.length % annotationLabelColors.length],
+        name,
+        shortcutKey: getShortcutKey(current.length) ?? ""
+      }
+    ]);
+    setNewLabelName("");
+  }
+
+  function updateLabel(index: number, update: Partial<LabelRow>) {
+    setLabelRows((current) => current.map((label, labelIndex) => (labelIndex === index ? { ...label, ...update } : label)));
+  }
+
+  function removeLabel(index: number) {
+    setLabelRows((current) => current.filter((_label, labelIndex) => labelIndex !== index));
   }
 
   function toggleTool(value: string) {
@@ -162,23 +309,23 @@ export function LabelingConfigBuilder({
     });
   }
 
+  function updateSetting<K extends keyof LabelingSettings>(key: K, value: LabelingSettings[K]) {
+    setSettings((current) => ({ ...current, [key]: value }));
+  }
+
   return (
     <section className="wide labeling-config-builder">
+      <input name="annotationTemplateId" type="hidden" value={activeTemplate?.sourceTemplateId ?? ""} />
       <div className="labeling-config-head">
         <div>
           <p className="eyebrow">Labeling interface</p>
           <h3>Annotation configuration</h3>
         </div>
         <div className="row-actions compact">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={disabled}
-            onClick={() => setShowTemplates((value) => !value)}
-          >
-            <GalleryHorizontalEnd size={16} />
-            Browse templates
-          </button>
+          <span className="status-pill compact">
+            <GalleryHorizontalEnd size={14} />
+            {allTemplates.length} templates
+          </span>
           <div className="segmented-control" aria-label="Config view">
             <button className={mode === "visual" ? "active" : ""} type="button" onClick={() => setMode("visual")}>
               Visual
@@ -190,11 +337,23 @@ export function LabelingConfigBuilder({
         </div>
       </div>
 
-      {showTemplates && (
-        <div className="template-gallery">
-          {templatePresets.map((template) => (
+      <div className="template-browser">
+        <aside className="template-category-list">
+          {categories.map((category) => (
             <button
-              className={`template-card ${activeTemplate === template.id ? "active" : ""}`}
+              className={activeCategory === category ? "active" : ""}
+              key={category}
+              type="button"
+              onClick={() => setActiveCategory(category)}
+            >
+              {category}
+            </button>
+          ))}
+        </aside>
+        <div className="template-card-grid">
+          {visibleTemplates.length > 0 ? visibleTemplates.map((template) => (
+            <button
+              className={`template-card ${activeTemplate?.id === template.id ? "active" : ""}`}
               disabled={disabled}
               key={template.id}
               type="button"
@@ -205,11 +364,18 @@ export function LabelingConfigBuilder({
                 <strong>{template.name}</strong>
                 <small>{template.description}</small>
               </span>
-              <small>{template.category}</small>
+              <small>
+                {template.subtype} · {template.dataType}
+              </small>
             </button>
-          ))}
+          )) : (
+            <div className="template-empty-state">
+              <strong>No templates in this category yet.</strong>
+              <small>Create one from Label settings when this workflow is ready.</small>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       <div className="label-config-layout">
         <div className="label-config-panel">
@@ -218,33 +384,114 @@ export function LabelingConfigBuilder({
             <span>Use asset from</span>
             <code>$image</code>
           </div>
+
           <label>
-            Add label names
-            <span className="field-help">Use a new line for each label. Shortcuts are assigned from 1 to 9.</span>
-            <textarea
-              disabled={disabled}
-              name="labelNames"
-              onChange={(event) => setLabelsText(event.target.value)}
-              placeholder="Car&#10;Person&#10;Traffic light"
-              rows={5}
-              value={labelsText}
-            />
+            Add label name
+            <span className="field-help">Pick a template first, then adjust labels, colors, and keyboard shortcuts.</span>
+            <div className="inline-form-row">
+              <input
+                disabled={disabled}
+                onChange={(event) => setNewLabelName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addLabel();
+                  }
+                }}
+                placeholder="Car, Person, Address..."
+                value={newLabelName}
+              />
+              <button className="secondary-button compact-button" disabled={disabled} type="button" onClick={addLabel}>
+                <Plus size={16} />
+                Add
+              </button>
+            </div>
           </label>
 
-          <div className="label-list-preview">
-            <span>Labels ({labels.length})</span>
-            {labels.length > 0 ? (
-              labels.map((label, index) => (
-                <div className="label-row" key={`${label.name}-${index}`}>
-                  <i style={{ background: label.color }} />
-                  <strong>{label.name}</strong>
-                  {index < 9 && <kbd>{index + 1}</kbd>}
+          <div className="label-editor-list">
+            <span>Labels ({labelRows.length})</span>
+            {labelRows.length > 0 ? (
+              labelRows.map((label, index) => (
+                <div className="label-editor-row" key={`${label.name}-${index}`}>
+                  <input name="labelName" type="hidden" value={label.name} />
+                  <input name="labelColor" type="hidden" value={label.color} />
+                  <input name="labelShortcut" type="hidden" value={label.shortcutKey} />
+                  <input
+                    aria-label={`${label.name} color`}
+                    disabled={disabled}
+                    onChange={(event) => updateLabel(index, { color: event.target.value })}
+                    type="color"
+                    value={label.color}
+                  />
+                  <input
+                    aria-label="Label name"
+                    disabled={disabled}
+                    onChange={(event) => updateLabel(index, { name: event.target.value })}
+                    value={label.name}
+                  />
+                  <input
+                    aria-label="Shortcut"
+                    disabled={disabled}
+                    maxLength={1}
+                    onChange={(event) => updateLabel(index, { shortcutKey: event.target.value.trim().slice(0, 1) })}
+                    placeholder="-"
+                    value={label.shortcutKey}
+                  />
+                  <button className="icon-button danger" disabled={disabled} type="button" onClick={() => removeLabel(index)}>
+                    <Trash2 size={15} />
+                  </button>
                 </div>
               ))
             ) : (
               <p>No labels configured yet.</p>
             )}
           </div>
+
+          <fieldset className="label-settings-grid">
+            <legend>
+              <Settings2 size={16} />
+              Configure settings
+            </legend>
+            <label>
+              Region border width
+              <input
+                max="8"
+                min="1"
+                name="regionBorderWidth"
+                onChange={(event) => updateSetting("regionBorderWidth", Number(event.target.value) || 1)}
+                step="1"
+                type="number"
+                value={settings.regionBorderWidth}
+              />
+            </label>
+            <label className="checkbox-row">
+              <input
+                checked={settings.imageZoom}
+                name="imageZoom"
+                onChange={(event) => updateSetting("imageZoom", event.target.checked)}
+                type="checkbox"
+              />
+              Allow image zoom
+            </label>
+            <label className="checkbox-row">
+              <input
+                checked={settings.zoomControls}
+                name="zoomControls"
+                onChange={(event) => updateSetting("zoomControls", event.target.checked)}
+                type="checkbox"
+              />
+              Show zoom controls
+            </label>
+            <label className="checkbox-row">
+              <input
+                checked={settings.rotateControls}
+                name="rotateControls"
+                onChange={(event) => updateSetting("rotateControls", event.target.checked)}
+                type="checkbox"
+              />
+              Show rotate controls
+            </label>
+          </fieldset>
         </div>
 
         <div className="label-config-panel">
@@ -252,7 +499,7 @@ export function LabelingConfigBuilder({
             <>
               <div className="visual-config-preview">
                 <div className="visual-canvas">
-                  <span>Select label and click the image to start</span>
+                  <span>{activeTemplate ? activeTemplate.name : "Select a template or build one manually"}</span>
                   {activeTools.includes("BBOX") && <i className="bbox-demo demo-one" />}
                   {activeTools.includes("BBOX") && <i className="bbox-demo demo-two" />}
                   {activeTools.includes("POLYGON") && <i className="polygon-demo" />}
@@ -320,7 +567,7 @@ function TemplatePreview({ template }: { template: TemplatePreset }) {
   );
 }
 
-function parseLabels(value: string) {
+function parseLabelRows(value: string) {
   return value
     .split(/[\n,]/)
     .map((label) => label.trim())
@@ -328,19 +575,35 @@ function parseLabels(value: string) {
     .slice(0, 50)
     .map((name, index) => ({
       color: annotationLabelColors[index % annotationLabelColors.length],
-      name
+      name,
+      shortcutKey: getShortcutKey(index) ?? ""
     }));
 }
 
+export function parseLabelInputsFromForm(form: HTMLFormElement): LabelInput[] {
+  const data = new FormData(form);
+  const names = data.getAll("labelName").map(String);
+  const colors = data.getAll("labelColor").map(String);
+  const shortcuts = data.getAll("labelShortcut").map(String);
+
+  return names
+    .map((name, index) => ({
+      color: colors[index] || annotationLabelColors[index % annotationLabelColors.length],
+      name: name.trim(),
+      shortcutKey: shortcuts[index]?.trim() || undefined
+    }))
+    .filter((label) => label.name.length > 0);
+}
+
 export function parseLabelInputsFromText(value: string) {
-  return parseLabels(value).map((label, index) => ({
+  return parseLabelRows(value).map((label) => ({
     color: label.color,
     name: label.name,
-    shortcutKey: index < 9 ? String(index + 1) : undefined
+    shortcutKey: label.shortcutKey || undefined
   }));
 }
 
-export function parseToolInputsFromForm(form: HTMLFormElement) {
+export function parseToolInputsFromForm(form: HTMLFormElement): ToolInput[] {
   const selected = new FormData(form).getAll("annotationTools").map(String);
   const tools = selected.length > 0 ? selected : ["BBOX"];
 
@@ -350,34 +613,62 @@ export function parseToolInputsFromForm(form: HTMLFormElement) {
   }));
 }
 
-export function buildLabelingConfig(labelsText: string, tools: Array<{ enabled?: boolean; tool: string }>) {
-  const labels = parseLabelInputsFromText(labelsText);
+export function parseLabelingSettingsFromForm(form: HTMLFormElement): LabelingSettings {
+  const data = new FormData(form);
+  const borderWidth = Number(data.get("regionBorderWidth"));
 
   return {
+    imageZoom: data.get("imageZoom") === "on",
+    regionBorderWidth: Number.isFinite(borderWidth) ? Math.max(1, Math.min(8, borderWidth)) : 1,
+    rotateControls: data.get("rotateControls") === "on",
+    zoomControls: data.get("zoomControls") === "on"
+  };
+}
+
+export function getAnnotationTemplateIdFromForm(form: HTMLFormElement) {
+  const value = new FormData(form).get("annotationTemplateId");
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function buildLabelingConfig(labels: LabelInput[], tools: ToolInput[], settings: LabelingSettings, template?: TemplatePreset | null) {
+  return {
+    category: template?.category ?? null,
     labels,
+    settings,
+    subtype: template?.subtype ?? null,
+    templateId: template?.id ?? null,
+    templateName: template?.name ?? null,
     tools,
     version: 1
   };
 }
 
-function buildConfigCode(labels: Array<{ color: string; name: string }>, tools: string[]) {
+export function buildTemplateConfig(template: TemplatePreset) {
+  const labels = parseLabelInputsFromText(template.labels.join("\n"));
+  const tools = template.tools.map((tool) => ({ enabled: true, tool }));
+
+  return buildLabelingConfig(labels, tools, { ...defaultSettings, ...template.settings }, template);
+}
+
+function buildConfigCode(labels: LabelRow[], tools: string[], settings: LabelingSettings) {
   const labelMarkup = labels.length > 0
     ? labels.map((label) => `    <Label value="${escapeXml(label.name)}" background="${label.color}" />`).join("\n")
     : `    <Label value="Label" background="#7dd3fc" />`;
-
-  const tagMarkup = tools.map((tool) => buildToolMarkup(tool, labelMarkup)).join("\n\n");
+  const zoom = settings.imageZoom ? "true" : "false";
+  const tagMarkup = tools.map((tool) => buildToolMarkup(tool, labelMarkup, settings)).join("\n\n");
 
   return `<View>
   <Header value="Select label and annotate the asset" />
-  <Image name="image" value="$image" zoom="true" />
+  <Image name="image" value="$image" zoom="${zoom}" />
 
 ${tagMarkup}
 </View>`;
 }
 
-function buildToolMarkup(tool: string, labelMarkup: string) {
+function buildToolMarkup(tool: string, labelMarkup: string, settings: LabelingSettings) {
   if (tool === "POLYGON") {
-    return `  <PolygonLabels name="polygon_label" toName="image" strokeWidth="1" pointSize="small" opacity="0.9">
+    return `  <PolygonLabels name="polygon_label" toName="image" strokeWidth="${settings.regionBorderWidth}" pointSize="small" opacity="0.9">
 ${labelMarkup}
   </PolygonLabels>`;
   }
@@ -395,7 +686,7 @@ ${labelMarkup}
   }
 
   if (tool === "KEYPOINT") {
-    return `  <KeyPointLabels name="keypoint_label" toName="image" strokeWidth="1">
+    return `  <KeyPointLabels name="keypoint_label" toName="image" strokeWidth="${settings.regionBorderWidth}">
 ${labelMarkup}
   </KeyPointLabels>`;
   }
@@ -406,9 +697,19 @@ ${labelMarkup.replaceAll("<Label", "<Choice").replaceAll("background=", "valueCo
   </Choices>`;
   }
 
-  return `  <RectangleLabels name="box_label" toName="image" strokeWidth="1" opacity="0.9">
+  if (tool === "RELATION") {
+    return `  <Relations>
+    <Relation value="Related" />
+  </Relations>`;
+  }
+
+  return `  <RectangleLabels name="box_label" toName="image" strokeWidth="${settings.regionBorderWidth}" opacity="0.9">
 ${labelMarkup}
   </RectangleLabels>`;
+}
+
+function getShortcutKey(index: number) {
+  return index >= 0 && index < 9 ? String(index + 1) : undefined;
 }
 
 function escapeXml(value: string) {
