@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Code2, Eye, Save, Trash2 } from "lucide-react";
 import {
+  createAnnotationCategory,
   createAnnotationTemplate,
   deleteAnnotationTemplate,
   listAnnotationCategories,
@@ -18,6 +19,7 @@ import {
   type LabelingSettings,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
+import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
 
 const dataTypes = ["IMAGE", "VIDEO", "AUDIO", "TEXT", "PDF", "TIME_SERIES", "MULTIMODAL"];
@@ -27,7 +29,8 @@ export function LabelTemplateFormPage() {
   const { categoryKey, templateId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { session } = useAuth();
+  const { dbUser, session } = useAuth();
+  const { organizations } = useOrganizations(session);
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -58,8 +61,12 @@ export function LabelTemplateFormPage() {
     selectedTemplate?.categoryId ??
     (routeEditableCategoryId || requestedEditableCategoryId || editableCategories[0]?.id || "");
   const selectedCategory = editableCategories.find((category) => category.id === defaultCategoryId) ?? null;
+  const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
+  const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
+  const fallbackCategoryName = routeCategoryName ?? sourcePreset?.category ?? requestedCategoryName ?? "Custom Templates";
   const isEditing = Boolean(templateId);
   const categoryLocked = Boolean(categoryKey);
+  const canAutoCreateCategory = !selectedCategory && categoryLocked && canCreateCategory && Boolean(fallbackCategoryName);
   const seedName = selectedTemplate?.name ?? sourcePreset?.name ?? "";
   const seedDescription = selectedTemplate?.description ?? sourcePreset?.description ?? "";
   const seedSubtype = getTemplateConfigString(selectedTemplate, "subtype") ?? sourcePreset?.subtype ?? "";
@@ -118,7 +125,7 @@ export function LabelTemplateFormPage() {
 
     const form = event.currentTarget;
     const categoryId = getFormValue(event, "categoryId");
-    const category = editableCategories.find((item) => item.id === categoryId);
+    let category = editableCategories.find((item) => item.id === categoryId) ?? null;
     const name = getFormValue(event, "name");
     const description = getFormValue(event, "description");
     const subtype = getFormValue(event, "subtype") || "Custom";
@@ -136,7 +143,7 @@ export function LabelTemplateFormPage() {
     const selectedTools = new FormData(form).getAll("tools").map(String);
     const configCode = getFormValue(event, "configCode") || buildTemplateMarkup(header, dataKey, getFormValue(event, "labels"), selectedTools, settings);
 
-    if (!category) {
+    if (!category && !canAutoCreateCategory) {
       setError("Choose a category you own before saving this template.");
       return;
     }
@@ -156,21 +163,34 @@ export function LabelTemplateFormPage() {
       return;
     }
 
-    const preset: TemplatePreset = {
-      category: category.name,
-      dataType,
-      description,
-      id: selectedTemplate?.id ?? `custom-${Date.now()}`,
-      labels: labels.map((label) => label.name),
-      name,
-      settings,
-      subtype,
-      tools: selectedTools
-    };
-
     setSaving(true);
 
     try {
+      if (!category && canAutoCreateCategory) {
+        category = await createAnnotationCategory(session, {
+          description: `${fallbackCategoryName} templates and labeling presets.`,
+          name: fallbackCategoryName,
+          organizationId: dbUser?.globalRole === "SUPER_ADMIN" ? null : manageableOrganizations[0]?.id ?? null
+        });
+      }
+
+      if (!category) {
+        setError("Choose a category you own before saving this template.");
+        return;
+      }
+
+      const preset: TemplatePreset = {
+        category: category.name,
+        dataType,
+        description,
+        id: selectedTemplate?.id ?? `custom-${Date.now()}`,
+        labels: labels.map((label) => label.name),
+        name,
+        settings,
+        subtype,
+        tools: selectedTools
+      };
+
       const payload = {
         categoryId: category.id,
         configJson: {
@@ -241,13 +261,13 @@ export function LabelTemplateFormPage() {
         {(error || message) && <p className={error ? "form-error" : "form-success"}>{error ?? message}</p>}
 
         <form className="panel template-form-page" onSubmit={handleSubmit}>
-          {editableCategories.length === 0 && (
-            <p className="form-error">Create a custom category before adding templates.</p>
-          )}
-          {categoryLocked && !selectedCategory && (
-            <p className="form-error">
-              Create a custom category named {routeCategoryName ?? "this category"} before saving templates here.
+          {canAutoCreateCategory && (
+            <p className="form-note">
+              This built-in category will be saved as your own {fallbackCategoryName} category when you create the template.
             </p>
+          )}
+          {!canAutoCreateCategory && editableCategories.length === 0 && (
+            <p className="form-note">Create or join an organization with label-setting rights before adding templates.</p>
           )}
           <input name="configCode" type="hidden" value={configCodeValue} />
           <div className="labeling-interface-builder">
@@ -286,7 +306,7 @@ export function LabelTemplateFormPage() {
             {categoryLocked ? (
               <label>
                 Category
-                <input disabled readOnly value={selectedCategory?.name ?? routeCategoryName ?? "Unavailable category"} />
+                <input disabled readOnly value={selectedCategory?.name ?? `${fallbackCategoryName} (will be created)`} />
                 <input name="categoryId" type="hidden" value={selectedCategory?.id ?? ""} />
               </label>
             ) : (
@@ -424,7 +444,7 @@ export function LabelTemplateFormPage() {
             />
           </div>
           <div className="row-actions">
-            <button className="primary-button" disabled={saving || editableCategories.length === 0 || !selectedCategory} type="submit">
+            <button className="primary-button" disabled={saving || (!selectedCategory && !canAutoCreateCategory)} type="submit">
               <Save size={18} />
               {isEditing ? "Save template" : "Create template"}
             </button>

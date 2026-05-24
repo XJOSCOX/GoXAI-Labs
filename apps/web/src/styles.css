@@ -957,6 +957,17 @@ textarea:focus {
   width: min(680px, 100%);
 }
 
+.form-note {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .dataset-edit-modal {
   width: min(780px, 100%);
 }
