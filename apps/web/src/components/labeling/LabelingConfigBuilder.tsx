@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, GalleryHorizontalEnd, ImageIcon, Plus, Settings2, Shapes, Trash2 } from "lucide-react";
+import { Check, ChevronRight, GalleryHorizontalEnd, ImageIcon, Plus, Settings2, Shapes, Trash2 } from "lucide-react";
 
 export type LabelInput = {
   color: string;
@@ -339,16 +339,44 @@ export function LabelingConfigBuilder({
 
       <div className="template-browser">
         <aside className="template-category-list">
-          {categories.map((category) => (
-            <button
-              className={activeCategory === category ? "active" : ""}
-              key={category}
-              type="button"
-              onClick={() => setActiveCategory(category)}
-            >
-              {category}
-            </button>
-          ))}
+          {categories.map((category) => {
+            const categoryTemplates = allTemplates.filter((template) => template.category === category);
+            const expanded = activeCategory === category;
+
+            return (
+              <div className={`template-category-group ${expanded ? "active" : ""}`} key={category}>
+                <button
+                  className="template-category-row"
+                  type="button"
+                  onClick={() => setActiveCategory(category)}
+                >
+                  <ChevronRight size={15} />
+                  <span>{category}</span>
+                  <small>{categoryTemplates.length}</small>
+                </button>
+                {expanded && (
+                  <div className="template-sublist">
+                    {categoryTemplates.length > 0 ? (
+                      categoryTemplates.map((template) => (
+                        <button
+                          className={`template-subitem ${activeTemplate?.id === template.id ? "active" : ""}`}
+                          disabled={disabled}
+                          key={template.id}
+                          type="button"
+                          onClick={() => applyTemplate(template)}
+                        >
+                          <strong>{template.subtype}</strong>
+                          <span>{template.name}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p>No label settings yet.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </aside>
         <div className="template-card-grid">
           {visibleTemplates.length > 0 ? visibleTemplates.map((template) => (

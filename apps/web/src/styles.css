@@ -2364,10 +2364,15 @@ textarea:focus {
   padding: 8px;
 }
 
-.template-category-list button {
+.template-category-group {
+  display: grid;
+  gap: 4px;
+}
+
+.template-category-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   min-height: 34px;
   border: 0;
   border-radius: 6px;
@@ -2381,9 +2386,76 @@ textarea:focus {
   cursor: pointer;
 }
 
-.template-category-list button.active,
-.template-category-list button:hover {
+.template-category-row svg {
+  flex: 0 0 auto;
+  transition: transform 160ms ease;
+}
+
+.template-category-row span {
+  min-width: 0;
+  flex: 1;
+}
+
+.template-category-row small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.template-category-group.active .template-category-row svg {
+  transform: rotate(90deg);
+}
+
+.template-category-group.active .template-category-row,
+.template-category-row:hover {
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
+  color: var(--text);
+}
+
+.template-sublist {
+  display: grid;
+  gap: 4px;
+  margin-left: 13px;
+  border-left: 1px solid var(--border);
+  padding-left: 9px;
+}
+
+.template-sublist p {
+  margin: 3px 0 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.template-subitem {
+  display: grid;
+  gap: 1px;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 8px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.template-subitem strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.template-subitem span {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-subitem:hover,
+.template-subitem.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
   color: var(--text);
 }
 
