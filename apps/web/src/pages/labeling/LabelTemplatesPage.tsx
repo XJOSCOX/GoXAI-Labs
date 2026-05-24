@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Database, Plus, Settings2, Shapes, X } from "lucide-react";
 import {
   createAnnotationCategory,
@@ -55,6 +55,7 @@ const fallbackCategories = [
 export function LabelTemplatesPage() {
   const { dbUser, session } = useAuth();
   const { organizations } = useOrganizations(session);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>("builtin:Computer Vision");
@@ -96,6 +97,17 @@ export function LabelTemplatesPage() {
     };
   }, [session]);
 
+  useEffect(() => {
+    const categoryKey = searchParams.get("category");
+    const templateId = searchParams.get("template");
+
+    if (categoryKey && categoryKey !== activeCategoryKey) {
+      setActiveCategoryKey(categoryKey);
+    }
+
+    setActiveTemplateId(templateId);
+  }, [activeCategoryKey, searchParams]);
+
   const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
   const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
   const builtInCategories = useMemo(() => getBuiltInCategories(), []);
@@ -116,10 +128,21 @@ export function LabelTemplatesPage() {
     [activeCategory, templates]
   );
   const activeTemplate = visibleTemplates.find((template) => template.id === activeTemplateId) ?? null;
-  const newTemplateHref =
+  const selectedCategoryForNewTemplate =
     activeCategory?.source === "custom"
-      ? `/label-templates/templates/new?category=${encodeURIComponent(activeCategory.id)}`
-      : `/label-templates/templates/new?categoryName=${encodeURIComponent(activeCategory?.name ?? "")}`;
+      ? activeCategory
+      : categories.find((category) => category.name === activeCategory?.name && category.canManage) ?? null;
+  const newTemplateCategoryKey = selectedCategoryForNewTemplate
+    ? `custom:${selectedCategoryForNewTemplate.id}`
+    : activeCategory?.key ?? "";
+  const newTemplateHref =
+    activeCategory && newTemplateCategoryKey
+      ? `/label-templates/categories/${encodeURIComponent(newTemplateCategoryKey)}/templates/new`
+      : "/label-templates/templates/new";
+  const manageTemplateHref =
+    activeTemplate && activeCategory
+      ? getManageTemplateHref(activeTemplate, activeCategory, selectedCategoryForNewTemplate)
+      : null;
 
   async function reload() {
     if (!session) {
@@ -161,6 +184,7 @@ export function LabelTemplatesPage() {
       await reload();
       setActiveCategoryKey(`custom:${category.id}`);
       setActiveTemplateId(null);
+      setSearchParams({ category: `custom:${category.id}` });
       setCategoryModalOpen(false);
       setMessage("Category created.");
     } catch (reason) {
@@ -187,11 +211,16 @@ export function LabelTemplatesPage() {
               <Plus size={16} />
               New template
             </Link>
-            {activeTemplate?.source === "custom" && activeTemplate.canManage && (
-              <Link className="secondary-button compact-button" to={`/label-templates/templates/${activeTemplate.sourceTemplateId}/edit`}>
+            {activeTemplate && manageTemplateHref ? (
+              <Link className="secondary-button compact-button" to={manageTemplateHref}>
                 <Settings2 size={16} />
                 Manage this template
               </Link>
+            ) : (
+              <button className="secondary-button compact-button" disabled type="button">
+                <Settings2 size={16} />
+                Manage this template
+              </button>
             )}
           </div>
         </div>
@@ -208,6 +237,7 @@ export function LabelTemplatesPage() {
                 onClick={() => {
                   setActiveCategoryKey(category.key);
                   setActiveTemplateId(null);
+                  setSearchParams({ category: category.key });
                 }}
               >
                 <span>
@@ -235,7 +265,12 @@ export function LabelTemplatesPage() {
                     className={`label-template-card ${activeTemplate?.id === template.id ? "active" : ""}`}
                     key={template.id}
                     type="button"
-                    onClick={() => setActiveTemplateId(template.id)}
+                    onClick={() => {
+                      setActiveTemplateId(template.id);
+                      if (activeCategory) {
+                        setSearchParams({ category: activeCategory.key, template: template.id });
+                      }
+                    }}
                   >
                     <TemplatePreview template={template} />
                     <span>
@@ -266,6 +301,14 @@ export function LabelTemplatesPage() {
                   <div>
                     <dt>Category</dt>
                     <dd>{activeTemplate.category}</dd>
+                  </div>
+                  <div>
+                    <dt>Category ID</dt>
+                    <dd>{activeCategory?.source === "custom" ? activeCategory.id : activeCategory?.key}</dd>
+                  </div>
+                  <div>
+                    <dt>Template ID</dt>
+                    <dd>{activeTemplate.sourceTemplateId ?? activeTemplate.id}</dd>
                   </div>
                   <div>
                     <dt>Data type</dt>
@@ -300,10 +343,10 @@ export function LabelTemplatesPage() {
                     ))}
                   </div>
                 </section>
-                {activeTemplate.source === "custom" && activeTemplate.canManage && (
-                  <Link className="secondary-button compact-button" to={`/label-templates/templates/${activeTemplate.sourceTemplateId}/edit`}>
+                {manageTemplateHref && (
+                  <Link className="secondary-button compact-button" to={manageTemplateHref}>
                     <Settings2 size={16} />
-                    Edit this template
+                    Manage this template
                   </Link>
                 )}
               </>
@@ -401,6 +444,18 @@ function getTemplatesForCategory(category: CategoryItem, templates: AnnotationTe
   return templates
     .filter((template) => template.categoryId === category.id)
     .map(templateToCard);
+}
+
+function getManageTemplateHref(template: TemplateCard, category: CategoryItem, writableCategory: AnnotationCategorySummary | null) {
+  if (template.source === "custom") {
+    return template.canManage && template.sourceTemplateId
+      ? `/label-templates/templates/${encodeURIComponent(template.sourceTemplateId)}/edit?category=${encodeURIComponent(category.key)}`
+      : null;
+  }
+
+  const targetCategoryKey = writableCategory ? `custom:${writableCategory.id}` : category.key;
+
+  return `/label-templates/categories/${encodeURIComponent(targetCategoryKey)}/templates/new?sourceTemplate=${encodeURIComponent(template.id)}`;
 }
 
 function templateToCard(template: AnnotationTemplateSummary): TemplateCard {

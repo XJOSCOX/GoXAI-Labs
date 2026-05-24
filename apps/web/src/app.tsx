@@ -75,6 +75,7 @@ export function App() {
           <Route path="tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="label-templates" element={<LabelTemplatesPage />} />
           <Route path="label-templates/manage" element={<LabelTemplateManagerPage />} />
+          <Route path="label-templates/categories/:categoryKey/templates/new" element={<LabelTemplateFormPage />} />
           <Route path="label-templates/templates/new" element={<LabelTemplateFormPage />} />
           <Route path="label-templates/templates/:templateId/edit" element={<LabelTemplateFormPage />} />
           <Route path="account" element={<AccountPage />} />
