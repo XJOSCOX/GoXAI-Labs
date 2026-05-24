@@ -1,0 +1,7 @@
+<View>
+  <Header value="Select or rank the best transcription hypothesis."/>
+
+  <Audio name="audio" value="$audio"/>
+
+  <TextArea name="transcript" toName="audio" rows="4" editable="true"/>
+</View>

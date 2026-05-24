@@ -1,0 +1,32 @@
+{
+  "id": "relation-extraction",
+  "name": "Relation Extraction",
+  "category": "Natural Language Processing",
+  "categoryId": "natural-language-processing",
+  "categoryDescription": "Text extraction, classification, relation, summarization, translation, and moderation templates.",
+  "categoryOrder": 20,
+  "templateOrder": 4,
+  "dataType": "Text",
+  "description": "Extract relationships between named entities.",
+  "subtype": "Relations",
+  "labels": [
+    "Person",
+    "Organization",
+    "Location",
+    "Related"
+  ],
+  "tools": [
+    "TEXT_SPAN",
+    "RELATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/natural-language-processing/relation-extraction/template.xml",
+  "source": "builtin"
+}

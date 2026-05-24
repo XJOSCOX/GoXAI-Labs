@@ -1,0 +1,32 @@
+{
+  "id": "red-teaming-in-chat",
+  "name": "Red-Teaming in Chat",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 7,
+  "dataType": "Chat",
+  "description": "Stress-test chat responses for policy and safety failures.",
+  "subtype": "Red team",
+  "labels": [
+    "Safe",
+    "Jailbreak",
+    "Policy Risk",
+    "Refusal Needed"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/red-teaming-in-chat/template.xml",
+  "source": "builtin"
+}

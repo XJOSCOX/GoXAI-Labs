@@ -1,0 +1,15 @@
+<View>
+  <Header value="Review or enter forecast targets and trend notes."/>
+
+  <TimeSeries name="series" value="$series" valueType="url"/>
+
+  <TimeSeriesLabels name="range" toName="series" strokeWidth="1">
+      <Label value="Forecast" background="#FF3B30"/>
+      <Label value="Trend" background="#2563EB"/>
+      <Label value="Uncertain" background="#22C55E"/>
+  </TimeSeriesLabels>
+
+  <Number name="forecast_value" toName="series" perRegion="true"/>
+
+  <TextArea name="note" toName="series" rows="4" editable="true" perRegion="true"/>
+</View>

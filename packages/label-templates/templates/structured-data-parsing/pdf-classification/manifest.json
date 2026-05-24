@@ -1,0 +1,31 @@
+{
+  "id": "pdf-classification",
+  "name": "PDF Classification",
+  "category": "Structured Data Parsing",
+  "categoryId": "structured-data-parsing",
+  "categoryDescription": "Metadata, tabular, PDF, HTML entity, and HTML classification templates.",
+  "categoryOrder": 70,
+  "templateOrder": 3,
+  "dataType": "PDF",
+  "description": "Classify PDF documents by type and routing status.",
+  "subtype": "PDF class",
+  "labels": [
+    "Invoice",
+    "Contract",
+    "Report",
+    "Other"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/structured-data-parsing/pdf-classification/template.xml",
+  "source": "builtin"
+}

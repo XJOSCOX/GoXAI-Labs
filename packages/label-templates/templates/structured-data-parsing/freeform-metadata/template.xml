@@ -1,0 +1,14 @@
+<View>
+  <Header value="Capture flexible metadata fields for records."/>
+
+  <Text name="text" value="$text"/>
+
+  <Choices name="classification" toName="text" choice="single">
+      <Choice value="Title"/>
+      <Choice value="Description"/>
+      <Choice value="Tag"/>
+      <Choice value="Note"/>
+  </Choices>
+
+  <TextArea name="metadata" toName="text" rows="6" editable="true"/>
+</View>

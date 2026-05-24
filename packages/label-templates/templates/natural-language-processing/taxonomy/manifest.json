@@ -1,0 +1,29 @@
+{
+  "id": "taxonomy",
+  "name": "Taxonomy",
+  "category": "Natural Language Processing",
+  "categoryId": "natural-language-processing",
+  "categoryDescription": "Text extraction, classification, relation, summarization, translation, and moderation templates.",
+  "categoryOrder": 20,
+  "templateOrder": 3,
+  "dataType": "Text",
+  "description": "Assign hierarchical categories to a text sample.",
+  "subtype": "Taxonomy",
+  "labels": [
+    "Topic",
+    "Subtopic",
+    "Intent"
+  ],
+  "tools": [
+    "TAXONOMY"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/natural-language-processing/taxonomy/template.xml",
+  "source": "builtin"
+}

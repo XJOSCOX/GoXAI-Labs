@@ -1,0 +1,13 @@
+<View>
+  <Header value="Write a concise caption describing the image."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <TextArea name="caption" toName="image" rows="4" editable="true" required="true" placeholder="Image caption"/>
+
+  <Choices name="style" toName="image" choice="single">
+      <Choice value="Literal"/>
+      <Choice value="Detailed"/>
+      <Choice value="Alt Text"/>
+  </Choices>
+</View>

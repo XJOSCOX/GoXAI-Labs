@@ -1,0 +1,31 @@
+{
+  "id": "search-page-ranking",
+  "name": "Search Page Ranking",
+  "category": "Ranking / Scoring",
+  "categoryId": "ranking-scoring",
+  "categoryDescription": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates.",
+  "categoryOrder": 60,
+  "templateOrder": 2,
+  "dataType": "Text",
+  "description": "Score and rank search results for a query.",
+  "subtype": "SERP ranking",
+  "labels": [
+    "Relevant",
+    "Partially Relevant",
+    "Irrelevant"
+  ],
+  "tools": [
+    "RANKER",
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/ranking-scoring/search-page-ranking/template.xml",
+  "source": "builtin"
+}

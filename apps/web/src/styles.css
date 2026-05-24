@@ -2726,6 +2726,7 @@ textarea:focus {
 .label-chip {
   display: inline-flex;
   align-items: center;
+  gap: 7px;
   min-height: 28px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -2733,6 +2734,19 @@ textarea:focus {
   color: var(--text);
   padding: 0 10px;
   font-size: 12px;
+  font-weight: 700;
+}
+
+.label-chip i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.inline-error {
+  margin: 0;
+  color: #fecdd3;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -3141,11 +3155,15 @@ textarea:focus {
   display: grid;
   gap: 14px;
   max-width: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 .labeling-interface-builder {
   display: grid;
-  grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr) minmax(320px, 400px);
   gap: 14px;
   min-width: 0;
 }
@@ -3154,16 +3172,43 @@ textarea:focus {
 .template-workspace-preview,
 .template-preview-side {
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
 }
 
 .labeling-config-panel {
   display: grid;
   align-content: start;
   gap: 12px;
+}
+
+.template-code-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  min-height: 100%;
   padding: 12px;
+}
+
+.template-workspace-preview {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.template-settings-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  max-height: calc(100vh - 240px);
+  overflow: auto;
+  padding: 12px;
+}
+
+.parsed-template-summary {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
 }
 
 .template-editor-tabs {
@@ -3205,8 +3250,73 @@ textarea:focus {
   gap: 12px;
 }
 
+.template-visual-editor {
+  align-content: start;
+}
+
+.visual-editor-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.visual-editor-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.visual-editor-section h3,
+.visual-editor-section p {
+  margin: 0;
+}
+
+.visual-editor-section h3 {
+  font-size: 16px;
+}
+
+.visual-editor-section p {
+  color: var(--muted);
+}
+
+.visual-label-list {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-filter-input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 0 10px;
+}
+
+.visual-label-list span {
+  border-left: 5px solid var(--accent);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-weight: 700;
+}
+
+.visual-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.inline-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 160px);
+  align-items: center;
+  gap: 10px;
+}
+
 .template-code-editor textarea {
-  min-height: 620px;
+  min-height: 640px;
   resize: vertical;
   font-family: "Cascadia Code", "Consolas", monospace;
   font-size: 12px;
@@ -3215,11 +3325,25 @@ textarea:focus {
   white-space: pre;
 }
 
-.template-workspace-preview {
+.template-visual-mode-summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  min-height: 640px;
+  align-content: start;
+  background:
+    linear-gradient(135deg, rgba(125, 211, 252, 0.1), transparent 34%),
+    var(--surface-soft);
+  color: var(--muted);
+  padding: 14px;
+}
+
+.template-visual-mode-summary strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.template-workspace-preview {
+  display: block;
 }
 
 .template-preview-stage {
@@ -3227,10 +3351,10 @@ textarea:focus {
   grid-template-rows: auto auto minmax(360px, 1fr);
   gap: 10px;
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-soft);
-  padding: 10px;
+}
+
+.template-preview-stage .template-preview-canvas {
+  border-color: transparent;
 }
 
 .template-preview-toolbar {
@@ -3269,7 +3393,10 @@ textarea:focus {
 .preview-box,
 .preview-polygon,
 .preview-point,
-.preview-brush {
+.preview-brush,
+.preview-ellipse,
+.preview-vector,
+.preview-choice-strip {
   position: absolute;
   pointer-events: none;
 }
@@ -3319,6 +3446,110 @@ textarea:focus {
   height: 46px;
   border-radius: 999px;
   background: rgba(134, 239, 172, 0.24);
+}
+
+.preview-ellipse {
+  right: 24%;
+  top: 22%;
+  width: 120px;
+  height: 68px;
+  border: 1px solid #38bdf8;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.preview-vector {
+  left: 48%;
+  bottom: 22%;
+  width: 160px;
+  border-top: 1px solid #f0abfc;
+  transform: rotate(-13deg);
+}
+
+.preview-vector::before,
+.preview-vector::after {
+  position: absolute;
+  top: -5px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: var(--surface);
+  color: inherit;
+  content: "";
+}
+
+.preview-vector::before {
+  left: 0;
+}
+
+.preview-vector::after {
+  right: 0;
+}
+
+.preview-choice-strip {
+  left: 16px;
+  top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preview-choice-strip span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.preview-label-position {
+  position: absolute;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 42%;
+  pointer-events: none;
+}
+
+.preview-label-position.top {
+  top: 12px;
+  left: 50%;
+  justify-content: center;
+  transform: translateX(-50%);
+}
+
+.preview-label-position.right {
+  top: 50%;
+  right: 12px;
+  display: grid;
+  transform: translateY(-50%);
+}
+
+.preview-label-position.bottom {
+  bottom: 12px;
+  left: 50%;
+  justify-content: center;
+  transform: translateX(-50%);
+}
+
+.preview-label-position.left {
+  top: 50%;
+  left: 12px;
+  display: grid;
+  transform: translateY(-50%);
+}
+
+.preview-label-position span {
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(12, 12, 12, 0.76);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 8px;
 }
 
 .template-preview-tools {
@@ -3676,6 +3907,7 @@ textarea:focus {
   .organization-layout,
   .project-workspace-layout,
   .dataset-detail-layout,
+  .labeling-interface-builder,
   .template-browser,
   .label-template-picker,
   .template-settings-layout,

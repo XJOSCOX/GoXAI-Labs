@@ -1,0 +1,50 @@
+[
+  {
+    "id": "computer-vision",
+    "name": "Computer Vision",
+    "order": 10,
+    "description": "Image, OCR, segmentation, detection, classification, and visual understanding templates."
+  },
+  {
+    "id": "natural-language-processing",
+    "name": "Natural Language Processing",
+    "order": 20,
+    "description": "Text extraction, classification, relation, summarization, translation, and moderation templates."
+  },
+  {
+    "id": "audio-speech",
+    "name": "Audio / Speech",
+    "order": 30,
+    "description": "Speech transcription, diarization, audio events, signal quality, and audio classification templates."
+  },
+  {
+    "id": "video",
+    "name": "Video",
+    "order": 40,
+    "description": "Video classification, frame classification, timeline segmentation, and object tracking templates."
+  },
+  {
+    "id": "time-series",
+    "name": "Time Series",
+    "order": 50,
+    "description": "Signal labeling, forecasting, quality review, activity recognition, and anomaly detection templates."
+  },
+  {
+    "id": "ranking-scoring",
+    "name": "Ranking / Scoring",
+    "order": 60,
+    "description": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates."
+  },
+  {
+    "id": "structured-data-parsing",
+    "name": "Structured Data Parsing",
+    "order": 70,
+    "description": "Metadata, tabular, PDF, HTML entity, and HTML classification templates."
+  },
+  {
+    "id": "conversational-ai-chat-llm",
+    "name": "Conversational AI / Chat / LLM",
+    "order": 80,
+    "description": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates."
+  }
+]

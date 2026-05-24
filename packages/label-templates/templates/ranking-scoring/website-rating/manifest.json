@@ -1,0 +1,33 @@
+{
+  "id": "website-rating",
+  "name": "Website Rating",
+  "category": "Ranking / Scoring",
+  "categoryId": "ranking-scoring",
+  "categoryDescription": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates.",
+  "categoryOrder": 60,
+  "templateOrder": 3,
+  "dataType": "Text",
+  "description": "Rate a website or page for quality and relevance.",
+  "subtype": "Website scoring",
+  "labels": [
+    "Excellent",
+    "Good",
+    "Poor",
+    "Unsafe"
+  ],
+  "tools": [
+    "RATING",
+    "CLASSIFICATION",
+    "TEXT_AREA",
+    "RANKER"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/ranking-scoring/website-rating/template.xml",
+  "source": "builtin"
+}

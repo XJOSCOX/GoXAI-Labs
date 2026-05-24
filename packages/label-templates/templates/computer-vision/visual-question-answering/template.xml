@@ -1,0 +1,19 @@
+<View>
+  <Header value="Answer each visual question with evidence."/>
+
+  <Image name="image" value="$image" zoom="true"/>
+
+  <Text name="q1" value="$q1"/>
+
+  <Labels name="evidence1" toName="q1">
+      <Label value="Visual Evidence" background="#FF3B30"/>
+      <Label value="Ambiguous" background="#2563EB"/>
+      <Label value="Incorrect Premise" background="#22C55E"/>
+  </Labels>
+
+  <TextArea name="answer1" toName="q1" rows="1" maxSubmissions="1"/>
+
+  <Text name="q2" value="$q2"/>
+
+  <TextArea name="answer2" toName="q2" rows="1" maxSubmissions="1"/>
+</View>

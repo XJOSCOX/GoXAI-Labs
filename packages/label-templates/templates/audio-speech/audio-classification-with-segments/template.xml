@@ -1,0 +1,21 @@
+<View>
+  <Header value="Audio Classification with Segments"/>
+
+  <Labels name="label" toName="audio" choice="multiple">
+      <Label value="Music" background="#FF3B30"/>
+      <Label value="Speech" background="#2563EB"/>
+      <Label value="Alarm" background="#22C55E"/>
+      <Label value="Vehicle" background="#F59E0B"/>
+      <Label value="Silence" background="#A855F7"/>
+  </Labels>
+
+  <Audio name="audio" value="$audio" zoom="true" hotkey="ctrl+enter"/>
+
+  <TextArea name="transcription" toName="audio" rows="4" editable="true" perRegion="true"/>
+
+  <Choices name="review" toName="audio" choice="multiple" showInline="true" perRegion="true">
+      <Choice value="Clear"/>
+      <Choice value="Unclear"/>
+      <Choice value="Needs Review"/>
+  </Choices>
+</View>

@@ -1,0 +1,15 @@
+<View>
+  <Header value="Translate source text and review translation quality."/>
+
+  <Text name="text" value="$text"/>
+
+  <Choices name="classification" toName="text" choice="single">
+      <Choice value="Translation"/>
+      <Choice value="Accurate"/>
+      <Choice value="Needs Fix"/>
+  </Choices>
+
+  <TextArea name="response" toName="text" rows="6" editable="true"/>
+
+  <Rating name="quality" toName="text" maxRating="5"/>
+</View>

@@ -1,0 +1,32 @@
+{
+  "id": "time-series-forecasting",
+  "name": "Time Series Forecasting",
+  "category": "Time Series",
+  "categoryId": "time-series",
+  "categoryDescription": "Signal labeling, forecasting, quality review, activity recognition, and anomaly detection templates.",
+  "categoryOrder": 50,
+  "templateOrder": 3,
+  "dataType": "Time Series",
+  "description": "Review or enter forecast targets and trend notes.",
+  "subtype": "Forecast",
+  "labels": [
+    "Forecast",
+    "Trend",
+    "Uncertain"
+  ],
+  "tools": [
+    "TEXT_AREA",
+    "NUMBER",
+    "CLASSIFICATION",
+    "TIME_SERIES_LABELS"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/time-series/time-series-forecasting/template.xml",
+  "source": "builtin"
+}

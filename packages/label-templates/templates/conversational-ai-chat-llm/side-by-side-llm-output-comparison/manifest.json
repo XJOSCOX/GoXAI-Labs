@@ -1,0 +1,32 @@
+{
+  "id": "side-by-side-llm-output-comparison",
+  "name": "Side-by-Side LLM Output Comparison",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 14,
+  "dataType": "Chat",
+  "description": "Compare two model outputs side by side.",
+  "subtype": "Side-by-side",
+  "labels": [
+    "A Better",
+    "B Better",
+    "Tie",
+    "Both Bad"
+  ],
+  "tools": [
+    "PAIRWISE",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/side-by-side-llm-output-comparison/template.xml",
+  "source": "builtin"
+}

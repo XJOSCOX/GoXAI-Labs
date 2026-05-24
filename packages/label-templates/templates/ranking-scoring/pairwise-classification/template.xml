@@ -1,0 +1,16 @@
+<View>
+  <Header value="Choose which item is better or classify pairwise preference."/>
+
+  <Text name="text" value="$text"/>
+
+  <Pairwise name="comparison" toName="text"/>
+
+  <Choices name="decision" toName="text" choice="single">
+      <Choice value="A"/>
+      <Choice value="B"/>
+      <Choice value="Tie"/>
+      <Choice value="Both Bad"/>
+  </Choices>
+
+  <TextArea name="rationale" toName="text" rows="4" editable="true"/>
+</View>

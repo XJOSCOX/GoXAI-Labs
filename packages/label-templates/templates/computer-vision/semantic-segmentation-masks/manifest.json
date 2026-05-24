@@ -1,0 +1,31 @@
+{
+  "id": "semantic-segmentation-masks",
+  "name": "Semantic Segmentation with Masks",
+  "category": "Computer Vision",
+  "categoryId": "computer-vision",
+  "categoryDescription": "Image, OCR, segmentation, detection, classification, and visual understanding templates.",
+  "categoryOrder": 10,
+  "templateOrder": 2,
+  "dataType": "Image",
+  "description": "Paint dense semantic masks for image regions.",
+  "subtype": "Masks",
+  "labels": [
+    "Foreground",
+    "Background",
+    "Defect"
+  ],
+  "tools": [
+    "BRUSH",
+    "BITMASK",
+    "MAGIC_WAND"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/computer-vision/semantic-segmentation-masks/template.xml",
+  "source": "builtin"
+}

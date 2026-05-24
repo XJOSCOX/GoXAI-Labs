@@ -1,0 +1,14 @@
+<View>
+  <Header value="Identify points where signal behavior changes."/>
+
+  <TimeSeries name="series" value="$series" valueType="url"/>
+
+  <TimeSeriesLabels name="range" toName="series" strokeWidth="1">
+      <Label value="Change Point" background="#FF3B30"/>
+      <Label value="Drift" background="#2563EB"/>
+      <Label value="Spike" background="#22C55E"/>
+      <Label value="Reset" background="#F59E0B"/>
+  </TimeSeriesLabels>
+
+  <TextArea name="note" toName="series" rows="4" editable="true" perRegion="true"/>
+</View>

@@ -1,0 +1,18 @@
+<View>
+  <Header value="Evaluate generated images against a text prompt."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <Ranker name="ranking" toName="image" rankingMode="drag"/>
+
+  <Rating name="score" toName="image" maxRating="10"/>
+
+  <Choices name="decision" toName="image" choice="single">
+      <Choice value="Prompt Match"/>
+      <Choice value="Artifact"/>
+      <Choice value="Unsafe"/>
+      <Choice value="High Quality"/>
+  </Choices>
+
+  <TextArea name="rationale" toName="image" rows="4" editable="true"/>
+</View>

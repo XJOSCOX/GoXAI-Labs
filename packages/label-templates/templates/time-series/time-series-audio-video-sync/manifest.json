@@ -1,0 +1,31 @@
+{
+  "id": "time-series-audio-video-sync",
+  "name": "Time Series with Audio/Video Sync",
+  "category": "Time Series",
+  "categoryId": "time-series",
+  "categoryDescription": "Signal labeling, forecasting, quality review, activity recognition, and anomaly detection templates.",
+  "categoryOrder": 50,
+  "templateOrder": 4,
+  "dataType": "Multimodal",
+  "description": "Align time series events with audio or video references.",
+  "subtype": "Synced signals",
+  "labels": [
+    "Aligned",
+    "Drift",
+    "Event",
+    "Noise"
+  ],
+  "tools": [
+    "TIME_SERIES_LABELS",
+    "TIMELINE_LABELS"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/time-series/time-series-audio-video-sync/template.xml",
+  "source": "builtin"
+}

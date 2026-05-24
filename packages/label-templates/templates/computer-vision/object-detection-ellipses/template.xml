@@ -1,0 +1,17 @@
+<View>
+  <Header value="Use ellipses for round or soft-edged objects."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <EllipseLabels name="ellipse" toName="image" strokeWidth="1" opacity="0.35">
+      <Label value="Cell" background="#FF3B30"/>
+      <Label value="Defect" background="#2563EB"/>
+      <Label value="Object" background="#22C55E"/>
+  </EllipseLabels>
+
+  <Choices name="quality" toName="image" perRegion="true" choice="single">
+      <Choice value="Clear"/>
+      <Choice value="Blurred"/>
+      <Choice value="Partial"/>
+  </Choices>
+</View>

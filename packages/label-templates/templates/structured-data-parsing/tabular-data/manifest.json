@@ -1,0 +1,32 @@
+{
+  "id": "tabular-data",
+  "name": "Tabular Data",
+  "category": "Structured Data Parsing",
+  "categoryId": "structured-data-parsing",
+  "categoryDescription": "Metadata, tabular, PDF, HTML entity, and HTML classification templates.",
+  "categoryOrder": 70,
+  "templateOrder": 2,
+  "dataType": "Text",
+  "description": "Review table rows and assign structured categories.",
+  "subtype": "Tables",
+  "labels": [
+    "Header",
+    "Value",
+    "Missing",
+    "Invalid"
+  ],
+  "tools": [
+    "TEXT_SPAN",
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/structured-data-parsing/tabular-data/template.xml",
+  "source": "builtin"
+}

@@ -1,0 +1,20 @@
+<View>
+  <Header value="Select PDF text spans and correct extracted values."/>
+
+  <Pdf name="pdf" value="$pdf"/>
+
+  <Labels name="field" toName="pdf" choice="multiple">
+      <Label value="Correct" background="#FF3B30"/>
+      <Label value="Incorrect Name" background="#2563EB"/>
+      <Label value="Incorrect Amount" background="#22C55E"/>
+      <Label value="Missing Field" background="#F59E0B"/>
+  </Labels>
+
+  <TextArea name="correction" toName="pdf" rows="4" editable="true" perRegion="true"/>
+
+  <Choices name="confidence" toName="pdf" perRegion="true" choice="single">
+      <Choice value="Correct"/>
+      <Choice value="Needs Review"/>
+      <Choice value="Unreadable"/>
+  </Choices>
+</View>

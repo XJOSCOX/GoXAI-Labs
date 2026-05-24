@@ -1,0 +1,32 @@
+{
+  "id": "document-retrieval",
+  "name": "Document Retrieval",
+  "category": "Ranking / Scoring",
+  "categoryId": "ranking-scoring",
+  "categoryDescription": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates.",
+  "categoryOrder": 60,
+  "templateOrder": 7,
+  "dataType": "Text",
+  "description": "Judge retrieved documents for query relevance.",
+  "subtype": "Retrieval",
+  "labels": [
+    "Relevant",
+    "Useful",
+    "Off Topic",
+    "Duplicate"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "TEXT_AREA",
+    "RANKER"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/ranking-scoring/document-retrieval/template.xml",
+  "source": "builtin"
+}

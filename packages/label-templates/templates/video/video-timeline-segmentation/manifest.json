@@ -1,0 +1,31 @@
+{
+  "id": "video-timeline-segmentation",
+  "name": "Video Timeline Segmentation",
+  "category": "Video",
+  "categoryId": "video",
+  "categoryDescription": "Video classification, frame classification, timeline segmentation, and object tracking templates.",
+  "categoryOrder": 40,
+  "templateOrder": 3,
+  "dataType": "Video",
+  "description": "Segment video timelines into events and scenes.",
+  "subtype": "Timeline",
+  "labels": [
+    "Scene",
+    "Action",
+    "Transition",
+    "Other"
+  ],
+  "tools": [
+    "VIDEO_LABELS",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/video/video-timeline-segmentation/template.xml",
+  "source": "builtin"
+}

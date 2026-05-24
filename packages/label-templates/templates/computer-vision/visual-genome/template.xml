@@ -1,0 +1,20 @@
+<View>
+  <Header value="Create object regions, attributes, and relationships."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <RectangleLabels name="object" toName="image" strokeWidth="1">
+      <Label value="Object" background="#FF3B30"/>
+      <Label value="Attribute" background="#2563EB"/>
+      <Label value="Relation" background="#22C55E"/>
+      <Label value="Subject" background="#F59E0B"/>
+  </RectangleLabels>
+
+  <TextArea name="attribute" toName="image" rows="4" editable="true" perRegion="true"/>
+
+  <Relations name="relations" toName="image">
+    <Relation value="related_to"/>
+    <Relation value="part_of"/>
+    <Relation value="same_as"/>
+  </Relations>
+</View>

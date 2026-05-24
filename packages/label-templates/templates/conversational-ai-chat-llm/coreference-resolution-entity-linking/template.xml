@@ -1,0 +1,16 @@
+<View>
+  <Header value="Link mentions that refer to the same entity."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <ParagraphLabels name="mention" toName="paragraphs" granularity="word">
+      <Label value="Entity" background="#FF3B30"/>
+      <Label value="Mention" background="#2563EB"/>
+      <Label value="Same As" background="#22C55E"/>
+      <Label value="Unknown" background="#F59E0B"/>
+  </ParagraphLabels>
+
+  <Relations name="relations" toName="paragraphs"><Relation value="same_as"/><Relation value="causes"/><Relation value="answers"/></Relations>
+
+  <TextArea name="entity_note" toName="paragraphs" rows="6" editable="true" perRegion="true"/>
+</View>

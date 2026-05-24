@@ -1,0 +1,30 @@
+{
+  "id": "time-series-labeling",
+  "name": "Time Series Labeling",
+  "category": "Time Series",
+  "categoryId": "time-series",
+  "categoryDescription": "Signal labeling, forecasting, quality review, activity recognition, and anomaly detection templates.",
+  "categoryOrder": 50,
+  "templateOrder": 1,
+  "dataType": "Time Series",
+  "description": "Mark events and ranges in time series signals.",
+  "subtype": "Signal ranges",
+  "labels": [
+    "Spike",
+    "Drop",
+    "Stable",
+    "Event"
+  ],
+  "tools": [
+    "TIME_SERIES_LABELS"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/time-series/time-series-labeling/template.xml",
+  "source": "builtin"
+}

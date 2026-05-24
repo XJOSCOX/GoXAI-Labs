@@ -1,0 +1,32 @@
+{
+  "id": "pairwise-classification",
+  "name": "Pairwise Classification",
+  "category": "Ranking / Scoring",
+  "categoryId": "ranking-scoring",
+  "categoryDescription": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates.",
+  "categoryOrder": 60,
+  "templateOrder": 5,
+  "dataType": "Text",
+  "description": "Choose which item is better or classify pairwise preference.",
+  "subtype": "Pairwise classification",
+  "labels": [
+    "A",
+    "B",
+    "Tie",
+    "Both Bad"
+  ],
+  "tools": [
+    "PAIRWISE",
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/ranking-scoring/pairwise-classification/template.xml",
+  "source": "builtin"
+}

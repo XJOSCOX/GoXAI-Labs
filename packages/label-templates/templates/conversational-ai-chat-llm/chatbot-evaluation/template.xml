@@ -1,0 +1,16 @@
+<View>
+  <Header value="Evaluate chatbot response quality and task success."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <Choices name="classification" toName="paragraphs" choice="multiple">
+      <Choice value="Helpful"/>
+      <Choice value="Incorrect"/>
+      <Choice value="Unsafe"/>
+      <Choice value="Incomplete"/>
+  </Choices>
+
+  <Rating name="score" toName="paragraphs" maxRating="10"/>
+
+  <TextArea name="feedback" toName="paragraphs" rows="6" editable="true"/>
+</View>

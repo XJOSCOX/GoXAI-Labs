@@ -1,0 +1,29 @@
+{
+  "id": "image-classification",
+  "name": "Image Classification",
+  "category": "Computer Vision",
+  "categoryId": "computer-vision",
+  "categoryDescription": "Image, OCR, segmentation, detection, classification, and visual understanding templates.",
+  "categoryOrder": 10,
+  "templateOrder": 10,
+  "dataType": "Image",
+  "description": "Assign one or more labels to the full image.",
+  "subtype": "Classification",
+  "labels": [
+    "Normal",
+    "Abnormal",
+    "Needs Review"
+  ],
+  "tools": [
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/computer-vision/image-classification/template.xml",
+  "source": "builtin"
+}

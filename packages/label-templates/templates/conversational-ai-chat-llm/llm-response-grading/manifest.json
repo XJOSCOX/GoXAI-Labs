@@ -1,0 +1,32 @@
+{
+  "id": "llm-response-grading",
+  "name": "LLM Response Grading",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 13,
+  "dataType": "Chat",
+  "description": "Grade response correctness, quality, and completeness.",
+  "subtype": "Grading",
+  "labels": [
+    "Correct",
+    "Partially Correct",
+    "Incorrect",
+    "Incomplete"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/llm-response-grading/template.xml",
+  "source": "builtin"
+}

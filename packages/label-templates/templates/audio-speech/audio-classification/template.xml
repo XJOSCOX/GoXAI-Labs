@@ -1,0 +1,12 @@
+<View>
+  <Header value="Choose the primary audio category."/>
+
+  <Audio name="audio" value="$audio" zoom="true"/>
+
+  <Choices name="audio_class" toName="audio" choice="single" showInline="true">
+      <Choice value="Music"/>
+      <Choice value="Speech"/>
+      <Choice value="Noise"/>
+      <Choice value="Environment"/>
+  </Choices>
+</View>

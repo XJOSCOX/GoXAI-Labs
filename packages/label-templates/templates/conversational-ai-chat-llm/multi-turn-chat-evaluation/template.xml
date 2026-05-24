@@ -1,0 +1,20 @@
+<View>
+  <Header value="Evaluate multi-turn conversations for quality, memory, and policy compliance."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <ParagraphLabels name="turn_label" toName="paragraphs" granularity="sentence">
+      <Label value="Coherent" background="#FF3B30"/>
+      <Label value="Helpful" background="#2563EB"/>
+      <Label value="Missed Context" background="#22C55E"/>
+      <Label value="Unsafe" background="#F59E0B"/>
+  </ParagraphLabels>
+
+  <Choices name="conversation_state" toName="paragraphs" choice="single">
+      <Choice value="Resolved"/>
+      <Choice value="Unresolved"/>
+      <Choice value="Escalate"/>
+  </Choices>
+
+  <TextArea name="analysis" toName="paragraphs" rows="6" editable="true"/>
+</View>

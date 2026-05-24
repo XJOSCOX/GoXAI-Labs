@@ -1,0 +1,20 @@
+<View>
+  <Header value="Draw thin rectangles and capture region details."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <RectangleLabels name="label" toName="image" strokeWidth="1" opacity="0.35">
+      <Label value="Product" background="#FF3B30"/>
+      <Label value="Empty Slot" background="#2563EB"/>
+      <Label value="Wrong Item" background="#22C55E"/>
+      <Label value="Damaged" background="#F59E0B"/>
+  </RectangleLabels>
+
+  <TextArea name="region_note" toName="image" rows="4" editable="true" perRegion="true" placeholder="Region note"/>
+
+  <Choices name="quality" toName="image" perRegion="true" choice="single">
+      <Choice value="Clear"/>
+      <Choice value="Partially Occluded"/>
+      <Choice value="Needs Review"/>
+  </Choices>
+</View>

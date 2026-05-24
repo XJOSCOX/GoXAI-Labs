@@ -1,0 +1,30 @@
+{
+  "id": "object-detection-ellipses",
+  "name": "Object Detection with Ellipses",
+  "category": "Computer Vision",
+  "categoryId": "computer-vision",
+  "categoryDescription": "Image, OCR, segmentation, detection, classification, and visual understanding templates.",
+  "categoryOrder": 10,
+  "templateOrder": 4,
+  "dataType": "Image",
+  "description": "Detect rounded objects and soft regions with ellipse annotations.",
+  "subtype": "Ellipses",
+  "labels": [
+    "Cell",
+    "Defect",
+    "Object"
+  ],
+  "tools": [
+    "ELLIPSE",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/computer-vision/object-detection-ellipses/template.xml",
+  "source": "builtin"
+}

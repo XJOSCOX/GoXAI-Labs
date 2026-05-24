@@ -1,0 +1,31 @@
+{
+  "id": "signal-quality",
+  "name": "Signal Quality",
+  "category": "Time Series",
+  "categoryId": "time-series",
+  "categoryDescription": "Signal labeling, forecasting, quality review, activity recognition, and anomaly detection templates.",
+  "categoryOrder": 50,
+  "templateOrder": 7,
+  "dataType": "Time Series",
+  "description": "Assess signal quality, missing data, and unreliable regions.",
+  "subtype": "Quality",
+  "labels": [
+    "Good",
+    "Missing",
+    "Noisy",
+    "Artifact"
+  ],
+  "tools": [
+    "TIME_SERIES_LABELS",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/time-series/signal-quality/template.xml",
+  "source": "builtin"
+}

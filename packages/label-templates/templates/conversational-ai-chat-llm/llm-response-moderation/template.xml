@@ -1,0 +1,17 @@
+<View>
+  <Header value="Moderate model responses for safety and policy categories."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <Choices name="classification" toName="paragraphs" choice="multiple">
+      <Choice value="Safe"/>
+      <Choice value="Harassment"/>
+      <Choice value="Self Harm"/>
+      <Choice value="Sexual"/>
+      <Choice value="Violence"/>
+  </Choices>
+
+  <Rating name="score" toName="paragraphs" maxRating="10"/>
+
+  <TextArea name="feedback" toName="paragraphs" rows="6" editable="true"/>
+</View>

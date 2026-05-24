@@ -1,0 +1,16 @@
+<View>
+  <Header value="Evaluate answer quality using retrieved context and human feedback."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <Choices name="classification" toName="paragraphs" choice="multiple">
+      <Choice value="Grounded"/>
+      <Choice value="Unsupported"/>
+      <Choice value="Missing Evidence"/>
+      <Choice value="Incorrect"/>
+  </Choices>
+
+  <Rating name="score" toName="paragraphs" maxRating="10"/>
+
+  <TextArea name="feedback" toName="paragraphs" rows="6" editable="true"/>
+</View>

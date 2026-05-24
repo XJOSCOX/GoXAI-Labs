@@ -1,5 +1,15 @@
 import { useMemo, useState } from "react";
 import { Check, ChevronRight, GalleryHorizontalEnd, ImageIcon, Plus, Settings2, Shapes, Trash2 } from "lucide-react";
+import {
+  annotationLabelColors,
+  builtInTemplateCategories,
+  builtInTemplatePresets,
+  type LabelingSettings,
+  type TemplatePreset
+} from "@goxai/label-templates";
+
+export { annotationLabelColors, builtInTemplateCategories, builtInTemplatePresets } from "@goxai/label-templates";
+export type { LabelingSettings, TemplatePreset } from "@goxai/label-templates";
 
 export type LabelInput = {
   color: string;
@@ -11,26 +21,6 @@ export type ToolInput = {
   configJson?: Record<string, unknown>;
   enabled?: boolean;
   tool: string;
-};
-
-export type LabelingSettings = {
-  imageZoom: boolean;
-  regionBorderWidth: number;
-  rotateControls: boolean;
-  zoomControls: boolean;
-};
-
-export type TemplatePreset = {
-  category: string;
-  dataType: string;
-  description: string;
-  id: string;
-  labels: string[];
-  name: string;
-  settings?: Partial<LabelingSettings>;
-  sourceTemplateId?: string;
-  subtype: string;
-  tools: string[];
 };
 
 type LabelingConfigBuilderProps = {
@@ -47,10 +37,9 @@ type LabelRow = {
   shortcutKey: string;
 };
 
-export const annotationLabelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
-
 const defaultSettings: LabelingSettings = {
   imageZoom: true,
+  labelPosition: "top",
   regionBorderWidth: 1,
   rotateControls: false,
   zoomControls: true
@@ -94,147 +83,6 @@ const annotationToolOptions = [
   }
 ];
 
-export const builtInTemplatePresets: TemplatePreset[] = [
-  {
-    category: "Computer Vision",
-    dataType: "Image",
-    description: "Detect objects with thin bounding boxes.",
-    id: "object-detection",
-    labels: ["Car", "Person", "Traffic Light"],
-    name: "Object Detection",
-    subtype: "Bounding boxes",
-    tools: ["BBOX"]
-  },
-  {
-    category: "Computer Vision",
-    dataType: "Image",
-    description: "Trace object outlines with polygon points.",
-    id: "polygon-segmentation",
-    labels: ["Road", "Building", "Sidewalk"],
-    name: "Semantic Segmentation",
-    subtype: "Polygons",
-    tools: ["POLYGON"],
-    settings: {
-      regionBorderWidth: 1
-    }
-  },
-  {
-    category: "Computer Vision",
-    dataType: "Image",
-    description: "Paint dense object masks.",
-    id: "mask-segmentation",
-    labels: ["Foreground", "Background", "Defect"],
-    name: "Mask Segmentation",
-    subtype: "Masks",
-    tools: ["BRUSH", "POLYGON"]
-  },
-  {
-    category: "Computer Vision",
-    dataType: "Image",
-    description: "Give the whole asset one label.",
-    id: "image-classification",
-    labels: ["Normal", "Abnormal", "Needs Review"],
-    name: "Image Classification",
-    subtype: "Classification",
-    tools: ["CLASSIFICATION"]
-  },
-  {
-    category: "Computer Vision",
-    dataType: "Image/Video",
-    description: "Track posture, landmarks, or pose points.",
-    id: "keypoints",
-    labels: ["Head", "Hand", "Foot"],
-    name: "Keypoint Labeling",
-    subtype: "Landmarks",
-    tools: ["KEYPOINT"]
-  },
-  {
-    category: "Computer Vision",
-    dataType: "Video",
-    description: "Label scenes, shots, objects, and cinematic events.",
-    id: "cinematic-video",
-    labels: ["Scene", "Actor", "Product", "Camera Cut"],
-    name: "Cinematic Video Review",
-    subtype: "Cinematic",
-    tools: ["BBOX", "CLASSIFICATION"]
-  },
-  {
-    category: "Natural Language Processing",
-    dataType: "Text",
-    description: "Tag entities inside text spans.",
-    id: "ner",
-    labels: ["Person", "Organization", "Location"],
-    name: "Named Entity Recognition",
-    subtype: "NER",
-    tools: ["TEXT_SPAN"]
-  },
-  {
-    category: "Natural Language Processing",
-    dataType: "Text",
-    description: "Sort documents by intent or type.",
-    id: "text-classification",
-    labels: ["Positive", "Negative", "Neutral"],
-    name: "Text Classification",
-    subtype: "Classification",
-    tools: ["CLASSIFICATION"]
-  },
-  {
-    category: "Audio/Speech Processing",
-    dataType: "Audio",
-    description: "Transcribe speakers, noise, and important moments.",
-    id: "audio-transcription",
-    labels: ["Speaker", "Noise", "Important"],
-    name: "Audio Transcription",
-    subtype: "Speech",
-    tools: ["TEXT_SPAN", "CLASSIFICATION"]
-  },
-  {
-    category: "Structured Data Parsing",
-    dataType: "PDF/Image",
-    description: "Capture document fields and text regions.",
-    id: "ocr",
-    labels: ["Name", "Address", "Phone Number"],
-    name: "OCR Extraction",
-    subtype: "OCR",
-    tools: ["BBOX", "TEXT_SPAN"]
-  },
-  {
-    category: "Time Series Analysis",
-    dataType: "Time Series",
-    description: "Mark ranges, spikes, and events.",
-    id: "time-series-events",
-    labels: ["Spike", "Drop", "Anomaly"],
-    name: "Event Ranges",
-    subtype: "Ranges",
-    tools: ["CLASSIFICATION"]
-  },
-  {
-    category: "Generative AI",
-    dataType: "Multimodal",
-    description: "Rate model output quality and correctness.",
-    id: "llm-quality",
-    labels: ["Correct", "Incorrect", "Unsafe", "Needs Review"],
-    name: "LLM Quality Review",
-    subtype: "Quality",
-    tools: ["CLASSIFICATION", "TEXT_SPAN"]
-  }
-];
-
-const fallbackCategories = [
-  "Computer Vision",
-  "Natural Language Processing",
-  "Audio/Speech Processing",
-  "Conversational AI",
-  "Chat",
-  "Ranking & Scoring",
-  "Structured Data Parsing",
-  "Time Series Analysis",
-  "Videos",
-  "Generative AI",
-  "Community Contributions",
-  "Custom Templates"
-];
-
 export function LabelingConfigBuilder({
   defaultLabels = "",
   defaultSettings: initialSettings,
@@ -244,21 +92,33 @@ export function LabelingConfigBuilder({
 }: LabelingConfigBuilderProps) {
   const allTemplates = useMemo(() => [...builtInTemplatePresets, ...(templates ?? [])], [templates]);
   const categories = useMemo(() => {
+    const builtInCategories = builtInTemplateCategories.map((category) => category.name);
     const extraCategories = allTemplates
       .map((template) => template.category)
-      .filter((category) => !fallbackCategories.includes(category));
+      .filter((category) => !builtInCategories.includes(category));
 
-    return [...fallbackCategories, ...Array.from(new Set(extraCategories))];
+    return [...builtInCategories, ...Array.from(new Set(extraCategories)), "Custom Templates"];
   }, [allTemplates]);
   const [mode, setMode] = useState<"visual" | "code">("visual");
   const [activeCategory, setActiveCategory] = useState(categories[0] ?? "Computer Vision");
   const [activeTemplate, setActiveTemplate] = useState<TemplatePreset | null>(null);
   const [labelRows, setLabelRows] = useState<LabelRow[]>(() => parseLabelRows(defaultLabels));
+  const [labelSearch, setLabelSearch] = useState("");
   const [newLabelName, setNewLabelName] = useState("");
   const [activeTools, setActiveTools] = useState<string[]>(selectedTools.length > 0 ? selectedTools : ["BBOX"]);
   const [settings, setSettings] = useState<LabelingSettings>({ ...defaultSettings, ...initialSettings });
 
   const visibleTemplates = allTemplates.filter((template) => template.category === activeCategory);
+  const visibleLabelRows = useMemo(() => {
+    const term = labelSearch.trim().toLowerCase();
+    const indexedLabels = labelRows.map((label, index) => ({ index, label }));
+
+    if (!term) {
+      return indexedLabels;
+    }
+
+    return indexedLabels.filter((entry) => entry.label.name.toLowerCase().includes(term));
+  }, [labelRows, labelSearch]);
   const configCode = useMemo(() => buildConfigCode(labelRows, activeTools, settings), [activeTools, labelRows, settings]);
 
   function applyTemplate(template: TemplatePreset) {
@@ -438,8 +298,18 @@ export function LabelingConfigBuilder({
 
           <div className="label-editor-list">
             <span>Labels ({labelRows.length})</span>
+            {labelRows.length > 8 && (
+              <input
+                className="compact-filter-input"
+                disabled={disabled}
+                onChange={(event) => setLabelSearch(event.target.value)}
+                placeholder="Filter labels"
+                type="search"
+                value={labelSearch}
+              />
+            )}
             {labelRows.length > 0 ? (
-              labelRows.map((label, index) => (
+              visibleLabelRows.map(({ index, label }) => (
                 <div className="label-editor-row" key={`${label.name}-${index}`}>
                   <input name="labelName" type="hidden" value={label.name} />
                   <input name="labelColor" type="hidden" value={label.color} />
@@ -473,6 +343,7 @@ export function LabelingConfigBuilder({
             ) : (
               <p>No labels configured yet.</p>
             )}
+            {labelRows.length > 0 && visibleLabelRows.length === 0 && <p>No labels match this filter.</p>}
           </div>
 
           <fieldset className="label-settings-grid">
@@ -491,6 +362,19 @@ export function LabelingConfigBuilder({
                 type="number"
                 value={settings.regionBorderWidth}
               />
+            </label>
+            <label>
+              Display labels
+              <select
+                name="labelPosition"
+                onChange={(event) => updateSetting("labelPosition", event.target.value as LabelingSettings["labelPosition"])}
+                value={settings.labelPosition}
+              >
+                <option value="top">Top</option>
+                <option value="right">Right</option>
+                <option value="bottom">Bottom</option>
+                <option value="left">Left</option>
+              </select>
             </label>
             <label className="checkbox-row">
               <input
@@ -647,10 +531,15 @@ export function parseLabelingSettingsFromForm(form: HTMLFormElement): LabelingSe
 
   return {
     imageZoom: data.get("imageZoom") === "on",
+    labelPosition: parseLabelPosition(String(data.get("labelPosition") ?? "")),
     regionBorderWidth: Number.isFinite(borderWidth) ? Math.max(1, Math.min(8, borderWidth)) : 1,
     rotateControls: data.get("rotateControls") === "on",
     zoomControls: data.get("zoomControls") === "on"
   };
+}
+
+function parseLabelPosition(value: string): LabelingSettings["labelPosition"] {
+  return value === "right" || value === "bottom" || value === "left" ? value : "top";
 }
 
 export function getAnnotationTemplateIdFromForm(form: HTMLFormElement) {
@@ -676,7 +565,13 @@ export function buildTemplateConfig(template: TemplatePreset) {
   const labels = parseLabelInputsFromText(template.labels.join("\n"));
   const tools = template.tools.map((tool) => ({ enabled: true, tool }));
 
-  return buildLabelingConfig(labels, tools, { ...defaultSettings, ...template.settings }, template);
+  return {
+    ...buildLabelingConfig(labels, tools, { ...defaultSettings, ...template.settings }, template),
+    configCode: template.configCode ?? null,
+    configPath: template.configPath ?? null,
+    manifestPath: template.manifestPath ?? null,
+    source: template.source ?? null
+  };
 }
 
 function buildConfigCode(labels: LabelRow[], tools: string[], settings: LabelingSettings) {
@@ -688,39 +583,41 @@ function buildConfigCode(labels: LabelRow[], tools: string[], settings: Labeling
 
   return `<View>
   <Header value="Select label and annotate the asset" />
-  <Image name="image" value="$image" zoom="${zoom}" />
+  <Image name="image" value="$image" zoom="${zoom}" zoomControl="${settings.zoomControls ? "true" : "false"}" rotateControl="${settings.rotateControls ? "true" : "false"}" />
 
 ${tagMarkup}
 </View>`;
 }
 
 function buildToolMarkup(tool: string, labelMarkup: string, settings: LabelingSettings) {
+  const labelsPosition = ` labelPosition="${settings.labelPosition}"`;
+
   if (tool === "POLYGON") {
-    return `  <PolygonLabels name="polygon_label" toName="image" strokeWidth="${settings.regionBorderWidth}" pointSize="small" opacity="0.9">
+    return `  <PolygonLabels name="polygon_label" toName="image" strokeWidth="${settings.regionBorderWidth}" pointSize="small" opacity="0.9"${labelsPosition}>
 ${labelMarkup}
   </PolygonLabels>`;
   }
 
   if (tool === "BRUSH") {
-    return `  <BrushLabels name="mask_label" toName="image" opacity="0.45">
+    return `  <BrushLabels name="mask_label" toName="image" opacity="0.45"${labelsPosition}>
 ${labelMarkup}
   </BrushLabels>`;
   }
 
   if (tool === "TEXT_SPAN") {
-    return `  <Labels name="text_label" toName="text">
+    return `  <Labels name="text_label" toName="text"${labelsPosition}>
 ${labelMarkup}
   </Labels>`;
   }
 
   if (tool === "KEYPOINT") {
-    return `  <KeyPointLabels name="keypoint_label" toName="image" strokeWidth="${settings.regionBorderWidth}">
+    return `  <KeyPointLabels name="keypoint_label" toName="image" strokeWidth="${settings.regionBorderWidth}"${labelsPosition}>
 ${labelMarkup}
   </KeyPointLabels>`;
   }
 
   if (tool === "CLASSIFICATION") {
-    return `  <Choices name="classification" toName="image" choice="single">
+    return `  <Choices name="classification" toName="image" choice="single"${labelsPosition}>
 ${labelMarkup.replaceAll("<Label", "<Choice").replaceAll("background=", "valueColor=")}
   </Choices>`;
   }
@@ -731,7 +628,7 @@ ${labelMarkup.replaceAll("<Label", "<Choice").replaceAll("background=", "valueCo
   </Relations>`;
   }
 
-  return `  <RectangleLabels name="box_label" toName="image" strokeWidth="${settings.regionBorderWidth}" opacity="0.9">
+  return `  <RectangleLabels name="box_label" toName="image" strokeWidth="${settings.regionBorderWidth}" opacity="0.9"${labelsPosition}>
 ${labelMarkup}
   </RectangleLabels>`;
 }

@@ -1,0 +1,13 @@
+<View>
+  <Header value="Write ideal supervised answers for fine-tuning examples."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <TextArea name="ideal_response" toName="paragraphs" rows="6" editable="true" required="true"/>
+
+  <Choices name="quality" toName="paragraphs" choice="single">
+      <Choice value="Ideal Answer"/>
+      <Choice value="Needs Rewrite"/>
+      <Choice value="Unsafe"/>
+  </Choices>
+</View>

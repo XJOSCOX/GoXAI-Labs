@@ -1,0 +1,14 @@
+<View>
+  <Header value="Classify the whole video."/>
+
+  <Video name="video" value="$video"/>
+
+  <Choices name="video_class" toName="video" choice="single" showInline="true">
+      <Choice value="Normal"/>
+      <Choice value="Incident"/>
+      <Choice value="Action"/>
+      <Choice value="Needs Review"/>
+  </Choices>
+
+  <TextArea name="summary" toName="video" rows="4" editable="true"/>
+</View>

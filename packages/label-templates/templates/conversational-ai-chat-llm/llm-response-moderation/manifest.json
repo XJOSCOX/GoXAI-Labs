@@ -1,0 +1,33 @@
+{
+  "id": "llm-response-moderation",
+  "name": "LLM Response Moderation",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 12,
+  "dataType": "Chat",
+  "description": "Moderate model responses for safety and policy categories.",
+  "subtype": "Moderation",
+  "labels": [
+    "Safe",
+    "Harassment",
+    "Self Harm",
+    "Sexual",
+    "Violence"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/llm-response-moderation/template.xml",
+  "source": "builtin"
+}

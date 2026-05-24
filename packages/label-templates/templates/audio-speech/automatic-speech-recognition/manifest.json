@@ -1,0 +1,30 @@
+{
+  "id": "automatic-speech-recognition",
+  "name": "Automatic Speech Recognition",
+  "category": "Audio / Speech",
+  "categoryId": "audio-speech",
+  "categoryDescription": "Speech transcription, diarization, audio events, signal quality, and audio classification templates.",
+  "categoryOrder": 30,
+  "templateOrder": 1,
+  "dataType": "Audio",
+  "description": "Transcribe spoken audio into text.",
+  "subtype": "ASR",
+  "labels": [
+    "Transcript",
+    "Unclear",
+    "Noise"
+  ],
+  "tools": [
+    "TEXT_AREA",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/audio-speech/automatic-speech-recognition/template.xml",
+  "source": "builtin"
+}

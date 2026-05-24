@@ -16,6 +16,7 @@ import {
 import { getFormValue, useAuth } from "../../auth";
 import {
   buildTemplateConfig,
+  builtInTemplateCategories,
   builtInTemplatePresets,
   parseLabelInputsFromText,
   type TemplatePreset
@@ -529,15 +530,15 @@ export function LabelTemplateManagerPage() {
 }
 
 function getBuiltInCategories(): CategoryItem[] {
-  return Array.from(new Set(builtInTemplatePresets.map((template) => template.category))).map((name) => ({
+  return builtInTemplateCategories.map((category) => ({
     canManage: false,
-    description: `${name} presets included with GoXAi Lab.`,
-    id: name,
-    key: `builtin:${name}`,
-    name,
+    description: category.description,
+    id: category.id,
+    key: `builtin:${category.id}`,
+    name: category.name,
     organizationId: null,
     source: "builtin",
-    templateCount: builtInTemplatePresets.filter((template) => template.category === name).length
+    templateCount: builtInTemplatePresets.filter((template) => template.categoryId === category.id || template.category === category.name).length
   }));
 }
 

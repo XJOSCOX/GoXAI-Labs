@@ -1,0 +1,31 @@
+{
+  "id": "asr-hypotheses-selection",
+  "name": "ASR Hypotheses Selection",
+  "category": "Ranking / Scoring",
+  "categoryId": "ranking-scoring",
+  "categoryDescription": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates.",
+  "categoryOrder": 60,
+  "templateOrder": 9,
+  "dataType": "Audio",
+  "description": "Select or rank the best transcription hypothesis.",
+  "subtype": "ASR ranking",
+  "labels": [
+    "Best",
+    "Accept",
+    "Reject",
+    "Needs Edit"
+  ],
+  "tools": [
+    "RANKER",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/ranking-scoring/asr-hypotheses-selection/template.xml",
+  "source": "builtin"
+}

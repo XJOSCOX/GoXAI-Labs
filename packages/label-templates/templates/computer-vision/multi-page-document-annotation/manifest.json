@@ -1,0 +1,32 @@
+{
+  "id": "multi-page-document-annotation",
+  "name": "Multi-Page Document Annotation",
+  "category": "Computer Vision",
+  "categoryId": "computer-vision",
+  "categoryDescription": "Image, OCR, segmentation, detection, classification, and visual understanding templates.",
+  "categoryOrder": 10,
+  "templateOrder": 8,
+  "dataType": "PDF",
+  "description": "Annotate pages, tables, titles, summaries, and signatures across documents.",
+  "subtype": "Documents",
+  "labels": [
+    "Title",
+    "Table",
+    "Summary",
+    "Signature"
+  ],
+  "tools": [
+    "HYPERTEXT_LABELS",
+    "TEXT_AREA",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/computer-vision/multi-page-document-annotation/template.xml",
+  "source": "builtin"
+}

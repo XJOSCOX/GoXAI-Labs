@@ -1,0 +1,32 @@
+{
+  "id": "chatbot-evaluation",
+  "name": "Chatbot Evaluation",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 6,
+  "dataType": "Chat",
+  "description": "Evaluate chatbot response quality and task success.",
+  "subtype": "Chat eval",
+  "labels": [
+    "Helpful",
+    "Incorrect",
+    "Unsafe",
+    "Incomplete"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/chatbot-evaluation/template.xml",
+  "source": "builtin"
+}

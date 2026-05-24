@@ -1,0 +1,14 @@
+<View>
+  <Header value="Classify PDF documents by type and routing status."/>
+
+  <Pdf name="pdf" value="$pdf"/>
+
+  <Choices name="classification" toName="pdf" choice="single">
+      <Choice value="Invoice"/>
+      <Choice value="Contract"/>
+      <Choice value="Report"/>
+      <Choice value="Other"/>
+  </Choices>
+
+  <TextArea name="metadata" toName="pdf" rows="6" editable="true"/>
+</View>

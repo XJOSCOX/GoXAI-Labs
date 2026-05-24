@@ -1,0 +1,31 @@
+{
+  "id": "sentiment-analysis",
+  "name": "Sentiment Analysis",
+  "category": "Natural Language Processing",
+  "categoryId": "natural-language-processing",
+  "categoryDescription": "Text extraction, classification, relation, summarization, translation, and moderation templates.",
+  "categoryOrder": 20,
+  "templateOrder": 2,
+  "dataType": "Text",
+  "description": "Classify sentiment in reviews, messages, or documents.",
+  "subtype": "Sentiment",
+  "labels": [
+    "Positive",
+    "Neutral",
+    "Negative",
+    "Mixed"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/natural-language-processing/sentiment-analysis/template.xml",
+  "source": "builtin"
+}

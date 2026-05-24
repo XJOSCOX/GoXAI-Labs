@@ -1,0 +1,32 @@
+{
+  "id": "rag-evaluation-ragas",
+  "name": "RAG Evaluation with Ragas",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 16,
+  "dataType": "Chat",
+  "description": "Score faithfulness, context relevance, and answer relevance for RAG outputs.",
+  "subtype": "RAGAS",
+  "labels": [
+    "Faithful",
+    "Relevant",
+    "Hallucinated",
+    "Needs Review"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/rag-evaluation-ragas/template.xml",
+  "source": "builtin"
+}

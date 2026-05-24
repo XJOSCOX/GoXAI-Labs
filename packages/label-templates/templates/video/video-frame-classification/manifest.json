@@ -1,0 +1,31 @@
+{
+  "id": "video-frame-classification",
+  "name": "Video Frame Classification",
+  "category": "Video",
+  "categoryId": "video",
+  "categoryDescription": "Video classification, frame classification, timeline segmentation, and object tracking templates.",
+  "categoryOrder": 40,
+  "templateOrder": 2,
+  "dataType": "Video",
+  "description": "Classify sampled frames or visual states within a video.",
+  "subtype": "Frame labels",
+  "labels": [
+    "Start",
+    "Middle",
+    "End",
+    "Scene Change"
+  ],
+  "tools": [
+    "VIDEO_LABELS",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/video/video-frame-classification/template.xml",
+  "source": "builtin"
+}

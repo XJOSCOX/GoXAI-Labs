@@ -1,0 +1,32 @@
+{
+  "id": "speaker-diarization",
+  "name": "Speaker Diarization",
+  "category": "Audio / Speech",
+  "categoryId": "audio-speech",
+  "categoryDescription": "Speech transcription, diarization, audio events, signal quality, and audio classification templates.",
+  "categoryOrder": 30,
+  "templateOrder": 6,
+  "dataType": "Audio",
+  "description": "Identify speakers and important speech regions.",
+  "subtype": "Speakers",
+  "labels": [
+    "Speaker 1",
+    "Speaker 2",
+    "Speaker 3",
+    "Noise"
+  ],
+  "tools": [
+    "AUDIO_REGION",
+    "TEXT_AREA",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/audio-speech/speaker-diarization/template.xml",
+  "source": "builtin"
+}

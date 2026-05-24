@@ -1,0 +1,15 @@
+<View>
+  <Header value="Score and rank search results for a query."/>
+
+  <Text name="text" value="$text"/>
+
+  <Ranker name="ranking" toName="text" rankingMode="drag"/>
+
+  <Choices name="decision" toName="text" choice="single">
+      <Choice value="Relevant"/>
+      <Choice value="Partially Relevant"/>
+      <Choice value="Irrelevant"/>
+  </Choices>
+
+  <TextArea name="rationale" toName="text" rows="4" editable="true"/>
+</View>

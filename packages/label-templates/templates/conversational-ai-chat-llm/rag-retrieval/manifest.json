@@ -1,0 +1,32 @@
+{
+  "id": "rag-retrieval",
+  "name": "RAG Retrieval",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 11,
+  "dataType": "Chat",
+  "description": "Judge retrieved context chunks for a RAG answer.",
+  "subtype": "RAG retrieval",
+  "labels": [
+    "Relevant",
+    "Supporting",
+    "Contradictory",
+    "Irrelevant"
+  ],
+  "tools": [
+    "RANKER",
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/rag-retrieval/template.xml",
+  "source": "builtin"
+}

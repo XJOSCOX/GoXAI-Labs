@@ -1,0 +1,14 @@
+<View>
+  <Header value="Review table rows and assign structured categories."/>
+
+  <Text name="text" value="$text"/>
+
+  <Choices name="classification" toName="text" choice="single">
+      <Choice value="Header"/>
+      <Choice value="Value"/>
+      <Choice value="Missing"/>
+      <Choice value="Invalid"/>
+  </Choices>
+
+  <TextArea name="metadata" toName="text" rows="6" editable="true"/>
+</View>

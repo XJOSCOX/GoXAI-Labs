@@ -1,0 +1,16 @@
+<View>
+  <Header value="Select the best response among candidates."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <Ranker name="ranking" toName="paragraphs" rankingMode="drag"/>
+
+  <Choices name="relevance" toName="paragraphs" choice="single">
+      <Choice value="Best"/>
+      <Choice value="Acceptable"/>
+      <Choice value="Reject"/>
+      <Choice value="Unsafe"/>
+  </Choices>
+
+  <TextArea name="retrieval_note" toName="paragraphs" rows="6" editable="true"/>
+</View>

@@ -1,0 +1,12 @@
+<View>
+  <Header value="Align time series events with audio or video references."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <Choices name="classification" toName="image" choice="single">
+      <Choice value="Aligned"/>
+      <Choice value="Drift"/>
+      <Choice value="Event"/>
+      <Choice value="Noise"/>
+  </Choices>
+</View>

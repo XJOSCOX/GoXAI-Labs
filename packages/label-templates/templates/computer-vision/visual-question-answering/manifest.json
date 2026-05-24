@@ -1,0 +1,31 @@
+{
+  "id": "visual-question-answering",
+  "name": "Visual Question Answering",
+  "category": "Computer Vision",
+  "categoryId": "computer-vision",
+  "categoryDescription": "Image, OCR, segmentation, detection, classification, and visual understanding templates.",
+  "categoryOrder": 10,
+  "templateOrder": 12,
+  "dataType": "Image",
+  "description": "Answer structured questions about image content.",
+  "subtype": "VQA",
+  "labels": [
+    "Answer",
+    "Unclear",
+    "Needs Review"
+  ],
+  "tools": [
+    "TEXT_SPAN",
+    "TEXT_AREA",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/computer-vision/visual-question-answering/template.xml",
+  "source": "builtin"
+}

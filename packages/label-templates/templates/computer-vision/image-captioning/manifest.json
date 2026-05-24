@@ -1,0 +1,29 @@
+{
+  "id": "image-captioning",
+  "name": "Image Captioning",
+  "category": "Computer Vision",
+  "categoryId": "computer-vision",
+  "categoryDescription": "Image, OCR, segmentation, detection, classification, and visual understanding templates.",
+  "categoryOrder": 10,
+  "templateOrder": 9,
+  "dataType": "Image",
+  "description": "Write natural-language captions for image content.",
+  "subtype": "Captioning",
+  "labels": [
+    "Caption",
+    "Needs Review"
+  ],
+  "tools": [
+    "TEXT_AREA",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/computer-vision/image-captioning/template.xml",
+  "source": "builtin"
+}

@@ -1,0 +1,16 @@
+<View>
+  <Header value="Stress-test chat responses for policy and safety failures."/>
+
+  <Paragraphs name="paragraphs" value="$paragraphs" layout="dialogue"/>
+
+  <Choices name="classification" toName="paragraphs" choice="multiple">
+      <Choice value="Safe"/>
+      <Choice value="Jailbreak"/>
+      <Choice value="Policy Risk"/>
+      <Choice value="Refusal Needed"/>
+  </Choices>
+
+  <Rating name="score" toName="paragraphs" maxRating="10"/>
+
+  <TextArea name="feedback" toName="paragraphs" rows="6" editable="true"/>
+</View>

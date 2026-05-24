@@ -1,0 +1,20 @@
+<View>
+  <Header value="Speaker Diarization"/>
+
+  <Labels name="label" toName="audio" choice="multiple">
+      <Label value="Speaker 1" background="#FF3B30"/>
+      <Label value="Speaker 2" background="#2563EB"/>
+      <Label value="Speaker 3" background="#22C55E"/>
+      <Label value="Noise" background="#F59E0B"/>
+  </Labels>
+
+  <Audio name="audio" value="$audio" zoom="true" hotkey="ctrl+enter"/>
+
+  <TextArea name="transcription" toName="audio" rows="4" editable="true" perRegion="true"/>
+
+  <Choices name="review" toName="audio" choice="multiple" showInline="true" perRegion="true">
+      <Choice value="Clear"/>
+      <Choice value="Unclear"/>
+      <Choice value="Needs Review"/>
+  </Choices>
+</View>

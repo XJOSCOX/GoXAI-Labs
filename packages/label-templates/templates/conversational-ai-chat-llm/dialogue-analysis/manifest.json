@@ -1,0 +1,32 @@
+{
+  "id": "dialogue-analysis",
+  "name": "Dialogue Analysis",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 4,
+  "dataType": "Chat",
+  "description": "Analyze dialogue turns, intents, and outcomes.",
+  "subtype": "Dialogue",
+  "labels": [
+    "User Intent",
+    "Agent Action",
+    "Resolution",
+    "Escalation"
+  ],
+  "tools": [
+    "PARAGRAPH_LABELS",
+    "CLASSIFICATION",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/dialogue-analysis/template.xml",
+  "source": "builtin"
+}

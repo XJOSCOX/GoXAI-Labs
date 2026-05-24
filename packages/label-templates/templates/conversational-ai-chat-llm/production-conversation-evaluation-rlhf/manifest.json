@@ -1,0 +1,32 @@
+{
+  "id": "production-conversation-evaluation-rlhf",
+  "name": "Production Conversation Evaluation for RLHF",
+  "category": "Conversational AI / Chat / LLM",
+  "categoryId": "conversational-ai-chat-llm",
+  "categoryDescription": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates.",
+  "categoryOrder": 80,
+  "templateOrder": 8,
+  "dataType": "Chat",
+  "description": "Review production conversations for RLHF signals.",
+  "subtype": "Production RLHF",
+  "labels": [
+    "Helpful",
+    "Honest",
+    "Harmless",
+    "Bad Response"
+  ],
+  "tools": [
+    "CLASSIFICATION",
+    "RATING",
+    "TEXT_AREA"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/conversational-ai-chat-llm/production-conversation-evaluation-rlhf/template.xml",
+  "source": "builtin"
+}

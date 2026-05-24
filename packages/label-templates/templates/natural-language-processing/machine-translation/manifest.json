@@ -1,0 +1,30 @@
+{
+  "id": "machine-translation",
+  "name": "Machine Translation",
+  "category": "Natural Language Processing",
+  "categoryId": "natural-language-processing",
+  "categoryDescription": "Text extraction, classification, relation, summarization, translation, and moderation templates.",
+  "categoryOrder": 20,
+  "templateOrder": 6,
+  "dataType": "Text",
+  "description": "Translate source text and review translation quality.",
+  "subtype": "Translation",
+  "labels": [
+    "Translation",
+    "Accurate",
+    "Needs Fix"
+  ],
+  "tools": [
+    "TEXT_AREA",
+    "CLASSIFICATION"
+  ],
+  "settings": {
+    "imageZoom": true,
+    "labelPosition": "top",
+    "regionBorderWidth": 1,
+    "rotateControls": false,
+    "zoomControls": true
+  },
+  "configPath": "templates/natural-language-processing/machine-translation/template.xml",
+  "source": "builtin"
+}

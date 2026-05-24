@@ -10,6 +10,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@goxai/label-templates':
+        specifier: workspace:*
+        version: link:../../packages/label-templates
       '@supabase/supabase-js':
         specifier: ^2.86.0
         version: 2.106.1
@@ -69,6 +72,12 @@ importers:
       prisma:
         specifier: ^7.1.0
         version: 7.8.0(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/label-templates:
+    devDependencies:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

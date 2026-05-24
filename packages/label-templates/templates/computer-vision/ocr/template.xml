@@ -1,0 +1,20 @@
+<View>
+  <Header value="Box text regions and transcribe visible text."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <RectangleLabels name="field" toName="image" strokeWidth="1">
+      <Label value="Text" background="#FF3B30"/>
+      <Label value="Logo" background="#2563EB"/>
+      <Label value="Price" background="#22C55E"/>
+      <Label value="Address" background="#F59E0B"/>
+  </RectangleLabels>
+
+  <TextArea name="transcription" toName="image" rows="4" editable="true" perRegion="true" required="true" placeholder="Transcribed text"/>
+
+  <Choices name="legibility" toName="image" perRegion="true" choice="single">
+      <Choice value="Readable"/>
+      <Choice value="Unclear"/>
+      <Choice value="Handwritten"/>
+  </Choices>
+</View>

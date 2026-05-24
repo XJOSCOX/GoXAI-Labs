@@ -1,0 +1,18 @@
+<View>
+  <Header value="Place keypoints on anatomical or mechanical landmarks."/>
+
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="false"/>
+
+  <KeyPointLabels name="point" toName="image" strokeWidth="1" opacity="0.9">
+      <Label value="Head" background="#FF3B30"/>
+      <Label value="Hand" background="#2563EB"/>
+      <Label value="Foot" background="#22C55E"/>
+      <Label value="Joint" background="#F59E0B"/>
+  </KeyPointLabels>
+
+  <Relations name="relations" toName="image">
+    <Relation value="related_to"/>
+    <Relation value="part_of"/>
+    <Relation value="same_as"/>
+  </Relations>
+</View>

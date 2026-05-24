@@ -1,0 +1,21 @@
+<View>
+  <Header value="Annotate sections across a multi-page document."/>
+
+  <HyperText name="document" value="$document"/>
+
+  <HyperTextLabels name="section" toName="document" granularity="word">
+      <Label value="Title" background="#FF3B30"/>
+      <Label value="Table" background="#2563EB"/>
+      <Label value="Summary" background="#22C55E"/>
+      <Label value="Signature" background="#F59E0B"/>
+  </HyperTextLabels>
+
+  <TextArea name="section_note" toName="document" rows="4" editable="true" perRegion="true"/>
+
+  <Choices name="document_type" toName="document" choice="single">
+      <Choice value="Contract"/>
+      <Choice value="Report"/>
+      <Choice value="Form"/>
+      <Choice value="Letter"/>
+  </Choices>
+</View>

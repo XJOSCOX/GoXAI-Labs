@@ -9,6 +9,7 @@ import {
   type AnnotationTemplateSummary
 } from "../../api";
 import {
+  builtInTemplateCategories,
   builtInTemplatePresets,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
@@ -36,21 +37,6 @@ type CategoryItem =
       key: string;
       source: "custom";
     });
-
-const fallbackCategories = [
-  "Computer Vision",
-  "Natural Language Processing",
-  "Audio/Speech Processing",
-  "Conversational AI",
-  "Chat",
-  "Ranking & Scoring",
-  "Structured Data Parsing",
-  "Time Series Analysis",
-  "Videos",
-  "Generative AI",
-  "Community Contributions",
-  "Custom Templates"
-];
 
 export function LabelTemplatesPage() {
   const { dbUser, session } = useAuth();
@@ -108,18 +94,24 @@ export function LabelTemplatesPage() {
   const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
   const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
   const builtInCategories = useMemo(() => getBuiltInCategories(), []);
-  const categoryItems = useMemo<CategoryItem[]>(
-    () => [
-      ...builtInCategories,
-      ...categories.map((category) => ({
+  const categoryItems = useMemo<CategoryItem[]>(() => {
+    const builtInNames = new Set(builtInCategories.map((category) => normalizeCategoryName(category.name)));
+
+    return [
+      ...builtInCategories.map((category) => ({
         ...category,
-        key: `custom:${category.id}`,
-        source: "custom" as const
-      }))
-    ],
-    [builtInCategories, categories]
-  );
-  const activeCategory = activeCategoryKey ? categoryItems.find((category) => category.key === activeCategoryKey) ?? null : null;
+        templateCount: category.templateCount + templates.filter((template) => normalizeCategoryName(template.category?.name ?? "") === normalizeCategoryName(category.name)).length
+      })),
+      ...categories
+        .filter((category) => !builtInNames.has(normalizeCategoryName(category.name)))
+        .map((category) => ({
+          ...category,
+          key: `custom:${category.id}`,
+          source: "custom" as const
+        }))
+    ];
+  }, [builtInCategories, categories, templates]);
+  const activeCategory = activeCategoryKey ? resolveActiveCategory(activeCategoryKey, categoryItems, categories) : null;
   const visibleTemplates = useMemo(
     () => (activeCategory ? getTemplatesForCategory(activeCategory, templates) : []),
     [activeCategory, templates]
@@ -137,7 +129,7 @@ export function LabelTemplatesPage() {
     : null;
   const manageTemplateHref =
     activeTemplate && activeCategory
-      ? getManageTemplateHref(activeTemplate, activeCategory, selectedCategoryForNewTemplate)
+      ? getManageTemplateHref(activeTemplate, activeCategory, selectedCategoryForNewTemplate, templates)
       : null;
 
   async function reload() {
@@ -415,25 +407,30 @@ export function LabelTemplatesPage() {
 }
 
 function getBuiltInCategories(): CategoryItem[] {
-  return fallbackCategories.map((name) => ({
-    description: `${name} templates and starter settings.`,
-    id: name,
-    key: `builtin:${name}`,
-    name,
+  return builtInTemplateCategories.map((category) => ({
+    description: category.description,
+    id: category.id,
+    key: `builtin:${category.id}`,
+    name: category.name,
     source: "builtin",
-    templateCount: builtInTemplatePresets.filter((template) => template.category === name).length
+    templateCount: builtInTemplatePresets.filter((template) => template.categoryId === category.id || template.category === category.name).length
   }));
 }
 
 function getTemplatesForCategory(category: CategoryItem, templates: AnnotationTemplateSummary[]): TemplateCard[] {
   if (category.source === "builtin") {
-    return builtInTemplatePresets
+    const builtInTemplates = builtInTemplatePresets
       .filter((template) => template.category === category.name)
       .map((template) => ({
         ...template,
         description: template.description,
-        source: "builtin"
+        source: "builtin" as const
       }));
+    const customTemplates = templates
+      .filter((template) => normalizeCategoryName(template.category?.name ?? "") === normalizeCategoryName(category.name))
+      .map(templateToCard);
+
+    return [...builtInTemplates, ...customTemplates];
   }
 
   return templates
@@ -441,11 +438,48 @@ function getTemplatesForCategory(category: CategoryItem, templates: AnnotationTe
     .map(templateToCard);
 }
 
-function getManageTemplateHref(template: TemplateCard, category: CategoryItem, writableCategory: AnnotationCategorySummary | null) {
+function resolveActiveCategory(activeCategoryKey: string, categoryItems: CategoryItem[], categories: AnnotationCategorySummary[]) {
+  const directMatch = categoryItems.find((category) => category.key === activeCategoryKey);
+
+  if (directMatch) {
+    return directMatch;
+  }
+
+  if (activeCategoryKey.startsWith("custom:")) {
+    const customCategory = categories.find((category) => `custom:${category.id}` === activeCategoryKey);
+
+    if (customCategory) {
+      return categoryItems.find((category) => normalizeCategoryName(category.name) === normalizeCategoryName(customCategory.name)) ?? null;
+    }
+  }
+
+  return null;
+}
+
+function normalizeCategoryName(name: string) {
+  return name.trim().toLowerCase();
+}
+
+function getManageTemplateHref(
+  template: TemplateCard,
+  category: CategoryItem,
+  writableCategory: AnnotationCategorySummary | null,
+  templates: AnnotationTemplateSummary[]
+) {
   if (template.source === "custom") {
     return template.canManage && template.sourceTemplateId
       ? `/label-templates/templates/${encodeURIComponent(template.sourceTemplateId)}/edit?category=${encodeURIComponent(category.key)}`
       : null;
+  }
+
+  const existingCustomTemplate = templates.find((candidate) => (
+    candidate.canManage &&
+    normalizeCategoryName(candidate.category?.name ?? "") === normalizeCategoryName(category.name) &&
+    getConfigString(candidate.configJson, "sourceTemplateId") === template.id
+  ));
+
+  if (existingCustomTemplate) {
+    return `/label-templates/templates/${encodeURIComponent(existingCustomTemplate.id)}/edit?category=${encodeURIComponent(`custom:${existingCustomTemplate.categoryId ?? ""}`)}`;
   }
 
   const targetCategoryKey = writableCategory ? `custom:${writableCategory.id}` : category.key;

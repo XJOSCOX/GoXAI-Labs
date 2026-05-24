@@ -1,0 +1,15 @@
+<View>
+  <Header value="Review text for safety, policy, and moderation categories."/>
+
+  <Text name="text" value="$text"/>
+
+  <Choices name="classification" toName="text" choice="multiple">
+      <Choice value="Safe"/>
+      <Choice value="Harassment"/>
+      <Choice value="Violence"/>
+      <Choice value="Spam"/>
+      <Choice value="Sensitive"/>
+  </Choices>
+
+  <TextArea name="response" toName="text" rows="6" editable="true"/>
+</View>

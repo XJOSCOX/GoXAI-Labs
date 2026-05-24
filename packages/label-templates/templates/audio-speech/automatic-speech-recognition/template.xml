@@ -1,0 +1,13 @@
+<View>
+  <Header value="Transcribe the full audio file."/>
+
+  <Audio name="audio" value="$audio" zoom="true" hotkey="ctrl+enter"/>
+
+  <TextArea name="transcription" toName="audio" rows="4" editable="true" maxSubmissions="1"/>
+
+  <Choices name="quality" toName="audio" choice="single" showInline="true">
+      <Choice value="Clear"/>
+      <Choice value="Noisy"/>
+      <Choice value="Multiple Speakers"/>
+  </Choices>
+</View>

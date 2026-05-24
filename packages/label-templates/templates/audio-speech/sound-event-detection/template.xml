@@ -1,0 +1,21 @@
+<View>
+  <Header value="Sound Event Detection"/>
+
+  <Labels name="label" toName="audio" choice="multiple">
+      <Label value="Alarm" background="#FF3B30"/>
+      <Label value="Vehicle" background="#2563EB"/>
+      <Label value="Speech" background="#22C55E"/>
+      <Label value="Music" background="#F59E0B"/>
+      <Label value="Impact" background="#A855F7"/>
+  </Labels>
+
+  <Audio name="audio" value="$audio" zoom="true" hotkey="ctrl+enter"/>
+
+  <TextArea name="transcription" toName="audio" rows="4" editable="true" perRegion="true"/>
+
+  <Choices name="review" toName="audio" choice="multiple" showInline="true" perRegion="true">
+      <Choice value="Clear"/>
+      <Choice value="Unclear"/>
+      <Choice value="Needs Review"/>
+  </Choices>
+</View>
