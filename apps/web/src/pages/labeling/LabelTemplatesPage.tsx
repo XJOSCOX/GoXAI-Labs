@@ -58,7 +58,7 @@ export function LabelTemplatesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
-  const [activeCategoryKey, setActiveCategoryKey] = useState<string>("builtin:Computer Vision");
+  const [activeCategoryKey, setActiveCategoryKey] = useState<string | null>(searchParams.get("category"));
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,12 +101,9 @@ export function LabelTemplatesPage() {
     const categoryKey = searchParams.get("category");
     const templateId = searchParams.get("template");
 
-    if (categoryKey && categoryKey !== activeCategoryKey) {
-      setActiveCategoryKey(categoryKey);
-    }
-
+    setActiveCategoryKey(categoryKey);
     setActiveTemplateId(templateId);
-  }, [activeCategoryKey, searchParams]);
+  }, [searchParams]);
 
   const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
   const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
@@ -122,7 +119,7 @@ export function LabelTemplatesPage() {
     ],
     [builtInCategories, categories]
   );
-  const activeCategory = categoryItems.find((category) => category.key === activeCategoryKey) ?? categoryItems[0] ?? null;
+  const activeCategory = activeCategoryKey ? categoryItems.find((category) => category.key === activeCategoryKey) ?? null : null;
   const visibleTemplates = useMemo(
     () => (activeCategory ? getTemplatesForCategory(activeCategory, templates) : []),
     [activeCategory, templates]
@@ -135,10 +132,9 @@ export function LabelTemplatesPage() {
   const newTemplateCategoryKey = selectedCategoryForNewTemplate
     ? `custom:${selectedCategoryForNewTemplate.id}`
     : activeCategory?.key ?? "";
-  const newTemplateHref =
-    activeCategory && newTemplateCategoryKey
-      ? `/label-templates/categories/${encodeURIComponent(newTemplateCategoryKey)}/templates/new`
-      : "/label-templates/templates/new";
+  const newTemplateHref = activeCategory
+    ? `/label-templates/categories/${encodeURIComponent(newTemplateCategoryKey)}/templates/new`
+    : null;
   const manageTemplateHref =
     activeTemplate && activeCategory
       ? getManageTemplateHref(activeTemplate, activeCategory, selectedCategoryForNewTemplate)
@@ -207,20 +203,11 @@ export function LabelTemplatesPage() {
               <Plus size={16} />
               New category
             </button>
-            <Link className="primary-button compact-button" to={newTemplateHref}>
-              <Plus size={16} />
-              New template
-            </Link>
-            {activeTemplate && manageTemplateHref ? (
-              <Link className="secondary-button compact-button" to={manageTemplateHref}>
-                <Settings2 size={16} />
-                Manage this template
+            {newTemplateHref && (
+              <Link className="primary-button compact-button" to={newTemplateHref}>
+                <Plus size={16} />
+                New template
               </Link>
-            ) : (
-              <button className="secondary-button compact-button" disabled type="button">
-                <Settings2 size={16} />
-                Manage this template
-              </button>
             )}
           </div>
         </div>
@@ -252,14 +239,22 @@ export function LabelTemplatesPage() {
           <section className="label-template-gallery">
             <div className="settings-page-head">
               <div>
-                <p className="eyebrow">{activeCategory?.source === "custom" ? "Custom category" : "Built-in category"}</p>
-                <h3>{activeCategory?.name ?? "Templates"}</h3>
+                <p className="eyebrow">
+                  {activeCategory ? (activeCategory.source === "custom" ? "Custom category" : "Built-in category") : "No category selected"}
+                </p>
+                <h3>{activeCategory?.name ?? "Choose a category"}</h3>
               </div>
-              <span className="status-pill compact">{visibleTemplates.length} templates</span>
+              {activeCategory && <span className="status-pill compact">{visibleTemplates.length} templates</span>}
             </div>
 
             <div className="label-template-card-grid">
-              {visibleTemplates.length > 0 ? (
+              {!activeCategory ? (
+                <div className="template-empty-state">
+                  <Database size={22} />
+                  <strong>Select a category first.</strong>
+                  <small>Pick a category on the left to see its template cards and actions.</small>
+                </div>
+              ) : visibleTemplates.length > 0 ? (
                 visibleTemplates.map((template) => (
                   <button
                     className={`label-template-card ${activeTemplate?.id === template.id ? "active" : ""}`}
@@ -283,7 +278,7 @@ export function LabelTemplatesPage() {
                 <div className="template-empty-state">
                   <Database size={22} />
                   <strong>No templates in this category yet.</strong>
-                  <small>Create templates from the management page.</small>
+                  <small>Create a template in this category.</small>
                 </div>
               )}
             </div>
