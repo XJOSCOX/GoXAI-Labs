@@ -3129,7 +3129,213 @@ textarea:focus {
 .template-form-page {
   display: grid;
   gap: 14px;
-  max-width: 980px;
+  max-width: none;
+}
+
+.labeling-interface-builder {
+  display: grid;
+  grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.labeling-config-panel,
+.template-workspace-preview,
+.template-preview-side {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.labeling-config-panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+}
+
+.template-editor-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  width: fit-content;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 3px;
+}
+
+.template-editor-tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.template-editor-tabs button.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.template-code-editor,
+.template-visual-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.template-code-editor textarea {
+  min-height: 620px;
+  resize: vertical;
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.template-workspace-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  gap: 10px;
+  padding: 10px;
+}
+
+.template-preview-stage {
+  display: grid;
+  grid-template-rows: auto auto minmax(360px, 1fr);
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.template-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.template-preview-toolbar em {
+  overflow: hidden;
+  max-width: 180px;
+  color: var(--accent);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-preview-canvas {
+  position: relative;
+  overflow: hidden;
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(125, 211, 252, 0.18), transparent 38%),
+    radial-gradient(circle at 72% 28%, rgba(255, 255, 255, 0.16), transparent 16%),
+    repeating-linear-gradient(90deg, transparent 0 45px, rgba(255, 255, 255, 0.04) 46px 47px),
+    repeating-linear-gradient(0deg, transparent 0 45px, rgba(255, 255, 255, 0.04) 46px 47px),
+    var(--surface);
+}
+
+.preview-box,
+.preview-polygon,
+.preview-point,
+.preview-brush {
+  position: absolute;
+  pointer-events: none;
+}
+
+.preview-box {
+  border: 1px solid #f87171;
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.preview-box.one {
+  left: 18%;
+  top: 23%;
+  width: 22%;
+  height: 18%;
+}
+
+.preview-box.two {
+  right: 18%;
+  bottom: 22%;
+  width: 18%;
+  height: 20%;
+}
+
+.preview-polygon {
+  left: 46%;
+  top: 28%;
+  width: 120px;
+  height: 88px;
+  clip-path: polygon(10% 30%, 52% 4%, 94% 28%, 78% 84%, 24% 70%);
+  border: 1px solid #c4b5fd;
+  background: rgba(196, 181, 253, 0.2);
+}
+
+.preview-point {
+  right: 24%;
+  top: 24%;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #fde047;
+  border-radius: 999px;
+}
+
+.preview-brush {
+  left: 24%;
+  bottom: 24%;
+  width: 160px;
+  height: 46px;
+  border-radius: 999px;
+  background: rgba(134, 239, 172, 0.24);
+}
+
+.template-preview-tools {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  display: grid;
+  gap: 4px;
+  transform: translateY(-50%);
+}
+
+.template-preview-tools span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.template-preview-side {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 12px;
 }
 
 .template-settings-group {

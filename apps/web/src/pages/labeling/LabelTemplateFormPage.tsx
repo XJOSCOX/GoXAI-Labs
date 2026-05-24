@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Code2, Eye, Save, Trash2 } from "lucide-react";
 import {
   createAnnotationTemplate,
   deleteAnnotationTemplate,
@@ -31,6 +31,8 @@ export function LabelTemplateFormPage() {
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<"code" | "visual">("visual");
+  const [configCodeDraft, setConfigCodeDraft] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -67,6 +69,10 @@ export function LabelTemplateFormPage() {
   const seedSettings = getTemplateSettings(selectedTemplate, sourcePreset);
   const seedHeader = getTemplateConfigString(selectedTemplate, "header") ?? "Select label and annotate the asset";
   const seedDataKey = getTemplateConfigString(selectedTemplate, "dataKey") ?? "$image";
+  const initialConfigCode =
+    getTemplateConfigString(selectedTemplate, "configCode") ??
+    buildTemplateMarkup(seedHeader, seedDataKey, seedLabels, seedTools, seedSettings);
+  const configCodeValue = configCodeDraft ?? initialConfigCode;
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +134,7 @@ export function LabelTemplateFormPage() {
     };
     const labels = parseLabelInputsFromText(getFormValue(event, "labels"));
     const selectedTools = new FormData(form).getAll("tools").map(String);
+    const configCode = getFormValue(event, "configCode") || buildTemplateMarkup(header, dataKey, getFormValue(event, "labels"), selectedTools, settings);
 
     if (!category) {
       setError("Choose a category you own before saving this template.");
@@ -168,6 +175,7 @@ export function LabelTemplateFormPage() {
         categoryId: category.id,
         configJson: {
           ...buildTemplateConfig(preset),
+          configCode,
           dataKey,
           header,
           sourceTemplateId: sourcePreset?.id ?? selectedTemplate?.id ?? null
@@ -241,6 +249,39 @@ export function LabelTemplateFormPage() {
               Create a custom category named {routeCategoryName ?? "this category"} before saving templates here.
             </p>
           )}
+          <input name="configCode" type="hidden" value={configCodeValue} />
+          <div className="labeling-interface-builder">
+            <aside className="labeling-config-panel">
+              <div className="template-editor-tabs" role="tablist" aria-label="Template editor mode">
+                <button
+                  className={editorMode === "code" ? "active" : ""}
+                  type="button"
+                  onClick={() => setEditorMode("code")}
+                >
+                  <Code2 size={16} />
+                  Code
+                </button>
+                <button
+                  className={editorMode === "visual" ? "active" : ""}
+                  type="button"
+                  onClick={() => setEditorMode("visual")}
+                >
+                  <Eye size={16} />
+                  Visual
+                </button>
+              </div>
+              {editorMode === "code" ? (
+                <label className="template-code-editor">
+                  Template code
+                  <textarea
+                    disabled={saving}
+                    spellCheck={false}
+                    value={configCodeValue}
+                    onChange={(event) => setConfigCodeDraft(event.target.value)}
+                  />
+                </label>
+              ) : (
+                <div className="template-visual-editor">
           <div className="two-column-fields">
             {categoryLocked ? (
               <label>
@@ -371,6 +412,17 @@ export function LabelTemplateFormPage() {
               Show rotate controls
             </label>
           </fieldset>
+                </div>
+              )}
+            </aside>
+            <TemplateWorkspacePreview
+              dataKey={seedDataKey}
+              header={seedHeader}
+              labels={seedLabels}
+              settings={seedSettings}
+              tools={seedTools}
+            />
+          </div>
           <div className="row-actions">
             <button className="primary-button" disabled={saving || editableCategories.length === 0 || !selectedCategory} type="submit">
               <Save size={18} />
@@ -385,6 +437,61 @@ export function LabelTemplateFormPage() {
           </div>
         </form>
       </section>
+    </section>
+  );
+}
+
+function TemplateWorkspacePreview({
+  dataKey,
+  header,
+  labels,
+  settings,
+  tools
+}: {
+  dataKey: string;
+  header: string;
+  labels: string;
+  settings: LabelingSettings;
+  tools: string[];
+}) {
+  const labelNames = parseLabelInputsFromText(labels).map((label) => label.name).slice(0, 5);
+
+  return (
+    <section className="template-workspace-preview" aria-label="Template visual preview">
+      <div className="template-preview-stage">
+        <div className="template-preview-toolbar">
+          <span>Preview</span>
+          <em>{dataKey}</em>
+        </div>
+        <strong>{header}</strong>
+        <div className="template-preview-canvas">
+          {tools.includes("BBOX") && <i className="preview-box one" />}
+          {tools.includes("BBOX") && <i className="preview-box two" />}
+          {tools.includes("POLYGON") && <i className="preview-polygon" />}
+          {tools.includes("KEYPOINT") && <i className="preview-point" />}
+          {tools.includes("BRUSH") && <i className="preview-brush" />}
+          {settings.zoomControls && (
+            <div className="template-preview-tools">
+              <span>+</span>
+              <span>-</span>
+            </div>
+          )}
+        </div>
+      </div>
+      <aside className="template-preview-side">
+        <div>
+          <p className="eyebrow">Labels</p>
+          <div className="label-chip-list">
+            {labelNames.length > 0 ? labelNames.map((label) => <span className="label-chip" key={label}>{label}</span>) : <span className="label-chip">Label</span>}
+          </div>
+        </div>
+        <div>
+          <p className="eyebrow">Tools</p>
+          <div className="label-chip-list">
+            {tools.map((tool) => <span className="label-chip" key={tool}>{formatEnum(tool)}</span>)}
+          </div>
+        </div>
+      </aside>
     </section>
   );
 }
@@ -508,4 +615,79 @@ function normalizePresetDataType(dataType?: string) {
   }
 
   return "IMAGE";
+}
+
+function buildTemplateMarkup(
+  header: string,
+  dataKey: string,
+  labelsText: string,
+  tools: string[],
+  settings: Partial<LabelingSettings>
+) {
+  const labels = parseLabelInputsFromText(labelsText);
+  const labelMarkup = labels.length > 0
+    ? labels.map((label) => `    <Label value="${escapeTemplateMarkup(label.name)}" background="${label.color}" />`).join("\n")
+    : `    <Label value="Label" background="#7dd3fc" />`;
+  const tagMarkup = tools.length > 0
+    ? tools.map((tool) => buildToolMarkup(tool, labelMarkup, settings)).join("\n\n")
+    : buildToolMarkup("BBOX", labelMarkup, settings);
+
+  return `<View>
+  <Header value="${escapeTemplateMarkup(header)}" />
+  <Image name="image" value="${escapeTemplateMarkup(dataKey)}" zoom="${settings.imageZoom !== false ? "true" : "false"}" />
+
+${tagMarkup}
+</View>`;
+}
+
+function buildToolMarkup(tool: string, labelMarkup: string, settings: Partial<LabelingSettings>) {
+  const strokeWidth = settings.regionBorderWidth ?? 1;
+
+  if (tool === "POLYGON") {
+    return `  <PolygonLabels name="label" toName="image" strokeWidth="${strokeWidth}" pointSize="small" opacity="0.9">
+${labelMarkup}
+  </PolygonLabels>`;
+  }
+
+  if (tool === "BRUSH") {
+    return `  <BrushLabels name="label" toName="image" opacity="0.65">
+${labelMarkup}
+  </BrushLabels>`;
+  }
+
+  if (tool === "TEXT_SPAN") {
+    return `  <Labels name="label" toName="text">
+${labelMarkup}
+  </Labels>`;
+  }
+
+  if (tool === "KEYPOINT") {
+    return `  <KeyPointLabels name="label" toName="image" strokeWidth="${strokeWidth}">
+${labelMarkup}
+  </KeyPointLabels>`;
+  }
+
+  if (tool === "CLASSIFICATION") {
+    return `  <Choices name="label" toName="image" choice="single">
+${labelMarkup}
+  </Choices>`;
+  }
+
+  if (tool === "RELATION") {
+    return `  <Relations>
+    <Relation value="related" />
+  </Relations>`;
+  }
+
+  return `  <RectangleLabels name="label" toName="image" strokeWidth="${strokeWidth}">
+${labelMarkup}
+  </RectangleLabels>`;
+}
+
+function escapeTemplateMarkup(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
