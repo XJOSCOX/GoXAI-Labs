@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Database, Pencil, Plus, Settings2, Shapes } from "lucide-react";
+import { Database, Plus, Settings2, Shapes, X } from "lucide-react";
 import {
+  createAnnotationCategory,
   listAnnotationCategories,
   listAnnotationTemplates,
   type AnnotationCategorySummary,
@@ -11,7 +12,8 @@ import {
   builtInTemplatePresets,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
-import { useAuth } from "../../auth";
+import { getFormValue, useAuth } from "../../auth";
+import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
 
 type TemplateCard = TemplatePreset & {
@@ -51,12 +53,16 @@ const fallbackCategories = [
 ];
 
 export function LabelTemplatesPage() {
-  const { session } = useAuth();
+  const { dbUser, session } = useAuth();
+  const { organizations } = useOrganizations(session);
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
   const [activeCategoryKey, setActiveCategoryKey] = useState<string>("builtin:Computer Vision");
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [savingCategory, setSavingCategory] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +96,8 @@ export function LabelTemplatesPage() {
     };
   }, [session]);
 
+  const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
+  const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
   const builtInCategories = useMemo(() => getBuiltInCategories(), []);
   const categoryItems = useMemo<CategoryItem[]>(
     () => [
@@ -107,8 +115,60 @@ export function LabelTemplatesPage() {
     () => (activeCategory ? getTemplatesForCategory(activeCategory, templates) : []),
     [activeCategory, templates]
   );
-  const activeTemplate =
-    visibleTemplates.find((template) => template.id === activeTemplateId) ?? visibleTemplates[0] ?? null;
+  const activeTemplate = visibleTemplates.find((template) => template.id === activeTemplateId) ?? null;
+  const newTemplateHref =
+    activeCategory?.source === "custom"
+      ? `/label-templates/templates/new?category=${encodeURIComponent(activeCategory.id)}`
+      : `/label-templates/templates/new?categoryName=${encodeURIComponent(activeCategory?.name ?? "")}`;
+
+  async function reload() {
+    if (!session) {
+      return;
+    }
+
+    const [nextCategories, nextTemplates] = await Promise.all([
+      listAnnotationCategories(session),
+      listAnnotationTemplates(session)
+    ]);
+
+    setCategories(nextCategories);
+    setTemplates(nextTemplates);
+  }
+
+  async function handleCreateCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    const name = getFormValue(event, "name");
+    const description = getFormValue(event, "description");
+    const organizationId = getFormValue(event, "organizationId") || null;
+
+    if (!name) {
+      setError("Category name is required.");
+      return;
+    }
+
+    setSavingCategory(true);
+
+    try {
+      const category = await createAnnotationCategory(session, { description, name, organizationId });
+      await reload();
+      setActiveCategoryKey(`custom:${category.id}`);
+      setActiveTemplateId(null);
+      setCategoryModalOpen(false);
+      setMessage("Category created.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to create category.");
+    } finally {
+      setSavingCategory(false);
+    }
+  }
 
   return (
     <section className="page-stack">
@@ -119,18 +179,24 @@ export function LabelTemplatesPage() {
             <h2>Template browser</h2>
           </div>
           <div className="row-actions compact">
-            <Link className="secondary-button compact-button" to="/label-templates/manage">
-              <Pencil size={16} />
-              Manage templates
-            </Link>
-            <Link className="primary-button compact-button" to="/label-templates/manage">
+            <button className="secondary-button compact-button" type="button" onClick={() => setCategoryModalOpen(true)}>
+              <Plus size={16} />
+              New category
+            </button>
+            <Link className="primary-button compact-button" to={newTemplateHref}>
               <Plus size={16} />
               New template
             </Link>
+            {activeTemplate?.source === "custom" && activeTemplate.canManage && (
+              <Link className="secondary-button compact-button" to={`/label-templates/templates/${activeTemplate.sourceTemplateId}/edit`}>
+                <Settings2 size={16} />
+                Manage this template
+              </Link>
+            )}
           </div>
         </div>
 
-        {error && <p className="form-error">{error}</p>}
+        {(error || message) && <p className={error ? "form-error" : "form-success"}>{error ?? message}</p>}
 
         <div className="label-template-picker">
           <aside className="label-template-category-rail">
@@ -235,7 +301,7 @@ export function LabelTemplatesPage() {
                   </div>
                 </section>
                 {activeTemplate.source === "custom" && activeTemplate.canManage && (
-                  <Link className="secondary-button compact-button" to={`/label-templates/manage?template=${activeTemplate.sourceTemplateId ?? ""}`}>
+                  <Link className="secondary-button compact-button" to={`/label-templates/templates/${activeTemplate.sourceTemplateId}/edit`}>
                     <Settings2 size={16} />
                     Edit this template
                   </Link>
@@ -247,6 +313,65 @@ export function LabelTemplatesPage() {
           </aside>
         </div>
       </section>
+      {categoryModalOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setCategoryModalOpen(false)}>
+          <form
+            aria-labelledby="category-modal-title"
+            aria-modal="true"
+            className="modal-panel category-modal"
+            role="dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+            onSubmit={handleCreateCategory}
+          >
+            <div className="modal-head">
+              <div>
+                <p className="eyebrow">Label settings</p>
+                <h2 id="category-modal-title">New category</h2>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setCategoryModalOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            {!canCreateCategory && (
+              <p className="form-error">Only super admins or organization owners/admins can create categories.</p>
+            )}
+            <label>
+              Scope
+              <select
+                defaultValue={dbUser?.globalRole === "SUPER_ADMIN" ? "" : manageableOrganizations[0]?.id ?? ""}
+                disabled={!canCreateCategory || savingCategory}
+                name="organizationId"
+              >
+                {dbUser?.globalRole === "SUPER_ADMIN" && <option value="">Global</option>}
+                {manageableOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Category name
+              <input disabled={!canCreateCategory || savingCategory} name="name" placeholder="Computer Vision" />
+            </label>
+            <label>
+              Description
+              <textarea
+                disabled={!canCreateCategory || savingCategory}
+                name="description"
+                placeholder="Templates for image, video, text, chat, or domain-specific labeling"
+                rows={4}
+              />
+            </label>
+            <div className="row-actions">
+              <button className="primary-button" disabled={!canCreateCategory || savingCategory} type="submit">
+                <Plus size={18} />
+                Create category
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </section>
   );
 }

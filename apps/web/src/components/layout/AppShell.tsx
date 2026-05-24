@@ -158,6 +158,14 @@ function getTopbarTitle(pathname: string) {
     return { eyebrow: "Label settings", title: "Template management" };
   }
 
+  if (normalizedPathname === "/label-templates/templates/new") {
+    return { eyebrow: "Label settings", title: "New template" };
+  }
+
+  if (normalizedPathname.startsWith("/label-templates/templates/")) {
+    return { eyebrow: "Label settings", title: "Edit template" };
+  }
+
   if (normalizedPathname.startsWith("/datasets/")) {
     if (normalizedPathname.endsWith("/label-config")) {
       return { eyebrow: "Datasets", title: "Label configuration" };

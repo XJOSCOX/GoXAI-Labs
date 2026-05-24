@@ -953,6 +953,10 @@ textarea:focus {
   width: min(920px, 100%);
 }
 
+.category-modal {
+  width: min(680px, 100%);
+}
+
 .dataset-edit-modal {
   width: min(780px, 100%);
 }
@@ -3120,6 +3124,12 @@ textarea:focus {
 
 .template-settings-editor.wide {
   width: 100%;
+}
+
+.template-form-page {
+  display: grid;
+  gap: 14px;
+  max-width: 980px;
 }
 
 .template-settings-group {

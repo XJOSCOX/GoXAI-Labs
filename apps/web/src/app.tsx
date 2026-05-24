@@ -12,6 +12,7 @@ import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { DatasetDetailPage } from "./pages/datasets/DatasetDetailPage";
 import { DatasetLabelConfigPage } from "./pages/datasets/DatasetLabelConfigPage";
 import { DatasetsPage } from "./pages/datasets/DatasetsPage";
+import { LabelTemplateFormPage } from "./pages/labeling/LabelTemplateFormPage";
 import { LabelTemplateManagerPage } from "./pages/labeling/LabelTemplateManagerPage";
 import { LabelTemplatesPage } from "./pages/labeling/LabelTemplatesPage";
 import { OrganizationSetupPage } from "./pages/organizations/OrganizationSetupPage";
@@ -74,6 +75,8 @@ export function App() {
           <Route path="tasks/:taskId" element={<TaskDetailPage />} />
           <Route path="label-templates" element={<LabelTemplatesPage />} />
           <Route path="label-templates/manage" element={<LabelTemplateManagerPage />} />
+          <Route path="label-templates/templates/new" element={<LabelTemplateFormPage />} />
+          <Route path="label-templates/templates/:templateId/edit" element={<LabelTemplateFormPage />} />
           <Route path="account" element={<AccountPage />} />
           <Route path="admin" element={<AdminPage />} />
         </Route>
