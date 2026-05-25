@@ -12,12 +12,145 @@ import {
 } from "@goxai/database";
 import { Router, type Response } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
-import { getRequestId, saveAuditLog } from "./logging.js";
+import { getRequestId } from "./logging.js";
 import { canGenerateTasks, canWorkTasks } from "./permissions.js";
 
 const router = Router();
 
 router.use(requireAuthenticatedUser);
+
+router.get("/stats", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.query.datasetId);
+  const projectId = normalizeId(request.query.projectId);
+  const prisma = getPrismaClient();
+  const scope = await getTaskAccessScope(user.id);
+  const where = buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const statusGroups = await prisma.task.groupBy({
+    by: ["status", "assignedToId"],
+    where,
+    _count: {
+      _all: true
+    }
+  });
+
+  response.status(200).json({
+    stats: summarizeTaskStatsForGroups(statusGroups)
+  });
+});
+
+router.get("/folders", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.query.projectId);
+  const prisma = getPrismaClient();
+  const scope = await getTaskAccessScope(user.id);
+
+  if (projectId) {
+    const project = await prisma.project.findFirst({
+      where: {
+        id: projectId,
+        OR: buildAccessibleProjectConditions(scope.organizationIds, scope.projectIds)
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        status: true
+      }
+    });
+
+    if (!project) {
+      response.status(404).json({ error: "Project was not found or you do not have access." });
+      return;
+    }
+
+    const where = buildVisibleTaskWhere(scope, { projectId });
+    const [statusGroups, datasets] = await Promise.all([
+      prisma.task.groupBy({
+        by: ["datasetId", "status", "assignedToId"],
+        where: {
+          ...where,
+          datasetId: {
+            not: null
+          }
+        },
+        _count: {
+          _all: true
+        }
+      }),
+      prisma.dataset.findMany({
+        where: {
+          projectId
+        },
+        select: {
+          id: true,
+          name: true,
+          version: true
+        }
+      })
+    ]);
+    const datasetById = new Map(datasets.map((dataset) => [dataset.id, dataset]));
+
+    response.status(200).json({
+      datasets: summarizeDatasetTaskFolders(statusGroups, project, datasetById),
+      project
+    });
+    return;
+  }
+
+  const where = buildVisibleTaskWhere(scope);
+  const [statusGroups, datasetGroups] = await Promise.all([
+    prisma.task.groupBy({
+      by: ["projectId", "status", "assignedToId"],
+      where,
+      _count: {
+        _all: true
+      }
+    }),
+    prisma.task.groupBy({
+      by: ["projectId", "datasetId"],
+      where: {
+        ...where,
+        datasetId: {
+          not: null
+        }
+      },
+      _count: {
+        _all: true
+      }
+    })
+  ]);
+  const projects = await prisma.project.findMany({
+    where: {
+      id: {
+        in: [...new Set(statusGroups.map((group) => group.projectId))]
+      }
+    },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      status: true
+    }
+  });
+  const projectById = new Map(projects.map((project) => [project.id, project]));
+
+  response.status(200).json({
+    projects: summarizeProjectTaskFolders(statusGroups, datasetGroups, projectById)
+  });
+});
 
 router.get("/", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
@@ -29,51 +162,20 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
 
   const datasetId = normalizeId(request.query.datasetId);
   const projectId = normalizeId(request.query.projectId);
+  const page = normalizePositiveInteger(request.query.page);
+  const requestedPageSize = normalizePositiveInteger(request.query.pageSize);
+  const isPaginated = Boolean(page || requestedPageSize);
+  const pageNumber = page ?? 1;
+  const pageSize = Math.min(requestedPageSize ?? 25, 100);
   const prisma = getPrismaClient();
-  const [memberships, projectMemberships] = await Promise.all([
-    getActiveMemberships(user.id),
-    prisma.projectMembership.findMany({
-      where: {
-        userId: user.id,
-        status: "ACTIVE"
-      },
-      select: {
-        projectId: true,
-        role: true
-      }
-    })
-  ]);
-  const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))];
-  const membershipByOrganizationId = new Map(memberships.map((membership) => [membership.organizationId, membership]));
-  const projectIds = [...new Set(projectMemberships.map((membership) => membership.projectId))];
-  const membershipByProjectId = new Map(projectMemberships.map((membership) => [membership.projectId, membership]));
-
-  if (organizationIds.length === 0 && projectIds.length === 0 && !datasetId && !projectId) {
-    response.status(200).json({ tasks: [] });
-    return;
-  }
+  const scope = await getTaskAccessScope(user.id);
 
   if (datasetId) {
     const dataset = await prisma.dataset.findFirst({
       where: {
         id: datasetId,
         project: {
-          OR: [
-            {
-              organizationId: {
-                in: organizationIds
-              }
-            },
-            {
-              id: {
-                in: projectIds
-              }
-            },
-            {
-              accessMode: ProjectAccessMode.PUBLIC,
-              status: ProjectStatus.ACTIVE
-            }
-          ]
+          OR: buildAccessibleProjectConditions(scope.organizationIds, scope.projectIds)
         }
       },
       select: {
@@ -91,22 +193,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     const project = await prisma.project.findFirst({
       where: {
         id: projectId,
-        OR: [
-          {
-            organizationId: {
-              in: organizationIds
-            }
-          },
-          {
-            id: {
-              in: projectIds
-            }
-          },
-          {
-            accessMode: ProjectAccessMode.PUBLIC,
-            status: ProjectStatus.ACTIVE
-          }
-        ]
+        OR: buildAccessibleProjectConditions(scope.organizationIds, scope.projectIds)
       },
       select: {
         id: true
@@ -119,52 +206,28 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     }
   }
 
-  const tasks = await prisma.task.findMany({
-    where: {
-      project: {
-        OR: [
-          {
-            organizationId: {
-              in: organizationIds
-            }
-          },
-          {
-            id: {
-              in: projectIds
-            }
-          },
-          {
-            accessMode: ProjectAccessMode.PUBLIC,
-            status: ProjectStatus.ACTIVE
+  const where = buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const [tasks, total] = await Promise.all([
+    prisma.task.findMany({
+      where,
+      include: taskListIncludes,
+      orderBy: getTaskQueueOrderBy(),
+      ...(isPaginated
+        ? {
+            skip: (pageNumber - 1) * pageSize,
+            take: pageSize
           }
-        ]
-      },
-      ...(datasetId ? { datasetId } : {}),
-      ...(projectId ? { projectId } : {})
-    },
-    include: taskIncludes,
-    orderBy: [
-      {
-        priority: "desc"
-      },
-      {
-        updatedAt: "desc"
-      }
-    ]
-  });
-
-  const visibleTasks = tasks.filter((task) => {
-    const membership = membershipByOrganizationId.get(task.project.organizationId) ?? membershipByProjectId.get(task.projectId);
-    return Boolean(
-      (membership && canGenerateTasks(membership)) ||
-        (task.project.status === ProjectStatus.ACTIVE && task.status !== TaskStatus.ARCHIVED)
-    );
-  });
+        : {})
+    }),
+    isPaginated ? prisma.task.count({ where }) : Promise.resolve(0)
+  ]);
 
   response.status(200).json({
-    tasks: visibleTasks.map((task) =>
-      serializeTask(task, membershipByOrganizationId.get(task.project.organizationId) ?? membershipByProjectId.get(task.projectId))
-    )
+    page: pageNumber,
+    pageSize,
+    tasks: tasks.map((task) => serializeTaskListItem(task, scope.membershipByOrganizationId.get(task.project.organizationId) ?? scope.membershipByProjectId.get(task.projectId))),
+    total: isPaginated ? total : tasks.length,
+    totalPages: isPaginated ? Math.max(1, Math.ceil(total / pageSize)) : 1
   });
 });
 
@@ -304,14 +367,7 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
       datasetId: dataset.id
     },
     include: taskIncludes,
-    orderBy: [
-      {
-        priority: "desc"
-      },
-      {
-        updatedAt: "desc"
-      }
-    ]
+    orderBy: getTaskQueueOrderBy()
   });
 
   response.status(201).json({
@@ -322,8 +378,169 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
   });
 });
 
+router.post("/assign-dataset-to-self", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.body?.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      name: true,
+      organizationId: true,
+      project: {
+        select: {
+          id: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const [membership, projectMembership] = await Promise.all([
+    prisma.membership.findFirst({
+      where: {
+        userId: user.id,
+        organizationId: dataset.organizationId,
+        status: "ACTIVE"
+      },
+      select: {
+        role: true
+      }
+    }),
+    prisma.projectMembership.findFirst({
+      where: {
+        userId: user.id,
+        projectId: dataset.project.id,
+        status: "ACTIVE"
+      },
+      select: {
+        role: true
+      }
+    })
+  ]);
+  const effectiveMembership = membership ?? projectMembership;
+
+  if (!effectiveMembership || !canWorkTasks(effectiveMembership)) {
+    response.status(403).json({ error: "You do not have permission to work tasks in this dataset." });
+    return;
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.task.updateMany({
+      where: {
+        assignedToId: null,
+        datasetId: dataset.id,
+        status: {
+          in: [TaskStatus.PENDING, TaskStatus.ASSIGNED]
+        }
+      },
+      data: {
+        assignedToId: user.id,
+        status: TaskStatus.ASSIGNED
+      }
+    });
+
+    if (updated.count > 0) {
+      await tx.auditLog.create({
+        data: {
+          organizationId: dataset.organizationId,
+          projectId: dataset.project.id,
+          userId: user.id,
+          action: "task.dataset_assigned_self",
+          entityType: "dataset",
+          entityId: dataset.id,
+          metadata: {
+            requestId: getRequestId(request),
+            assignedCount: updated.count,
+            datasetName: dataset.name
+          }
+        }
+      });
+    }
+
+    return updated;
+  });
+
+  response.status(200).json({
+    assignedCount: result.count
+  });
+});
+
 router.post("/:taskId/assign-self", async (request: AuthenticatedRequest, response) => {
   await updateTaskForUser(request, response, "assign-self");
+});
+
+router.get("/:taskId/next", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const taskId = normalizeId(request.params.taskId);
+
+  if (!taskId) {
+    response.status(400).json({ error: "Task is required." });
+    return;
+  }
+
+  const access = await getTaskAccess(user.id, taskId);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  const datasetId = normalizeId(request.query.datasetId) ?? access.task.datasetId ?? undefined;
+  const projectId = normalizeId(request.query.projectId) ?? access.task.projectId;
+  const prisma = getPrismaClient();
+  const scope = await getTaskAccessScope(user.id);
+  const where = buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const nextTask = await prisma.task.findFirst({
+    where: {
+      AND: [
+        where,
+        {
+          assignedToId: user.id,
+          id: {
+            not: access.task.id
+          },
+          status: {
+            in: [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]
+          },
+          OR: getNextTaskCursorWhere(access.task)
+        }
+      ]
+    },
+    include: taskListIncludes,
+    orderBy: getTaskQueueOrderBy()
+  });
+
+  response.status(200).json({
+    task: nextTask
+      ? serializeTaskListItem(nextTask, scope.membershipByOrganizationId.get(nextTask.project.organizationId) ?? scope.membershipByProjectId.get(nextTask.projectId))
+      : null
+  });
 });
 
 router.get("/:taskId", async (request: AuthenticatedRequest, response) => {
@@ -469,6 +686,11 @@ async function saveTaskAnnotation(request: AuthenticatedRequest, response: Respo
 
   if (!access.membership || !canWorkTasks(access.membership)) {
     response.status(403).json({ error: "You do not have permission to annotate this task." });
+    return;
+  }
+
+  if (action === "draft" && (access.task.status === TaskStatus.SUBMITTED || access.task.status === TaskStatus.APPROVED)) {
+    response.status(409).json({ error: "Submitted tasks cannot be changed by autosave." });
     return;
   }
 
@@ -769,6 +991,258 @@ async function getActiveMemberships(userId: string) {
   });
 }
 
+async function getTaskAccessScope(userId: string) {
+  const prisma = getPrismaClient();
+  const [memberships, projectMemberships] = await Promise.all([
+    getActiveMemberships(userId),
+    prisma.projectMembership.findMany({
+      where: {
+        userId,
+        status: "ACTIVE"
+      },
+      select: {
+        projectId: true,
+        role: true
+      }
+    })
+  ]);
+  const organizationIds = [...new Set(memberships.map((membership) => membership.organizationId))];
+  const projectIds = [...new Set(projectMemberships.map((membership) => membership.projectId))];
+
+  return {
+    manageableOrganizationIds: memberships.filter(canGenerateTasks).map((membership) => membership.organizationId),
+    manageableProjectIds: projectMemberships.filter(canGenerateTasks).map((membership) => membership.projectId),
+    membershipByOrganizationId: new Map(memberships.map((membership) => [membership.organizationId, membership])),
+    membershipByProjectId: new Map(projectMemberships.map((membership) => [membership.projectId, membership])),
+    organizationIds,
+    projectIds
+  };
+}
+
+type TaskAccessScope = Awaited<ReturnType<typeof getTaskAccessScope>>;
+
+function buildAccessibleProjectConditions(organizationIds: string[], projectIds: string[]): Prisma.ProjectWhereInput[] {
+  return [
+    ...(organizationIds.length > 0
+      ? [
+          {
+            organizationId: {
+              in: organizationIds
+            }
+          }
+        ]
+      : []),
+    ...(projectIds.length > 0
+      ? [
+          {
+            id: {
+              in: projectIds
+            }
+          }
+        ]
+      : []),
+    {
+      accessMode: ProjectAccessMode.PUBLIC,
+      status: ProjectStatus.ACTIVE
+    }
+  ];
+}
+
+function buildVisibleTaskWhere(scope: TaskAccessScope, filters: { datasetId?: string; projectId?: string } = {}): Prisma.TaskWhereInput {
+  return {
+    ...(filters.datasetId ? { datasetId: filters.datasetId } : {}),
+    ...(filters.projectId ? { projectId: filters.projectId } : {}),
+    OR: [
+      ...(scope.manageableOrganizationIds.length > 0
+        ? [
+            {
+              project: {
+                organizationId: {
+                  in: scope.manageableOrganizationIds
+                }
+              }
+            }
+          ]
+        : []),
+      ...(scope.manageableProjectIds.length > 0
+        ? [
+            {
+              projectId: {
+                in: scope.manageableProjectIds
+              }
+            }
+          ]
+        : []),
+      {
+        project: {
+          OR: buildAccessibleProjectConditions(scope.organizationIds, scope.projectIds),
+          status: ProjectStatus.ACTIVE
+        },
+        status: {
+          not: TaskStatus.ARCHIVED
+        }
+      }
+    ]
+  };
+}
+
+function createTaskFolderCounters() {
+  return {
+    active: 0,
+    done: 0,
+    pending: 0,
+    total: 0,
+    unassigned: 0
+  };
+}
+
+export function summarizeTaskStatsForGroups(
+  statusGroups: { _count: { _all: number }; assignedToId: string | null; status: TaskStatus }[]
+) {
+  const counters = createTaskFolderCounters();
+
+  for (const group of statusGroups) {
+    addTaskFolderCount(counters, {
+      assignedToId: group.assignedToId,
+      count: group._count._all,
+      status: group.status
+    });
+  }
+
+  return counters;
+}
+
+function addTaskFolderCount(
+  counters: ReturnType<typeof createTaskFolderCounters>,
+  input: { assignedToId: string | null; count: number; status: TaskStatus }
+) {
+  counters.total += input.count;
+
+  if (!input.assignedToId) {
+    counters.unassigned += input.count;
+  }
+
+  if (input.status === TaskStatus.PENDING) {
+    counters.pending += input.count;
+  } else if (
+    input.status === TaskStatus.ASSIGNED ||
+    input.status === TaskStatus.IN_PROGRESS ||
+    input.status === TaskStatus.REVIEWING
+  ) {
+    counters.active += input.count;
+  } else if (input.status === TaskStatus.SUBMITTED || input.status === TaskStatus.APPROVED) {
+    counters.done += input.count;
+  }
+}
+
+function summarizeProjectTaskFolders(
+  statusGroups: { _count: { _all: number }; assignedToId: string | null; projectId: string; status: TaskStatus }[],
+  datasetGroups: { _count: { _all: number }; datasetId: string | null; projectId: string }[],
+  projectById: Map<string, { id: string; name: string; slug: string; status: ProjectStatus }>
+) {
+  const countersByProjectId = new Map<string, ReturnType<typeof createTaskFolderCounters>>();
+  const datasetIdsByProjectId = new Map<string, Set<string>>();
+
+  for (const group of statusGroups) {
+    const counters = countersByProjectId.get(group.projectId) ?? createTaskFolderCounters();
+    addTaskFolderCount(counters, {
+      assignedToId: group.assignedToId,
+      count: group._count._all,
+      status: group.status
+    });
+    countersByProjectId.set(group.projectId, counters);
+  }
+
+  for (const group of datasetGroups) {
+    if (!group.datasetId) {
+      continue;
+    }
+
+    const datasetIds = datasetIdsByProjectId.get(group.projectId) ?? new Set<string>();
+    datasetIds.add(group.datasetId);
+    datasetIdsByProjectId.set(group.projectId, datasetIds);
+  }
+
+  return [...countersByProjectId.entries()]
+    .map(([projectId, counters]) => {
+      const project = projectById.get(projectId);
+
+      if (!project) {
+        return null;
+      }
+
+      return {
+        ...counters,
+        datasetCount: datasetIdsByProjectId.get(projectId)?.size ?? 0,
+        projectId,
+        projectName: project.name,
+        projectSlug: project.slug,
+        projectStatus: project.status
+      };
+    })
+    .filter((folder): folder is NonNullable<typeof folder> => Boolean(folder))
+    .sort((left, right) => right.total - left.total || left.projectName.localeCompare(right.projectName));
+}
+
+function summarizeDatasetTaskFolders(
+  statusGroups: { _count: { _all: number }; assignedToId: string | null; datasetId: string | null; status: TaskStatus }[],
+  project: { id: string; name: string; slug: string; status: ProjectStatus },
+  datasetById: Map<string, { id: string; name: string; version: number }>
+) {
+  const countersByDatasetId = new Map<string, ReturnType<typeof createTaskFolderCounters>>();
+
+  for (const group of statusGroups) {
+    const datasetId = group.datasetId ?? "no-dataset";
+    const counters = countersByDatasetId.get(datasetId) ?? createTaskFolderCounters();
+    addTaskFolderCount(counters, {
+      assignedToId: group.assignedToId,
+      count: group._count._all,
+      status: group.status
+    });
+    countersByDatasetId.set(datasetId, counters);
+  }
+
+  return [...countersByDatasetId.entries()]
+    .map(([datasetId, counters]) => {
+      const dataset = datasetById.get(datasetId);
+
+      return {
+        ...counters,
+        datasetId,
+        datasetName: dataset?.name ?? "No dataset",
+        projectId: project.id,
+        projectName: project.name,
+        projectSlug: project.slug,
+        readyLabel: dataset ? "Ready" : "Project task",
+        versionLabel: dataset ? `Version ${dataset.version}` : project.name
+      };
+    })
+    .sort((left, right) => right.total - left.total || left.datasetName.localeCompare(right.datasetName));
+}
+
+export function getNextTaskCursorWhere(task: Pick<Task, "createdAt" | "id" | "priority">): Prisma.TaskWhereInput[] {
+  return [
+    {
+      priority: {
+        lt: task.priority
+      }
+    },
+    {
+      priority: task.priority,
+      createdAt: {
+        gt: task.createdAt
+      }
+    },
+    {
+      createdAt: task.createdAt,
+      id: {
+        gt: task.id
+      },
+      priority: task.priority
+    }
+  ];
+}
+
 const taskIncludes = {
   project: {
     select: {
@@ -821,6 +1295,67 @@ const taskIncludes = {
       width: true,
       height: true,
       metadata: true
+    }
+  },
+  assignedTo: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true
+    }
+  },
+  reviewer: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true
+    }
+  }
+} as const;
+
+function getTaskQueueOrderBy(): Prisma.TaskOrderByWithRelationInput[] {
+  return [
+    {
+      priority: "desc"
+    },
+    {
+      createdAt: "asc"
+    },
+    {
+      id: "asc"
+    }
+  ];
+}
+
+const taskListIncludes = {
+  project: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      organizationId: true,
+      status: true,
+      accessMode: true
+    }
+  },
+  dataset: {
+    select: {
+      id: true,
+      name: true,
+      version: true
+    }
+  },
+  asset: {
+    select: {
+      id: true,
+      fileName: true,
+      objectKey: true,
+      mimeType: true,
+      fileSize: true,
+      width: true,
+      height: true
     }
   },
   assignedTo: {
@@ -929,6 +1464,43 @@ type TaskWithRelations = Task & {
   } | null;
 };
 
+type TaskListWithRelations = Task & {
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+    organizationId: string;
+    status: ProjectStatus;
+    accessMode: ProjectAccessMode;
+  };
+  dataset: {
+    id: string;
+    name: string;
+    version: number;
+  } | null;
+  asset: {
+    id: string;
+    fileName: string;
+    objectKey: string;
+    mimeType: string;
+    fileSize: bigint;
+    width: number | null;
+    height: number | null;
+  } | null;
+  assignedTo: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+  reviewer: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+};
+
 type TaskWithDetailRelations = TaskWithRelations & {
   annotations: AnnotationWithRegions[];
 };
@@ -981,6 +1553,42 @@ function serializeTask(task: TaskWithRelations, membership?: { role: MembershipR
       ? {
           ...task.asset,
           fileSize: task.asset.fileSize.toString()
+        }
+      : null,
+    assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,
+    reviewer: task.reviewer ? serializeUserName(task.reviewer) : null,
+    canWork: membership ? canWorkTasks(membership) : false,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt
+  };
+}
+
+function serializeTaskListItem(task: TaskListWithRelations, membership?: { role: MembershipRole }) {
+  return {
+    id: task.id,
+    projectId: task.projectId,
+    datasetId: task.datasetId,
+    assetId: task.assetId,
+    status: task.status,
+    priority: task.priority,
+    assignedToId: task.assignedToId,
+    reviewerId: task.reviewerId,
+    metadata: task.metadata,
+    dueAt: task.dueAt,
+    project: task.project,
+    dataset: task.dataset
+      ? {
+          ...task.dataset,
+          labelingConfig: null,
+          labels: [],
+          tools: []
+        }
+      : null,
+    asset: task.asset
+      ? {
+          ...task.asset,
+          fileSize: task.asset.fileSize.toString(),
+          metadata: null
         }
       : null,
     assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,

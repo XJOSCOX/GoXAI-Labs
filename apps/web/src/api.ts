@@ -566,6 +566,10 @@ export interface TaskDetailResult {
   task: TaskSummary;
 }
 
+export interface NextTaskResult {
+  task: TaskSummary | null;
+}
+
 export interface SaveAnnotationInput {
   leadTimeSeconds?: number;
   results?: {
@@ -598,6 +602,65 @@ export interface GenerateTasksResult {
   skippedCount: number;
   remainingCount?: number;
   tasks: TaskSummary[];
+}
+
+export interface DatasetAssignmentResult {
+  assignedCount: number;
+}
+
+export interface TaskPageResult {
+  page: number;
+  pageSize: number;
+  tasks: TaskSummary[];
+  total: number;
+  totalPages: number;
+}
+
+export interface TaskProjectFolderSummary {
+  active: number;
+  datasetCount: number;
+  done: number;
+  pending: number;
+  projectId: string;
+  projectName: string;
+  projectSlug: string;
+  projectStatus: string;
+  total: number;
+  unassigned: number;
+}
+
+export interface TaskDatasetFolderSummary {
+  active: number;
+  datasetId: string;
+  datasetName: string;
+  done: number;
+  pending: number;
+  projectId: string;
+  projectName: string;
+  projectSlug: string;
+  readyLabel: string;
+  total: number;
+  unassigned: number;
+  versionLabel: string;
+}
+
+export interface TaskFoldersResult {
+  datasets?: TaskDatasetFolderSummary[];
+  project?: {
+    id: string;
+    name: string;
+    slug: string;
+    status: string;
+  };
+  projects?: TaskProjectFolderSummary[];
+}
+
+export interface TaskStatsSummary {
+  active: number;
+  done: number;
+  pending: number;
+  total: number;
+  unassigned: number;
 }
 
 export interface ClientLogInput {
@@ -1328,6 +1391,76 @@ export async function listTasks(session: Session, input: { datasetId?: string; p
   return ((await response.json()) as { tasks: TaskSummary[] }).tasks;
 }
 
+export async function listTaskPage(
+  session: Session,
+  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string } = {}
+) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  if (input.page) {
+    params.set("page", String(input.page));
+  }
+
+  if (input.pageSize) {
+    params.set("pageSize", String(input.pageSize));
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/tasks${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load tasks."));
+  }
+
+  return (await response.json()) as TaskPageResult;
+}
+
+export async function listTaskFolders(session: Session, input: { projectId?: string } = {}) {
+  const params = new URLSearchParams();
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/tasks/folders${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load task folders."));
+  }
+
+  return (await response.json()) as TaskFoldersResult;
+}
+
+export async function getTaskStats(session: Session, input: { datasetId?: string; projectId?: string } = {}) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/tasks/stats${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load task stats."));
+  }
+
+  return ((await response.json()) as { stats: TaskStatsSummary }).stats;
+}
+
 export async function getTask(session: Session, taskId: string) {
   const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}`);
 
@@ -1336,6 +1469,31 @@ export async function getTask(session: Session, taskId: string) {
   }
 
   return (await response.json()) as TaskDetailResult;
+}
+
+export async function getNextTask(
+  session: Session,
+  taskId: string,
+  input: { datasetId?: string; projectId?: string } = {}
+) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/next${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load the next task."));
+  }
+
+  return (await response.json()) as NextTaskResult;
 }
 
 export async function saveTaskAnnotation(session: Session, taskId: string, input: SaveAnnotationInput) {
@@ -1375,6 +1533,19 @@ export async function generateTasksFromDataset(session: Session, datasetId: stri
   }
 
   return (await response.json()) as GenerateTasksResult;
+}
+
+export async function assignDatasetToSelf(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, "/api/tasks/assign-dataset-to-self", {
+    method: "POST",
+    body: JSON.stringify({ datasetId })
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to assign dataset tasks."));
+  }
+
+  return (await response.json()) as DatasetAssignmentResult;
 }
 
 export async function assignTaskToSelf(session: Session, taskId: string) {

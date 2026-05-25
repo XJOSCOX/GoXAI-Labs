@@ -1,5 +1,4 @@
 import type React from "react";
-import { Link } from "react-router-dom";
 import goxaiLogo from "../../assets/goxailab-logo.png";
 import { ThemeToggle } from "../layout/ThemeToggle";
 

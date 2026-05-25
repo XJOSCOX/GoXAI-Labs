@@ -1,9 +1,9 @@
-import { Database } from "lucide-react";
+import goxaiLogo from "../../assets/goxailab-logo.png";
 
 export function LoadingScreen() {
   return (
     <main className="loading-screen">
-      <div className="brand-mark">GX</div>
+      <img className="loading-logo" src={goxaiLogo} alt="" />
       <p>Loading GoXAi Lab</p>
     </main>
   );

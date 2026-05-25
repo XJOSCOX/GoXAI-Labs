@@ -19,7 +19,6 @@ import {
   LabelingConfigBuilder,
   parseLabelingSettingsFromForm,
   parseLabelInputsFromForm,
-  parseLabelInputsFromText,
   parseToolInputsFromForm,
   type LabelInput,
   type LabelingSettings,
@@ -449,36 +448,6 @@ function TemplateMiniPreview({ template }: { template: TemplatePreset }) {
       {template.tools.includes("BRUSH") && <i className="brush-demo" />}
     </span>
   );
-}
-
-function datasetLabelsToText(dataset: {
-  labelingConfig: Record<string, unknown> | null;
-  labels: Array<{ name: string }>;
-}) {
-  if (dataset.labels.length > 0) {
-    return dataset.labels.map((label) => label.name).join("\n");
-  }
-
-  const config = dataset.labelingConfig;
-
-  if (!config || !Array.isArray(config.labels)) {
-    return "";
-  }
-
-  return config.labels
-    .map((label) => {
-      if (typeof label === "string") {
-        return label;
-      }
-
-      if (label && typeof label === "object" && "name" in label && typeof label.name === "string") {
-        return label.name;
-      }
-
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
 }
 
 function getDatasetLabelInputs(dataset: {

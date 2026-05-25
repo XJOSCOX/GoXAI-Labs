@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { ShieldCheck, UserRoundPlus } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { getFormValue, useAuth } from "../../auth";
 import { AuthFrame } from "../../components/auth/AuthFrame";
 

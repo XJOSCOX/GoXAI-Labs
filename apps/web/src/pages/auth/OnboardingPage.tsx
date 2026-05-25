@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { Building2, CheckCircle2, LogOut } from "lucide-react";
 import { getFormValue, useAuth } from "../../auth";
 import { ThemeToggle } from "../../components/layout/ThemeToggle";
@@ -10,7 +10,6 @@ import { submitVerificationApplication, updateOrganization, updateUserProfile } 
 export function OnboardingPage() {
   const { dbUser, logout, refreshUser, session } = useAuth();
   const { loading, organizations } = useOrganizations(session);
-  const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const organization = organizations.find((item) => item.role === "OWNER" && item.onboardingComplete === false);

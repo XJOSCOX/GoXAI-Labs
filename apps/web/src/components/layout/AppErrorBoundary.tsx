@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import goxaiLogo from "../../assets/goxailab-logo.png";
 
 type AppErrorBoundaryProps = {
   children: ReactNode;
@@ -42,7 +43,7 @@ function AppErrorFallback({ error, onRetry }: { error: Error; onRetry: () => voi
 
   return (
     <main className="loading-screen app-error-screen">
-      <div className="brand-mark">GX</div>
+      <img className="loading-logo" src={goxaiLogo} alt="" />
       <h1>{isChunkError ? "Unable to load this screen" : "Something went wrong"}</h1>
       <p>
         {isChunkError

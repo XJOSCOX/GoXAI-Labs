@@ -1,21 +1,84 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth";
-import { assignTaskToSelf, startTask, type TaskSummary } from "../../api";
-import { useTasks } from "../../hooks/useResources";
+import { assignDatasetToSelf, assignTaskToSelf, startTask, type TaskDatasetFolderSummary, type TaskProjectFolderSummary, type TaskSummary } from "../../api";
+import { useTaskFolders, useTaskPage } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
-import { ArrowLeft, ClipboardList, Eye, FolderKanban } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FolderKanban, UserPlus } from "lucide-react";
 
 const taskPageSize = 8;
 
 export function TasksPage() {
   const { session } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const datasetId = searchParams.get("datasetId") ?? undefined;
   const projectId = searchParams.get("projectId") ?? undefined;
-  const { error, loading, reload, setError, tasks } = useTasks(session, { datasetId, projectId });
-  const selectedProjectName = tasks[0]?.project.name ?? "Project";
-  const selectedDatasetName = tasks[0]?.dataset?.name ?? "Dataset";
+  const page = getPositivePage(searchParams.get("page"));
+  const projectFolders = useTaskFolders(!projectId && !datasetId ? session : null);
+  const datasetFolders = useTaskFolders(projectId && !datasetId ? session : null, { projectId });
+  const taskPage = useTaskPage(datasetId ? session : null, { datasetId, page, pageSize: taskPageSize, projectId });
+  const [assigningDataset, setAssigningDataset] = useState(false);
+  const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null);
+  const selectedProjectName = taskPage.tasks[0]?.project.name ?? datasetFolders.project?.name ?? "Project";
+  const selectedDatasetName = taskPage.tasks[0]?.dataset?.name ?? "Dataset";
+  const error = projectFolders.error ?? datasetFolders.error ?? taskPage.error;
+
+  useEffect(() => {
+    setAssignmentMessage(null);
+  }, [datasetId, projectId]);
+
+  function handleQueuePageChange(nextPage: number) {
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (nextPage <= 1) {
+      nextParams.delete("page");
+    } else {
+      nextParams.set("page", String(nextPage));
+    }
+
+    setSearchParams(nextParams);
+  }
+
+  function getTaskDetailQuery(task: TaskSummary, currentPage: number) {
+    const nextParams = new URLSearchParams();
+
+    nextParams.set("projectId", projectId ?? task.projectId);
+
+    if (datasetId ?? task.datasetId) {
+      nextParams.set("datasetId", datasetId ?? task.datasetId ?? "");
+    }
+
+    if (currentPage > 1) {
+      nextParams.set("page", String(currentPage));
+    }
+
+    const query = nextParams.toString();
+    return query ? `?${query}` : "";
+  }
+
+  async function handleAssignDataset() {
+    if (!session || !datasetId) {
+      return;
+    }
+
+    setAssigningDataset(true);
+    setAssignmentMessage(null);
+    taskPage.setError(null);
+
+    try {
+      const result = await assignDatasetToSelf(session, datasetId);
+      setAssignmentMessage(
+        result.assignedCount > 0
+          ? `${result.assignedCount} task${result.assignedCount === 1 ? "" : "s"} assigned to you.`
+          : "No unassigned tasks were available in this dataset."
+      );
+      await taskPage.reload();
+    } catch (reason) {
+      taskPage.setError(reason instanceof Error ? reason.message : "Unable to assign dataset tasks.");
+    } finally {
+      setAssigningDataset(false);
+    }
+  }
 
   return (
     <section className="page-stack">
@@ -32,23 +95,42 @@ export function TasksPage() {
                 <p className="eyebrow">Dataset queue</p>
                 <h2>{selectedDatasetName}</h2>
               </div>
-              <span className="muted-copy">{selectedProjectName}</span>
+              <div className="task-queue-actions">
+                <span className="muted-copy">{selectedProjectName}</span>
+                <button
+                  className="secondary-button compact-button"
+                  disabled={!session || assigningDataset}
+                  onClick={handleAssignDataset}
+                  type="button"
+                >
+                  <UserPlus size={16} />
+                  {assigningDataset ? "Assigning" : "Assign dataset to me"}
+                </button>
+              </div>
             </div>
-            <TasksTable loading={loading} onChanged={reload} session={session} setPageError={setError} tasks={tasks} />
+            {assignmentMessage && <p className="form-success">{assignmentMessage}</p>}
+            <TasksTable
+              detailQuery={getTaskDetailQuery}
+              loading={taskPage.loading}
+              onChanged={taskPage.reload}
+              onPageChange={handleQueuePageChange}
+              pageInfo={taskPage.pageInfo}
+              session={session}
+              setPageError={taskPage.setError}
+              tasks={taskPage.tasks}
+            />
           </>
         ) : projectId ? (
-          <TaskDatasetFolders loading={loading} projectName={selectedProjectName} tasks={tasks} />
+          <TaskDatasetFolders folders={datasetFolders.datasets} loading={datasetFolders.loading} project={datasetFolders.project} />
         ) : (
-          <TaskProjectFolders loading={loading} tasks={tasks} />
+          <TaskProjectFolders folders={projectFolders.projects} loading={projectFolders.loading} />
         )}
       </section>
     </section>
   );
 }
 
-function TaskProjectFolders({ loading, tasks }: { loading: boolean; tasks: TaskSummary[] }) {
-  const folders = useMemo(() => buildProjectFolders(tasks), [tasks]);
-
+function TaskProjectFolders({ folders, loading }: { folders: TaskProjectFolderSummary[]; loading: boolean }) {
   return (
     <section className="task-folder-panel">
       <div className="section-actions">
@@ -114,17 +196,14 @@ function TaskProjectFolders({ loading, tasks }: { loading: boolean; tasks: TaskS
 }
 
 function TaskDatasetFolders({
+  folders,
   loading,
-  projectName,
-  tasks
+  project
 }: {
+  folders: TaskDatasetFolderSummary[];
   loading: boolean;
-  projectName: string;
-  tasks: TaskSummary[];
+  project: { id: string; name: string; slug: string; status: string } | null;
 }) {
-  const folders = useMemo(() => buildDatasetFolders(tasks), [tasks]);
-  const projectId = tasks[0]?.projectId ?? "";
-
   return (
     <section className="task-folder-panel">
       <Link className="secondary-button compact-button task-back-button" to="/tasks">
@@ -134,7 +213,7 @@ function TaskDatasetFolders({
       <div className="section-actions">
         <div>
           <p className="eyebrow">Dataset folders</p>
-          <h2>{projectName}</h2>
+          <h2>{project?.name ?? "Project"}</h2>
         </div>
         <span className="muted-copy">Choose the dataset queue you want to work on.</span>
       </div>
@@ -150,7 +229,7 @@ function TaskDatasetFolders({
             <Link
               className="task-folder-card"
               key={folder.datasetId}
-              to={`/tasks?projectId=${projectId || folder.projectId}&datasetId=${folder.datasetId}`}
+              to={`/tasks?projectId=${project?.id ?? folder.projectId}&datasetId=${folder.datasetId}`}
             >
               <div className="task-folder-head">
                 <span className="task-folder-icon">
@@ -198,30 +277,53 @@ function TaskDatasetFolders({
 }
 
 export function TasksTable({
+  detailQuery,
   loading,
   onChanged,
+  onPageChange,
+  pageInfo,
   session,
   setPageError,
   tasks
 }: {
+  detailQuery?: (task: TaskSummary, page: number) => string;
   loading: boolean;
   onChanged: () => Promise<void>;
+  onPageChange?: (page: number) => void;
+  pageInfo?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
   tasks: TaskSummary[];
 }) {
   const [currentPage, setCurrentPage] = useState(1);
-  const pageCount = Math.max(1, Math.ceil(tasks.length / taskPageSize));
-  const pageStart = (currentPage - 1) * taskPageSize;
-  const pageTasks = tasks.slice(pageStart, pageStart + taskPageSize);
-  const pageEnd = pageStart + pageTasks.length;
-  const visiblePageStart = tasks.length > 0 ? pageStart + 1 : 0;
+  const serverPage = pageInfo?.page ?? null;
+  const activePage = serverPage ?? currentPage;
+  const pageSize = pageInfo?.pageSize ?? taskPageSize;
+  const totalTasks = pageInfo?.total ?? tasks.length;
+  const pageCount = pageInfo?.totalPages ?? Math.max(1, Math.ceil(tasks.length / taskPageSize));
+  const pageStart = (activePage - 1) * pageSize;
+  const pageTasks = pageInfo ? tasks : tasks.slice(pageStart, pageStart + pageSize);
+  const pageEnd = pageInfo ? Math.min(pageStart + pageTasks.length, totalTasks) : pageStart + pageTasks.length;
+  const visiblePageStart = totalTasks > 0 ? pageStart + 1 : 0;
 
   useEffect(() => {
-    if (currentPage > pageCount) {
+    if (!pageInfo && currentPage > pageCount) {
       setCurrentPage(pageCount);
     }
-  }, [currentPage, pageCount]);
+  }, [currentPage, pageCount, pageInfo]);
+
+  function goToPage(nextPage: number) {
+    if (onPageChange) {
+      onPageChange(nextPage);
+    } else {
+      setCurrentPage(nextPage);
+    }
+  }
 
   return (
     <section className="table-panel">
@@ -241,6 +343,8 @@ export function TasksTable({
         pageTasks.map((task) => (
           <TaskRow
             key={task.id}
+            detailQuery={detailQuery}
+            detailQueryPage={activePage}
             onChanged={onChanged}
             session={session}
             setPageError={setPageError}
@@ -254,27 +358,27 @@ export function TasksTable({
           <span>Generate tasks from dataset assets to start annotation work.</span>
         </div>
       )}
-      {tasks.length > taskPageSize && (
+      {totalTasks > pageSize && (
         <div className="pagination-bar">
           <span>
-            Showing {visiblePageStart}-{pageEnd} of {tasks.length}
+            Showing {visiblePageStart}-{pageEnd} of {totalTasks}
           </span>
           <div>
             <button
               className="secondary-button compact-button"
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={activePage === 1}
+              onClick={() => goToPage(Math.max(1, activePage - 1))}
               type="button"
             >
               Previous
             </button>
             <span>
-              Page {currentPage} of {pageCount}
+              Page {activePage} of {pageCount}
             </span>
             <button
               className="secondary-button compact-button"
-              disabled={currentPage === pageCount}
-              onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}
+              disabled={activePage === pageCount}
+              onClick={() => goToPage(Math.min(pageCount, activePage + 1))}
               type="button"
             >
               Next
@@ -287,11 +391,15 @@ export function TasksTable({
 }
 
 function TaskRow({
+  detailQuery,
+  detailQueryPage,
   onChanged,
   session,
   setPageError,
   task
 }: {
+  detailQuery?: (task: TaskSummary, page: number) => string;
+  detailQueryPage: number;
   onChanged: () => Promise<void>;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
@@ -326,7 +434,7 @@ function TaskRow({
   return (
     <article className="table-row task-head project-row">
       <span>
-        <Link className="table-link" to={`/tasks/${task.id}`}>
+        <Link className="table-link" to={`/tasks/${task.id}${detailQuery?.(task, detailQueryPage) ?? ""}`}>
           {task.asset?.fileName ?? "No asset"}
         </Link>
         <small>{task.dataset?.name ?? task.project.name}</small>
@@ -351,124 +459,15 @@ function TaskRow({
   );
 }
 
+function getPositivePage(value: string | null) {
+  const page = Number(value);
+  return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
 function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start"; label: string } | null {
   if (task.status === "PENDING" || task.status === "ASSIGNED") {
     return { kind: "start", label: "Start" };
   }
 
   return null;
-}
-
-function buildProjectFolders(tasks: TaskSummary[]) {
-  const folders = new Map<
-    string,
-    {
-      active: number;
-      datasetIds: Set<string>;
-      done: number;
-      pending: number;
-      projectId: string;
-      projectName: string;
-      projectStatus: string;
-      total: number;
-      unassigned: number;
-    }
-  >();
-
-  for (const task of tasks) {
-    const folder =
-      folders.get(task.projectId) ??
-      {
-        active: 0,
-        datasetIds: new Set<string>(),
-        done: 0,
-        pending: 0,
-        projectId: task.projectId,
-        projectName: task.project.name,
-        projectStatus: task.project.status,
-        total: 0,
-        unassigned: 0
-      };
-
-    folder.total += 1;
-
-    if (task.datasetId) {
-      folder.datasetIds.add(task.datasetId);
-    }
-
-    if (!task.assignedToId) {
-      folder.unassigned += 1;
-    }
-
-    if (task.status === "PENDING") {
-      folder.pending += 1;
-    } else if (["ASSIGNED", "IN_PROGRESS", "REVIEWING"].includes(task.status)) {
-      folder.active += 1;
-    } else if (["SUBMITTED", "APPROVED"].includes(task.status)) {
-      folder.done += 1;
-    }
-
-    folders.set(task.projectId, folder);
-  }
-
-  return [...folders.values()]
-    .map((folder) => ({
-      ...folder,
-      datasetCount: folder.datasetIds.size
-    }))
-    .sort((left, right) => right.total - left.total || left.projectName.localeCompare(right.projectName));
-}
-
-function buildDatasetFolders(tasks: TaskSummary[]) {
-  const folders = new Map<
-    string,
-    {
-      active: number;
-      datasetId: string;
-      datasetName: string;
-      done: number;
-      pending: number;
-      projectId: string;
-      readyLabel: string;
-      total: number;
-      unassigned: number;
-      versionLabel: string;
-    }
-  >();
-
-  for (const task of tasks) {
-    const datasetId = task.datasetId ?? "no-dataset";
-    const folder =
-      folders.get(datasetId) ??
-      {
-        active: 0,
-        datasetId,
-        datasetName: task.dataset?.name ?? "No dataset",
-        done: 0,
-        pending: 0,
-        projectId: task.projectId,
-        readyLabel: task.dataset ? "Ready" : "Project task",
-        total: 0,
-        unassigned: 0,
-        versionLabel: task.dataset ? `Version ${task.dataset.version}` : task.project.name
-      };
-
-    folder.total += 1;
-
-    if (!task.assignedToId) {
-      folder.unassigned += 1;
-    }
-
-    if (task.status === "PENDING") {
-      folder.pending += 1;
-    } else if (["ASSIGNED", "IN_PROGRESS", "REVIEWING"].includes(task.status)) {
-      folder.active += 1;
-    } else if (["SUBMITTED", "APPROVED"].includes(task.status)) {
-      folder.done += 1;
-    }
-
-    folders.set(datasetId, folder);
-  }
-
-  return [...folders.values()].sort((left, right) => right.total - left.total || left.datasetName.localeCompare(right.datasetName));
 }

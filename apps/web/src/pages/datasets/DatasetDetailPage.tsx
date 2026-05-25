@@ -19,13 +19,14 @@ import {
 } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
 import { datasetStatuses, folderInputAttributes, maxBulkUploadBytes, maxBulkUploadFiles } from "../../constants/options";
-import { useAssets, useDataset, useFormDraft, useTasks } from "../../hooks/useResources";
+import { useAssets, useDataset, useFormDraft, useTaskPage, useTaskStats } from "../../hooks/useResources";
 import type { UploadProgress } from "../../types/upload";
 import { formatAssetKind, formatBytes, formatDate, formatEnum, getUrlHost } from "../../utils/format";
 import { buildUploadObjectKey, getFileKey, mergeFiles, toSafeObjectKeyPart } from "../../utils/upload";
 import { TasksTable } from "../tasks/TasksPage";
 
 const assetPageSize = 12;
+const datasetTaskPageSize = 8;
 const maxStructuredImportRows = 500;
 const structuredImportExtensions = new Set(["csv", "json", "jsonl", "ndjson"]);
 
@@ -34,16 +35,27 @@ function DatasetTasksPanel({
   dataset,
   loading,
   onGenerated,
+  onPageChange,
+  pageInfo,
   session,
   setPageError,
+  taskTotal,
   tasks
 }: {
   canGenerateTasks: boolean;
   dataset: DatasetSummary;
   loading: boolean;
   onGenerated: () => Promise<void>;
+  onPageChange: (page: number) => void;
+  pageInfo: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
+  taskTotal: number;
   tasks: TaskSummary[];
 }) {
   const [generating, setGenerating] = useState(false);
@@ -94,7 +106,7 @@ function DatasetTasksPanel({
         <div>
           <p className="eyebrow">Workflow</p>
           <h2>Dataset tasks</h2>
-          <span>{tasks.length} task records for this dataset</span>
+          <span>{taskTotal} task records for this dataset</span>
         </div>
         {canGenerateTasks ? (
           <div className="task-generator">
@@ -134,7 +146,15 @@ function DatasetTasksPanel({
         ) : null}
       </div>
       {message && <p className="form-success">{message}</p>}
-      <TasksTable loading={loading} onChanged={onGenerated} session={session} setPageError={setPageError} tasks={tasks} />
+      <TasksTable
+        loading={loading}
+        onChanged={onGenerated}
+        onPageChange={onPageChange}
+        pageInfo={pageInfo}
+        session={session}
+        setPageError={setPageError}
+        tasks={tasks}
+      />
     </section>
   );
 }
@@ -348,6 +368,7 @@ export function DatasetDetailPage() {
   const [previewAccessUrl, setPreviewAccessUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [taskPage, setTaskPage] = useState(1);
   const [largePreviewAsset, setLargePreviewAsset] = useState<AssetSummary | null>(null);
   const [largePreviewAccessUrl, setLargePreviewAccessUrl] = useState<string | null>(null);
   const [largePreviewError, setLargePreviewError] = useState<string | null>(null);
@@ -364,9 +385,19 @@ export function DatasetDetailPage() {
     error: tasksError,
     loading: tasksLoading,
     reload: reloadTasks,
+    pageInfo: taskPageInfo,
     setError: setTasksError,
     tasks
-  } = useTasks(session, { datasetId });
+  } = useTaskPage(session, { datasetId, page: taskPage, pageSize: datasetTaskPageSize });
+  const { error: taskStatsError, reload: reloadTaskStats, stats: taskStats } = useTaskStats(session, { datasetId });
+
+  async function reloadTaskResources() {
+    await Promise.all([reloadTasks(), reloadTaskStats()]);
+  }
+
+  useEffect(() => {
+    setTaskPage(1);
+  }, [datasetId]);
 
   async function handleInspectAsset(asset: AssetSummary) {
     setPreviewAsset(asset);
@@ -448,8 +479,8 @@ export function DatasetDetailPage() {
             Back to datasets
           </Link>
         </div>
-        {(datasetError ?? assetsError ?? tasksError) && (
-          <p className="form-error">{datasetError ?? assetsError ?? tasksError}</p>
+        {(datasetError ?? assetsError ?? tasksError ?? taskStatsError) && (
+          <p className="form-error">{datasetError ?? assetsError ?? tasksError ?? taskStatsError}</p>
         )}
         {datasetLoading ? (
           <p className="muted-copy">Loading dataset details.</p>
@@ -491,7 +522,7 @@ export function DatasetDetailPage() {
                   <div>
                     <dt>Tasks</dt>
                     <dd>
-                      {tasks.length} / {assets.length}
+                      {taskStats.total} / {assets.length}
                     </dd>
                   </div>
                   <div>
@@ -504,9 +535,12 @@ export function DatasetDetailPage() {
                 canGenerateTasks={dataset.canGenerateTasks}
                 dataset={dataset}
                 loading={tasksLoading}
-                onGenerated={reloadTasks}
+                onGenerated={reloadTaskResources}
+                onPageChange={setTaskPage}
+                pageInfo={taskPageInfo}
                 session={session}
                 setPageError={setTasksError}
+                taskTotal={taskStats.total}
                 tasks={tasks}
               />
               <AssetsTable
@@ -541,7 +575,7 @@ export function DatasetDetailPage() {
                   dataset={dataset}
                   onCreated={async () => {
                     await reloadAssets();
-                    await reloadTasks();
+                    await reloadTaskResources();
                   }}
                   session={session}
                   setPageError={setAssetsError}

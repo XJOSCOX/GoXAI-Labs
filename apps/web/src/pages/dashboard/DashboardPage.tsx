@@ -1,13 +1,13 @@
 import { BriefcaseBusiness, Building2, ClipboardList, FolderKanban } from "lucide-react";
 import { useAuth } from "../../auth";
-import { useDatasets, useOrganizations, useProjects, useTasks } from "../../hooks/useResources";
+import { useDatasets, useOrganizations, useProjects, useTaskStats } from "../../hooks/useResources";
 
 export function DashboardPage() {
   const { dbUser, session } = useAuth();
   const { organizations } = useOrganizations(session);
   const { projects } = useProjects(session);
   const { datasets } = useDatasets(session);
-  const { tasks } = useTasks(session);
+  const { stats: taskStats } = useTaskStats(session);
   const primaryMembership = organizations[0]?.role ?? "Not assigned";
 
   return (
@@ -31,7 +31,7 @@ export function DashboardPage() {
         <article className="stat-card">
           <ClipboardList size={20} />
           <span>Tasks</span>
-          <strong>{tasks.length}</strong>
+          <strong>{taskStats.total}</strong>
         </article>
       </div>
       <section className="panel">

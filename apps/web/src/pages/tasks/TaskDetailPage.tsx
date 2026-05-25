@@ -1,7 +1,7 @@
 import { type PointerEvent, type WheelEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Eye, Hand, Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw, Save, Send, SquareDashedMousePointer, Trash2, Unlock } from "lucide-react";
-import { getAssetAccessUrl, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary, type SaveAnnotationInput } from "../../api";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, ArrowRight, Eye, Hand, Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw, Save, Send, SquareDashedMousePointer, Trash2, Unlock } from "lucide-react";
+import { getAssetAccessUrl, getNextTask, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary, type SaveAnnotationInput, type TaskSummary } from "../../api";
 import { useAuth } from "../../auth";
 import { useTask } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
@@ -53,6 +53,29 @@ interface ChoiceControl {
   toName: string;
 }
 
+interface NumberControl {
+  max: number | null;
+  min: number | null;
+  name: string;
+  required: boolean;
+  toName: string;
+}
+
+interface RatingControl {
+  maxRating: number;
+  name: string;
+  required: boolean;
+  toName: string;
+}
+
+interface DateTimeControl {
+  name: string;
+  required: boolean;
+  toName: string;
+}
+
+type TemplateFormControl = ChoiceControl | DateTimeControl | NumberControl | RatingControl | TextAreaControl;
+
 interface ZoomAnchor {
   stageX: number;
   stageY: number;
@@ -95,18 +118,26 @@ interface PanDrag {
   scrollTop: number;
 }
 
+type SaveStatus = "dirty" | "error" | "idle" | "saved" | "saving";
+
 const defaultLabel = "Object";
 const labelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
 const zoomStep = 0.25;
 const minZoom = 1;
 const maxZoom = 3;
 const autoSaveDelayMs = 650;
+const autoSaveRetryDelayMs = 3000;
 const editHandleHitRadius = 0.018;
 const polygonCloseHitRadius = 0.02;
 const assetAccessUrlCache = new Map<string, { accessUrl: string; expiresAt: number }>();
 
 export function TaskDetailPage() {
   const { taskId = "" } = useParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const queueDatasetId = searchParams.get("datasetId");
+  const queuePage = searchParams.get("page");
+  const queueProjectId = searchParams.get("projectId");
   const { session } = useAuth();
   const { annotation, error, loading, reload, setAnnotation, setError, setTask, task } = useTask(session, taskId);
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
@@ -130,13 +161,22 @@ export function TaskDetailPage() {
   const [panMode, setPanMode] = useState(false);
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [nextTask, setNextTask] = useState<TaskSummary | null>(null);
+  const [nextTaskError, setNextTaskError] = useState<string | null>(null);
+  const [nextTaskLoading, setNextTaskLoading] = useState(false);
   const [choiceResponses, setChoiceResponses] = useState<Record<string, string[]>>({});
+  const [dateTimeResponses, setDateTimeResponses] = useState<Record<string, string>>({});
+  const [numberResponses, setNumberResponses] = useState<Record<string, string>>({});
+  const [ratingResponses, setRatingResponses] = useState<Record<string, number>>({});
   const [textAssetContent, setTextAssetContent] = useState<string | null>(null);
   const [textResponses, setTextResponses] = useState<Record<string, string>>({});
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
   const annotationCanvasRef = useRef<HTMLDivElement | null>(null);
   const annotationStageRef = useRef<HTMLDivElement | null>(null);
+  const autoSaveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accessUrlAssetIdRef = useRef<string | null>(null);
   const editRegionRef = useRef<RegionEdit | null>(null);
@@ -144,14 +184,19 @@ export function TaskDetailPage() {
   const lastSavedPayloadTextRef = useRef("");
   const panDragRef = useRef<PanDrag | null>(null);
   const pendingZoomAnchorRef = useRef<ZoomAnchor | null>(null);
+  const saveRequestIdRef = useRef(0);
   const isImage = task?.asset?.mimeType.startsWith("image/") ?? false;
   const canAnnotate = Boolean(task?.canWork && task.status !== "SUBMITTED" && task.status !== "APPROVED");
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
   const pageTitle = task?.asset?.fileName ?? "Task workspace";
+  const taskQueueLink = getTaskQueueLink({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId }, task);
   const configCode = getConfigString(task?.dataset?.labelingConfig, "configCode") ?? "";
   const templateSources = useMemo(() => parseTemplateSources(configCode), [configCode]);
   const choiceControls = useMemo(() => parseChoiceControls(configCode), [configCode]);
+  const dateTimeControls = useMemo(() => parseDateTimeControls(configCode), [configCode]);
+  const numberControls = useMemo(() => parseNumberControls(configCode), [configCode]);
+  const ratingControls = useMemo(() => parseRatingControls(configCode), [configCode]);
   const textAreaControls = useMemo(() => parseTextAreaControls(configCode), [configCode]);
   const templateSourceByName = useMemo(() => new Map(templateSources.map((source) => [source.name, source])), [templateSources]);
   const labelOptions = useMemo(() => getLabelOptions(task?.dataset?.labels, task?.dataset?.labelingConfig), [task?.dataset?.labels, task?.dataset?.labelingConfig]);
@@ -161,7 +206,10 @@ export function TaskDetailPage() {
   const supportsBbox = drawingToolOptions.includes("BBOX");
   const supportsPolygon = drawingToolOptions.includes("POLYGON");
   const supportsRegionDrawing = supportsBbox || supportsPolygon;
-  const formControls = useMemo(() => [...choiceControls, ...textAreaControls], [choiceControls, textAreaControls]);
+  const formControls = useMemo(
+    () => [...choiceControls, ...textAreaControls, ...numberControls, ...ratingControls, ...dateTimeControls],
+    [choiceControls, dateTimeControls, numberControls, ratingControls, textAreaControls]
+  );
   const formToolLabels = useMemo(
     () => formControls.length > 0 ? formControls.map((control) => formatControlName(control.name)) : toolOptions.filter((tool) => !["BBOX", "POLYGON"].includes(tool)).map(formatEnum),
     [formControls, toolOptions]
@@ -177,19 +225,80 @@ export function TaskDetailPage() {
   useEffect(() => {
     const nextShapes = annotationToShapes(annotation);
     const nextChoiceResponses = annotationToChoiceResponses(annotation);
+    const nextDateTimeResponses = annotationToScalarResponses(annotation, "datetime");
+    const nextNumberResponses = annotationToScalarResponses(annotation, "number");
+    const nextRatingResponses = annotationToRatingResponses(annotation);
     const nextTextResponses = annotationToTextResponses(annotation);
     const nextPayloadText = serializeAnnotationPayload({
       ...shapesToAnnotationPayload(nextShapes),
-      results: formResponsesToResults(nextTextResponses, textAreaControls, nextChoiceResponses, choiceControls)
+      results: formResponsesToResults({
+        choiceControls,
+        choiceResponses: nextChoiceResponses,
+        dateTimeControls,
+        dateTimeResponses: nextDateTimeResponses,
+        numberControls,
+        numberResponses: nextNumberResponses,
+        ratingControls,
+        ratingResponses: nextRatingResponses,
+        textControls: textAreaControls,
+        textResponses: nextTextResponses
+      })
     });
 
     setShapes(nextShapes);
     setChoiceResponses(nextChoiceResponses);
+    setDateTimeResponses(nextDateTimeResponses);
+    setNumberResponses(nextNumberResponses);
+    setRatingResponses(nextRatingResponses);
     setTextResponses(nextTextResponses);
     setSelectedShapeId(null);
     latestPayloadTextRef.current = nextPayloadText;
     lastSavedPayloadTextRef.current = nextPayloadText;
-  }, [annotation?.id, annotation?.updatedAt, choiceControls, textAreaControls]);
+  }, [annotation?.id, annotation?.updatedAt, choiceControls, dateTimeControls, numberControls, ratingControls, textAreaControls]);
+
+  useEffect(() => {
+    setSaveErrorMessage(null);
+    setSavedMessage(null);
+    setSaveStatus("idle");
+    setNextTask(null);
+    setNextTaskError(null);
+  }, [task?.id]);
+
+  useEffect(() => {
+    if (!session || !task) {
+      setNextTask(null);
+      return;
+    }
+
+    let active = true;
+    const datasetId = queueDatasetId ?? task.datasetId ?? undefined;
+    const projectId = queueProjectId ?? task.projectId;
+
+    setNextTaskLoading(true);
+    setNextTaskError(null);
+
+    getNextTask(session, task.id, { datasetId, projectId })
+      .then((result) => {
+        if (active) {
+          setNextTask(result.task);
+        }
+      })
+      .catch((reason) => {
+        if (active) {
+          setNextTask(null);
+          setNextTaskError(reason instanceof Error ? reason.message : "Unable to load the next task.");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setNextTaskLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [queueDatasetId, queueProjectId, session, task?.datasetId, task?.id, task?.projectId]);
 
   useEffect(() => {
     setActiveTool((current) => (drawingToolOptions.includes(current) ? current : drawingToolOptions[0] ?? "BBOX"));
@@ -210,7 +319,10 @@ export function TaskDetailPage() {
       return;
     }
 
-    const timer = window.setTimeout(() => setSavedMessage(null), 5000);
+    const timer = window.setTimeout(() => {
+      setSavedMessage(null);
+      setSaveStatus((current) => (current === "saved" ? "idle" : current));
+    }, 5000);
 
     return () => window.clearTimeout(timer);
   }, [savedMessage]);
@@ -434,15 +546,38 @@ export function TaskDetailPage() {
   const annotationPayload = useMemo(
     () => ({
       ...shapesToAnnotationPayload(shapes),
-      results: formResponsesToResults(textResponses, textAreaControls, choiceResponses, choiceControls)
+      results: formResponsesToResults({
+        choiceControls,
+        choiceResponses,
+        dateTimeControls,
+        dateTimeResponses,
+        numberControls,
+        numberResponses,
+        ratingControls,
+        ratingResponses,
+        textControls: textAreaControls,
+        textResponses
+      })
     }),
-    [choiceControls, choiceResponses, shapes, textAreaControls, textResponses]
+    [choiceControls, choiceResponses, dateTimeControls, dateTimeResponses, numberControls, numberResponses, ratingControls, ratingResponses, shapes, textAreaControls, textResponses]
   );
   const annotationPayloadText = useMemo(() => serializeAnnotationPayload(annotationPayload), [annotationPayload]);
 
   useEffect(() => {
     latestPayloadTextRef.current = annotationPayloadText;
-  }, [annotationPayloadText]);
+
+    if (!canAnnotate) {
+      return;
+    }
+
+    if (annotationPayloadText === lastSavedPayloadTextRef.current) {
+      setSaveStatus((current) => (current === "dirty" || current === "error" ? "idle" : current));
+      return;
+    }
+
+    setSaveErrorMessage(null);
+    setSaveStatus((current) => (current === "saving" ? current : "dirty"));
+  }, [annotationPayloadText, canAnnotate]);
 
   useEffect(() => {
     if (!session || !task || !canAnnotate || loading) {
@@ -455,6 +590,11 @@ export function TaskDetailPage() {
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
+    }
+
+    if (autoSaveRetryTimerRef.current) {
+      clearTimeout(autoSaveRetryTimerRef.current);
+      autoSaveRetryTimerRef.current = null;
     }
 
     autoSaveTimerRef.current = setTimeout(() => {
@@ -475,9 +615,27 @@ export function TaskDetailPage() {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
       }
+      if (autoSaveRetryTimerRef.current) {
+        clearTimeout(autoSaveRetryTimerRef.current);
+      }
     },
     []
   );
+
+  useEffect(() => {
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      if (!canAnnotate || latestPayloadTextRef.current === lastSavedPayloadTextRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [canAnnotate]);
 
   function getPoint(event: PointerEvent<HTMLDivElement>) {
     const frame = annotationCanvasRef.current;
@@ -783,21 +941,66 @@ export function TaskDetailPage() {
   }
 
   async function handleSaveDraft() {
+    clearAutoSaveTimers();
     await saveDraft(annotationPayload, { auto: false });
+  }
+
+  async function handleGoToNextTask() {
+    if (!nextTask) {
+      return;
+    }
+
+    if (canAnnotate && latestPayloadTextRef.current !== lastSavedPayloadTextRef.current) {
+      clearAutoSaveTimers();
+      const saved = await saveDraft(annotationPayload, { auto: false });
+
+      if (!saved) {
+        return;
+      }
+    }
+
+    navigate(`/tasks/${nextTask.id}${getTaskDetailSearch({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId }, nextTask)}`);
+  }
+
+  function clearAutoSaveTimers() {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    if (autoSaveRetryTimerRef.current) {
+      clearTimeout(autoSaveRetryTimerRef.current);
+      autoSaveRetryTimerRef.current = null;
+    }
+  }
+
+  function scheduleAutoSaveRetry(payload: SaveAnnotationInput) {
+    if (autoSaveRetryTimerRef.current) {
+      clearTimeout(autoSaveRetryTimerRef.current);
+    }
+
+    autoSaveRetryTimerRef.current = setTimeout(() => {
+      autoSaveRetryTimerRef.current = null;
+      void saveDraft(payload, { auto: true });
+    }, autoSaveRetryDelayMs);
   }
 
   async function saveDraft(payload: SaveAnnotationInput, options: { auto: boolean }) {
     if (!session || !task) {
-      return;
+      return false;
     }
 
     const payloadText = serializeAnnotationPayload(payload);
 
     if (payloadText === lastSavedPayloadTextRef.current && options.auto) {
-      return;
+      return true;
     }
 
+    const requestId = saveRequestIdRef.current + 1;
+    saveRequestIdRef.current = requestId;
     setSaving(true);
+    setSaveStatus("saving");
+    setSaveErrorMessage(null);
     if (!options.auto) {
       setSavedMessage(null);
     }
@@ -805,18 +1008,42 @@ export function TaskDetailPage() {
 
     try {
       const result = await saveTaskAnnotation(session, task.id, payload);
-      lastSavedPayloadTextRef.current = payloadText;
 
-      if (latestPayloadTextRef.current === payloadText) {
-        setAnnotation(result.annotation);
-        setTask(result.task);
+      if (requestId !== saveRequestIdRef.current) {
+        return;
       }
 
-      setSavedMessage(options.auto ? "Autosaved." : "Annotation draft saved.");
+      if (latestPayloadTextRef.current === payloadText) {
+        lastSavedPayloadTextRef.current = payloadText;
+        setAnnotation(result.annotation);
+        setTask(result.task);
+        setSaveStatus("saved");
+        setSaveErrorMessage(null);
+        setSavedMessage(options.auto ? "Autosaved." : "Annotation draft saved.");
+      } else {
+        setSaveStatus("dirty");
+      }
+      return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : options.auto ? "Unable to autosave annotation." : "Unable to save annotation.");
+      if (requestId !== saveRequestIdRef.current) {
+        return;
+      }
+
+      const message = reason instanceof Error ? reason.message : options.auto ? "Unable to autosave annotation." : "Unable to save annotation.";
+
+      setSaveStatus("error");
+      setSaveErrorMessage(options.auto ? "Autosave failed. Retrying..." : message);
+
+      if (options.auto) {
+        scheduleAutoSaveRetry(payload);
+      } else {
+        setError(message);
+      }
+      return false;
     } finally {
-      setSaving(false);
+      if (requestId === saveRequestIdRef.current) {
+        setSaving(false);
+      }
     }
   }
 
@@ -825,12 +1052,18 @@ export function TaskDetailPage() {
       return;
     }
 
+    clearAutoSaveTimers();
+    saveRequestIdRef.current += 1;
+
     const hasTextResults = (annotationPayload.results ?? []).length > 0;
 
     const missingRequiredText = textAreaControls.some((control) => control.required && !textResponses[control.name]?.trim());
     const missingRequiredChoice = choiceControls.some((control) => control.required && (choiceResponses[control.name]?.length ?? 0) === 0);
+    const missingRequiredNumber = numberControls.some((control) => control.required && !numberResponses[control.name]?.trim());
+    const missingRequiredRating = ratingControls.some((control) => control.required && !ratingResponses[control.name]);
+    const missingRequiredDateTime = dateTimeControls.some((control) => control.required && !dateTimeResponses[control.name]?.trim());
 
-    if (usesTemplateForm && (missingRequiredText || missingRequiredChoice || (formControls.length > 0 && !hasTextResults))) {
+    if (usesTemplateForm && (missingRequiredText || missingRequiredChoice || missingRequiredNumber || missingRequiredRating || missingRequiredDateTime || (formControls.length > 0 && !hasTextResults))) {
       setError("Complete the required response before submitting.");
       return;
     }
@@ -891,7 +1124,7 @@ export function TaskDetailPage() {
     <section className="page-stack">
       <section className="panel task-detail-frame">
         <div className="organization-detail-nav">
-          <Link className="secondary-button compact-button" to={task?.projectId ? `/tasks?projectId=${task.projectId}` : "/tasks"}>
+          <Link className="secondary-button compact-button" to={taskQueueLink}>
             <ArrowLeft size={16} />
             Back to task queue
           </Link>
@@ -956,8 +1189,17 @@ export function TaskDetailPage() {
                       choiceControls={choiceControls}
                       choiceResponses={choiceResponses}
                       controls={textAreaControls}
+                      dateTimeControls={dateTimeControls}
+                      dateTimeResponses={dateTimeResponses}
+                      numberControls={numberControls}
+                      numberResponses={numberResponses}
                       onChoiceChange={setChoiceResponses}
+                      onDateTimeChange={setDateTimeResponses}
                       onChange={setTextResponses}
+                      onNumberChange={setNumberResponses}
+                      onRatingChange={setRatingResponses}
+                      ratingControls={ratingControls}
+                      ratingResponses={ratingResponses}
                       responses={textResponses}
                       sources={templateSources}
                       sourceByName={templateSourceByName}
@@ -1119,9 +1361,15 @@ export function TaskDetailPage() {
               <section className="panel task-context-panel">
                 <div className="task-context-head">
                   <p className="eyebrow">Context</p>
-                  {(saving || savedMessage) && (
-                    <p className={saving ? "task-save-status saving" : "task-save-status"}>
-                      {saving ? "Saving draft..." : savedMessage}
+                  {(saveStatus !== "idle" || savedMessage) && (
+                    <p className={`task-save-status ${saveStatus}`}>
+                      {saveStatus === "dirty"
+                        ? "Unsaved changes"
+                        : saveStatus === "saving"
+                          ? "Saving draft..."
+                          : saveStatus === "error"
+                            ? saveErrorMessage ?? "Autosave failed."
+                            : savedMessage ?? "Saved"}
                     </p>
                   )}
                 </div>
@@ -1210,7 +1458,13 @@ export function TaskDetailPage() {
                       <div className="annotation-region-row single" key={control.name}>
                         <button className="annotation-region-chip" type="button" disabled>
                           <span>{formatControlName(control.name)}</span>
-                          <small>{hasControlResponse(control, textResponses, choiceResponses) ? "Draft" : control.required ? "Required" : "Optional"}</small>
+                          <small>
+                            {hasControlResponse(control, textResponses, choiceResponses, numberResponses, ratingResponses, dateTimeResponses)
+                              ? "Draft"
+                              : control.required
+                                ? "Required"
+                                : "Optional"}
+                          </small>
                         </button>
                       </div>
                     )) : (
@@ -1247,6 +1501,7 @@ export function TaskDetailPage() {
               </section>
               <section className="panel">
                 <p className="eyebrow">Actions</p>
+                {nextTaskError && <p className="form-error compact-error">{nextTaskError}</p>}
                 {task.canWork ? (
                   <div className="task-action-stack">
                     {nextAction && (
@@ -1258,6 +1513,10 @@ export function TaskDetailPage() {
                     <button className="secondary-button" type="button" onClick={handleSaveDraft} disabled={!canAnnotate || saving}>
                       <Save size={17} />
                       Save draft
+                    </button>
+                    <button className="secondary-button" type="button" onClick={handleGoToNextTask} disabled={saving || nextTaskLoading || !nextTask}>
+                      <ArrowRight size={17} />
+                      {nextTaskLoading ? "Finding next" : nextTask ? "Next task" : "No next task"}
                     </button>
                     <button className="primary-button" type="button" onClick={handleSubmitAnnotation} disabled={!canAnnotate || saving}>
                       <Send size={17} />
@@ -1284,8 +1543,17 @@ function TemplateResponseWorkspace({
   choiceControls,
   choiceResponses,
   controls,
+  dateTimeControls,
+  dateTimeResponses,
+  numberControls,
+  numberResponses,
   onChoiceChange,
+  onDateTimeChange,
   onChange,
+  onNumberChange,
+  onRatingChange,
+  ratingControls,
+  ratingResponses,
   responses,
   sourceByName,
   sources,
@@ -1297,15 +1565,24 @@ function TemplateResponseWorkspace({
   choiceControls: ChoiceControl[];
   choiceResponses: Record<string, string[]>;
   controls: TextAreaControl[];
+  dateTimeControls: DateTimeControl[];
+  dateTimeResponses: Record<string, string>;
+  numberControls: NumberControl[];
+  numberResponses: Record<string, string>;
   onChoiceChange: (responses: Record<string, string[]>) => void;
+  onDateTimeChange: (responses: Record<string, string>) => void;
   onChange: (responses: Record<string, string>) => void;
+  onNumberChange: (responses: Record<string, string>) => void;
+  onRatingChange: (responses: Record<string, number>) => void;
+  ratingControls: RatingControl[];
+  ratingResponses: Record<string, number>;
   responses: Record<string, string>;
   sourceByName: Map<string, TemplateSource>;
   sources: TemplateSource[];
   task: NonNullable<ReturnType<typeof useTask>["task"]>;
   textAssetContent: string | null;
 }) {
-  const referencedSources = [...choiceControls, ...controls]
+  const referencedSources = [...choiceControls, ...controls, ...numberControls, ...ratingControls, ...dateTimeControls]
     .map((control) => sourceByName.get(control.toName))
     .filter((source): source is TemplateSource => Boolean(source));
   const visibleSources = dedupeSources([...sources, ...referencedSources]);
@@ -1383,6 +1660,69 @@ function TemplateResponseWorkspace({
             />
           </label>
         ))}
+        {numberControls.map((control) => (
+          <label className="template-response-field compact-template-field" key={control.name}>
+            <span>
+              {formatControlName(control.name)}
+              {control.required && <strong>Required</strong>}
+            </span>
+            <input
+              max={control.max ?? undefined}
+              min={control.min ?? undefined}
+              onChange={(event) => {
+                onNumberChange({
+                  ...numberResponses,
+                  [control.name]: event.target.value
+                });
+              }}
+              type="number"
+              value={numberResponses[control.name] ?? ""}
+            />
+          </label>
+        ))}
+        {ratingControls.map((control) => (
+          <div className="template-response-field compact-template-field" key={control.name}>
+            <span>
+              {formatControlName(control.name)}
+              {control.required && <strong>Required</strong>}
+            </span>
+            <div className="template-rating-row">
+              {Array.from({ length: control.maxRating }, (_, index) => index + 1).map((rating) => (
+                <button
+                  className={(ratingResponses[control.name] ?? 0) >= rating ? "template-rating active" : "template-rating"}
+                  key={rating}
+                  onClick={() => {
+                    onRatingChange({
+                      ...ratingResponses,
+                      [control.name]: rating
+                    });
+                  }}
+                  type="button"
+                >
+                  {rating}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+        {dateTimeControls.map((control) => (
+          <label className="template-response-field compact-template-field" key={control.name}>
+            <span>
+              {formatControlName(control.name)}
+              {control.required && <strong>Required</strong>}
+            </span>
+            <input
+              onChange={(event) => {
+                onDateTimeChange({
+                  ...dateTimeResponses,
+                  [control.name]: event.target.value
+                });
+              }}
+              type="datetime-local"
+              value={dateTimeResponses[control.name] ?? ""}
+            />
+          </label>
+        ))}
       </div>
     </div>
   );
@@ -1416,11 +1756,65 @@ function TemplateSourcePreview({
     );
   }
 
+  if (source.type === "VIDEO") {
+    const videoUrl = sourceValue || accessUrl;
+
+    return (
+      <div className="template-source-card media-source-card">
+        <p className="eyebrow">{source.name}</p>
+        {videoUrl ? (
+          <video controls src={videoUrl} />
+        ) : (
+          <p className="muted-copy">No video source is available.</p>
+        )}
+      </div>
+    );
+  }
+
+  if (source.type === "AUDIO") {
+    const audioUrl = sourceValue || accessUrl;
+
+    return (
+      <div className="template-source-card media-source-card">
+        <p className="eyebrow">{source.name}</p>
+        {audioUrl ? (
+          <audio controls src={audioUrl} />
+        ) : (
+          <p className="muted-copy">No audio source is available.</p>
+        )}
+      </div>
+    );
+  }
+
+  if (source.type === "PDF") {
+    const pdfUrl = sourceValue || accessUrl;
+
+    return (
+      <div className="template-source-card pdf-source-card">
+        <p className="eyebrow">{source.name}</p>
+        {pdfUrl ? (
+          <iframe src={pdfUrl} title={source.name} />
+        ) : (
+          <p className="muted-copy">No PDF source is available.</p>
+        )}
+      </div>
+    );
+  }
+
   if (source.type === "TEXT") {
     return (
       <div className="template-source-card text-source-card">
         <p className="eyebrow">{source.name}</p>
         <div>{sourceValue || "No text source is available for this task."}</div>
+      </div>
+    );
+  }
+
+  if (source.type === "TIME_SERIES") {
+    return (
+      <div className="template-source-card text-source-card">
+        <p className="eyebrow">{source.name}</p>
+        <div>{sourceValue || textAssetContent || "No time series data is available for this task."}</div>
       </div>
     );
   }
@@ -1659,6 +2053,81 @@ function parseTextAreaControls(configCode: string): TextAreaControl[] {
   return controls;
 }
 
+function parseNumberControls(configCode: string): NumberControl[] {
+  const controls: NumberControl[] = [];
+  const numberPattern = /<Number\b([^>]*)\/?>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = numberPattern.exec(configCode))) {
+    const attributes = match[1] ?? "";
+    const name = getXmlAttribute(attributes, "name");
+    const toName = getXmlAttribute(attributes, "toName");
+
+    if (!name || !toName) {
+      continue;
+    }
+
+    controls.push({
+      max: parseFiniteNumber(getXmlAttribute(attributes, "max")),
+      min: parseFiniteNumber(getXmlAttribute(attributes, "min")),
+      name,
+      required: getXmlAttribute(attributes, "required") === "true",
+      toName
+    });
+  }
+
+  return controls;
+}
+
+function parseRatingControls(configCode: string): RatingControl[] {
+  const controls: RatingControl[] = [];
+  const ratingPattern = /<Rating\b([^>]*)\/?>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = ratingPattern.exec(configCode))) {
+    const attributes = match[1] ?? "";
+    const name = getXmlAttribute(attributes, "name");
+    const toName = getXmlAttribute(attributes, "toName");
+
+    if (!name || !toName) {
+      continue;
+    }
+
+    controls.push({
+      maxRating: Math.max(2, Math.min(10, parsePositiveInteger(getXmlAttribute(attributes, "maxRating")) ?? 5)),
+      name,
+      required: getXmlAttribute(attributes, "required") === "true",
+      toName
+    });
+  }
+
+  return controls;
+}
+
+function parseDateTimeControls(configCode: string): DateTimeControl[] {
+  const controls: DateTimeControl[] = [];
+  const datePattern = /<DateTime\b([^>]*)\/?>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = datePattern.exec(configCode))) {
+    const attributes = match[1] ?? "";
+    const name = getXmlAttribute(attributes, "name");
+    const toName = getXmlAttribute(attributes, "toName");
+
+    if (!name || !toName) {
+      continue;
+    }
+
+    controls.push({
+      name,
+      required: getXmlAttribute(attributes, "required") === "true",
+      toName
+    });
+  }
+
+  return controls;
+}
+
 function getXmlAttribute(attributes: string, name: string) {
   const pattern = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i");
   const match = attributes.match(pattern);
@@ -1693,6 +2162,15 @@ function parsePositiveInteger(value: string | null) {
 
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseFiniteNumber(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function dedupeSources(sources: TemplateSource[]) {
@@ -1773,12 +2251,91 @@ function annotationToChoiceResponses(annotation: AnnotationSummary | null): Reco
   return responses;
 }
 
-function formResponsesToResults(
-  textResponses: Record<string, string>,
-  textControls: TextAreaControl[],
-  choiceResponses: Record<string, string[]>,
-  choiceControls: ChoiceControl[]
-): SaveAnnotationInput["results"] {
+function annotationToScalarResponses(annotation: AnnotationSummary | null, valueKey: "datetime" | "number"): Record<string, string> {
+  if (!annotation?.resultJson || !Array.isArray(annotation.resultJson.results)) {
+    return {};
+  }
+
+  const responses: Record<string, string> = {};
+
+  annotation.resultJson.results.forEach((rawResult) => {
+    if (!rawResult || typeof rawResult !== "object") {
+      return;
+    }
+
+    const result = rawResult as Record<string, unknown>;
+    const fromName = typeof result.from_name === "string" ? result.from_name : typeof result.fromName === "string" ? result.fromName : null;
+    const value = result.value;
+
+    if (!fromName || !value || typeof value !== "object") {
+      return;
+    }
+
+    const rawValue = (value as Record<string, unknown>)[valueKey];
+
+    if (typeof rawValue === "string") {
+      responses[fromName] = rawValue;
+    } else if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      responses[fromName] = String(rawValue);
+    }
+  });
+
+  return responses;
+}
+
+function annotationToRatingResponses(annotation: AnnotationSummary | null): Record<string, number> {
+  if (!annotation?.resultJson || !Array.isArray(annotation.resultJson.results)) {
+    return {};
+  }
+
+  const responses: Record<string, number> = {};
+
+  annotation.resultJson.results.forEach((rawResult) => {
+    if (!rawResult || typeof rawResult !== "object") {
+      return;
+    }
+
+    const result = rawResult as Record<string, unknown>;
+    const fromName = typeof result.from_name === "string" ? result.from_name : typeof result.fromName === "string" ? result.fromName : null;
+    const value = result.value;
+
+    if (!fromName || !value || typeof value !== "object") {
+      return;
+    }
+
+    const ratingValue = (value as Record<string, unknown>).rating;
+
+    if (typeof ratingValue === "number" && Number.isFinite(ratingValue)) {
+      responses[fromName] = ratingValue;
+    }
+  });
+
+  return responses;
+}
+
+function formResponsesToResults({
+  choiceControls,
+  choiceResponses,
+  dateTimeControls,
+  dateTimeResponses,
+  numberControls,
+  numberResponses,
+  ratingControls,
+  ratingResponses,
+  textControls,
+  textResponses
+}: {
+  choiceControls: ChoiceControl[];
+  choiceResponses: Record<string, string[]>;
+  dateTimeControls: DateTimeControl[];
+  dateTimeResponses: Record<string, string>;
+  numberControls: NumberControl[];
+  numberResponses: Record<string, string>;
+  ratingControls: RatingControl[];
+  ratingResponses: Record<string, number>;
+  textControls: TextAreaControl[];
+  textResponses: Record<string, string>;
+}): SaveAnnotationInput["results"] {
   const textResults = textControls
     .map((control) => ({
       fromName: control.name,
@@ -1801,7 +2358,40 @@ function formResponsesToResults(
     }))
     .filter((result) => result.value.choices.length > 0);
 
-  return [...choiceResults, ...textResults];
+  const numberResults = numberControls
+    .map((control) => ({
+      fromName: control.name,
+      toName: control.toName,
+      type: "number",
+      value: {
+        number: Number(numberResponses[control.name])
+      }
+    }))
+    .filter((result) => Number.isFinite(result.value.number));
+
+  const ratingResults = ratingControls
+    .map((control) => ({
+      fromName: control.name,
+      toName: control.toName,
+      type: "rating",
+      value: {
+        rating: ratingResponses[control.name]
+      }
+    }))
+    .filter((result) => typeof result.value.rating === "number" && Number.isFinite(result.value.rating));
+
+  const dateTimeResults = dateTimeControls
+    .map((control) => ({
+      fromName: control.name,
+      toName: control.toName,
+      type: "datetime",
+      value: {
+        datetime: (dateTimeResponses[control.name] ?? "").trim()
+      }
+    }))
+    .filter((result) => result.value.datetime.length > 0);
+
+  return [...choiceResults, ...textResults, ...numberResults, ...ratingResults, ...dateTimeResults];
 }
 
 function toggleChoiceValue(current: string[], value: string, mode: ChoiceControl["choice"]) {
@@ -1813,13 +2403,30 @@ function toggleChoiceValue(current: string[], value: string, mode: ChoiceControl
 }
 
 function hasControlResponse(
-  control: ChoiceControl | TextAreaControl,
+  control: TemplateFormControl,
   textResponses: Record<string, string>,
-  choiceResponses: Record<string, string[]>
+  choiceResponses: Record<string, string[]>,
+  numberResponses: Record<string, string>,
+  ratingResponses: Record<string, number>,
+  dateTimeResponses: Record<string, string>
 ) {
-  return "choices" in control
-    ? (choiceResponses[control.name]?.length ?? 0) > 0
-    : Boolean(textResponses[control.name]?.trim());
+  if ("choices" in control) {
+    return (choiceResponses[control.name]?.length ?? 0) > 0;
+  }
+
+  if ("maxRating" in control) {
+    return Boolean(ratingResponses[control.name]);
+  }
+
+  if ("min" in control) {
+    return Boolean(numberResponses[control.name]?.trim());
+  }
+
+  if (!("placeholder" in control)) {
+    return Boolean(dateTimeResponses[control.name]?.trim());
+  }
+
+  return Boolean(textResponses[control.name]?.trim());
 }
 
 function getTemplateSourceValue(
@@ -2279,6 +2886,49 @@ function pointsToSvg(points: Point[]) {
 
 function getShortcutKey(index: number) {
   return index >= 0 && index < 9 ? String(index + 1) : undefined;
+}
+
+function getTaskQueueLink(
+  queueQuery: { datasetId: string | null; page: string | null; projectId: string | null },
+  task: TaskSummary | null | undefined
+) {
+  const params = new URLSearchParams();
+  const projectId = queueQuery.projectId ?? task?.projectId ?? null;
+  const datasetId = queueQuery.datasetId ?? task?.datasetId ?? null;
+
+  if (projectId) {
+    params.set("projectId", projectId);
+  }
+
+  if (datasetId) {
+    params.set("datasetId", datasetId);
+  }
+
+  if (datasetId && queueQuery.page) {
+    params.set("page", queueQuery.page);
+  }
+
+  const query = params.toString();
+  return query ? `/tasks?${query}` : "/tasks";
+}
+
+function getTaskDetailSearch(queueQuery: { datasetId: string | null; page: string | null; projectId: string | null }, task: TaskSummary) {
+  const params = new URLSearchParams();
+  const projectId = queueQuery.projectId ?? task.projectId;
+  const datasetId = queueQuery.datasetId ?? task.datasetId;
+
+  params.set("projectId", projectId);
+
+  if (datasetId) {
+    params.set("datasetId", datasetId);
+  }
+
+  if (queueQuery.page) {
+    params.set("page", queueQuery.page);
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
 function getNextTaskAction(status: string) {

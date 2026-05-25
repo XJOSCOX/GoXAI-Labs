@@ -1,5 +1,5 @@
 import { DataType, getPrismaClient, GlobalRole, MembershipRole, Prisma } from "@goxai/database";
-import { Router, type Response } from "express";
+import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import { readBuiltInTemplates } from "./builtInTemplates.js";
 import { getRequestId } from "./logging.js";

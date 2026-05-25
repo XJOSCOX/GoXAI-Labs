@@ -1,112 +1,123 @@
 # GoXAi Lab
 
-GoXAi Lab is an AI data labeling and studio operations platform for organizations, projects, datasets, assets, and annotation tasks.
+GoXAi Lab is an AI-native data operations platform for organizations, projects, datasets, assets, annotation templates, and annotation tasks.
 
 Domain: `goxailab.com`
 
-> Status: still in progress. The foundation is working, but this is not a finished production release yet.
+> Status: active development. The core SaaS foundation, dataset/template flow, R2 upload pipeline, and early annotation experience are working. This is not a finished production release yet.
 
-## What Is Built
+## Master Plan Progress
 
-- pnpm monorepo with `apps`, `services`, `packages`, `docs`, `scripts`, `infrastructure`, and `docker`.
-- React + TypeScript + Vite web app in `apps/web`.
-- Node.js + Express + TypeScript API in `services/api`.
-- Prisma database package in `packages/database`.
-- Supabase Auth integration for signup, login, user identity, and backend token verification.
-- Supabase Postgres connection through Prisma.
-- Cloudflare R2 direct browser uploads through signed URLs.
-- Light/dark theme UI with GoXAi Lab branding.
-- Protected app routes, onboarding gate, and logout flow.
-- Dashboard, organization, project, dataset, asset, and task views.
-- Backend audit/client logging for important app events and errors.
+This README tracks the current implementation against `Goxailab Master Platform Plan And Architecture.pdf`.
 
-## Current Product Features
+| Plan Area | Current Status | Notes |
+| --- | --- | --- |
+| Phase 0: Architecture and foundation | Mostly built | pnpm monorepo, React web app, Express API, Prisma database package, Supabase Auth/Postgres, Cloudflare R2, logging, and code-split frontend are in place. CI/CD, Redis, Dockerized dev/prod, and deployment automation are still pending. |
+| Phase 1: Authentication and organizations | Partially built | Email/password auth through Supabase, onboarding, organizations, members, roles, project access, join codes, and audit/client logs are implemented. Google/GitHub login, password reset UX, MFA, and deeper policy screens are still pending. |
+| Phase 2: Projects and datasets | Strongly in progress | Projects, datasets, templates, R2 assets, multi-file upload, structured CSV/JSON/JSONL imports, text task data, and task generation are implemented. Dataset version snapshots, rollback, resumable/chunk uploads, and external storage connectors are still pending. |
+| Phase 3: Annotation engine | In progress | Image bounding boxes and polygons, text responses, template-aware task UI, autosave, zoom/pan, fullscreen image work, keyboard shortcuts, and region management are started. Full video/audio/time-series editors, undo/redo history, comments, review QA, and advanced tools are still pending. |
+| Phase 4: Realtime collaboration | Not started | No WebSocket/Redis presence or live collaboration yet. |
+| Phase 5-6: Workflow and assignment | Early foundation | Task states, assign-self, start, draft, submit, project/dataset task folders, and dataset queues exist. Reviewer queues, approvals/rejections, SLA rules, automatic assignment, and consensus labeling are still pending. |
+| Phase 7: AI-assisted labeling | Not started | Schema has future AI/model foundations, but no production AI workers or model-assisted labeling yet. |
+| Phase 8-11: Analytics, marketplace, enterprise, scaling | Schema foundation only | Database models include future marketplace, wallet, notification, API key, webhook, and export concepts, but product workflows are not built yet. |
 
-### Authentication
+## What Is Built Now
 
-- Users sign up through Supabase Auth.
-- Frontend sends the Supabase access token to the API.
-- API verifies the token and creates/syncs the local `User` row.
-- Signup supports simple users and organization-backed users.
-- Password requirements are shown during registration.
-- Onboarding must be completed before a user can continue into the app.
-- Users get referral/API-style codes in the database foundation.
+### Monorepo And Runtime
 
-### Organizations
+- pnpm workspace monorepo with `apps`, `services`, `packages`, `docs`, `scripts`, `infrastructure`, and `docker`.
+- `apps/web`: React + TypeScript + Vite web application.
+- `services/api`: Node.js + Express + TypeScript API.
+- `packages/database`: Prisma schema/client for Supabase Postgres.
+- `packages/label-templates`: Label Studio-style built-in template library and validation scripts.
+- Frontend routes are lazy-loaded for production code splitting.
+- Backend/frontend typechecks and builds pass.
 
-- Create, list, view, update, and delete empty organizations.
-- Organization detail pages use unique organization IDs in the URL.
-- Organization cards show summary information such as plan, privacy, owners, members, projects, datasets, slug, workspace, created date, and updated date.
-- Organization owners can add and remove members.
-- Owner self-protection rules prevent owners from removing or downgrading themselves accidentally.
-- Join codes allow users to join organizations when enabled.
-- Organization privacy modes are supported in the data model and UI.
+### Authentication And Accounts
 
-### Roles And Access
+- Supabase Auth signup/login with API bearer-token verification.
+- Local `User` row sync from Supabase identity.
+- Registration supports user profile and organization-backed onboarding.
+- Onboarding gate before entering the app.
+- Account settings and application status foundations.
+- Super-admin/admin screens for user and application review foundations.
 
+### Organizations, Roles, And Access
+
+- Organizations with owners, members, roles, plans, privacy modes, and join codes.
 - Organization roles: Owner, Admin, Manager, Reviewer, Annotator, Viewer.
-- Project roles are tracked separately for project-scoped access.
-- Only organization owners can create projects under an organization.
-- Project owners/admins can edit projects, create datasets, upload assets, generate tasks, archive/restore, and delete when allowed.
-- Viewers have read-only access.
-- Public projects can be visible to signed-in users, while private/organization projects require access.
+- Project memberships are tracked separately from organization membership.
+- Owner self-protection rules prevent accidental owner removal/demotion.
+- Public, organization, and private project access modes.
+- Audit/client logging for important app events and errors.
 
 ### Projects
 
-- List available signed-in projects.
-- Create projects with organization, data type, privacy, member limit, external member access, join code, description, and instructions.
-- View project details in a max-width container layout.
-- Edit project settings.
-- Invite project members.
-- Archive and restore projects.
-- Permanently delete a project only after its datasets and registered project files are deleted.
+- Create, list, view, edit, archive, restore, and delete projects when allowed.
+- Project fields include organization, data type, access mode, member limit, external access, description, and instructions.
+- Project detail pages show datasets, members, status, and management actions.
+- Projects can contain multiple datasets for different task streams.
 
-### Datasets
+### Datasets And Assets
 
-- Create datasets under a project.
-- View dataset details in a max-width two-column layout.
-- Edit dataset settings in a modal.
-- Archive and restore datasets.
-- Permanently delete a whole dataset, including its registered files and dataset tasks.
+- Create, view, edit, archive, restore, and delete datasets.
+- Dataset delete removes the dataset, registered files, and dataset tasks.
+- Cloudflare R2 direct browser uploads through signed PUT URLs.
+- Drag/drop, multi-file upload, folder upload, optional rename mode, and registered asset deletion.
+- Text task entry for templates that bind to `$text`.
+- Structured import for CSV, JSON, JSONL, and NDJSON:
+  - Each row/object becomes one task data asset.
+  - `text.csv` with a `text` column becomes one task per row after task generation.
+- Asset quick preview and large image preview with signed R2 access URLs.
 
-### Assets And R2 Uploads
+### Templates
 
-- Cloudflare R2 is used for large dataset files.
-- Supabase Storage is intentionally not used for large dataset files.
-- Uploads use signed R2 PUT URLs so large files do not pass through the API server.
-- Drag/drop and multi-file upload are supported.
-- Upload limit is currently 250 files at once.
-- Users are warned to split larger uploads into folders.
-- Optional rename mode supports prefix + random code naming.
-- Registered files can be deleted one by one, by selection, or by registered folder prefix.
-- Folder deletion only deletes registered files the user is allowed to manage.
+- Built-in Label Studio-style templates are stored in `packages/label-templates/templates`.
+- Templates use XML/config files plus metadata, similar to Label Studio's pattern.
+- Built-in templates cover image, text, audio, video, time-series, ranking/scoring, chat, generative AI, and structured-data parsing categories.
+- Template validation checks config bindings and template metadata.
+- Label settings UI includes:
+  - Template browser.
+  - Category browsing.
+  - Built-in template selection.
+  - Dataset template assignment.
+  - Custom category/template management.
+  - Code editing for label configs.
 
-### Tasks
+### Tasks And Annotation
 
-- Generate dataset tasks from registered assets.
-- List tasks by dataset/project.
-- Assign task to self.
-- Start tasks.
-- Submit tasks.
+- Generate tasks from dataset assets.
+- Task home page groups work by project, then by dataset queue.
+- Users can choose which dataset queue to work on.
+- Task queue actions include start and assign-to-self.
+- Annotation saves drafts and submits completed work.
+- Autosave is supported for annotation changes.
+- Image annotation currently supports bounding boxes and polygons.
+- Polygon workflow includes point creation, auto-close behavior, cancel path, region deletion, label lock mode, and moving regions.
+- Image workspace supports zoom, pan, and fullscreen working mode.
+- Text templates render text sources and response controls instead of image drawing tools.
+- Non-region template answers are stored in Label Studio-style `results` JSON.
 
-## Monorepo Layout
+## Current Monorepo Layout
 
 ```text
-GoXAi/
+GoXAI/
 +-- apps/
-|   +-- web/          # React + Vite frontend
-|   +-- studio/       # Reserved for future studio app
+|   +-- web/              # React + Vite SaaS frontend
+|   +-- studio/           # Reserved for future standalone annotation engine
 +-- services/
-|   +-- api/          # Express API
+|   +-- api/              # Express API
 +-- packages/
-|   +-- database/     # Prisma schema and database client
-|   +-- types/        # Reserved shared types package
-|   +-- config/       # Reserved shared config package
-|   +-- ui/           # Reserved shared UI package
-+-- infrastructure/   # Reserved deployment/infrastructure files
-+-- docs/             # Setup and architecture notes
-+-- scripts/          # Utility scripts
-+-- docker/           # Reserved Docker setup
+|   +-- database/         # Prisma schema and database client
+|   +-- label-templates/  # Built-in Label Studio-style template library
+|   +-- config/           # Reserved shared config package
+|   +-- types/            # Reserved shared types package
+|   +-- ui/               # Reserved shared UI package
++-- docs/                 # Setup and architecture notes
++-- scripts/              # Utility scripts
++-- infrastructure/       # Reserved infrastructure/deployment files
++-- docker/               # Reserved Docker setup
++-- test-data/            # Local import samples
 ```
 
 ## Tech Stack
@@ -117,6 +128,7 @@ GoXAi/
 - Database: Supabase Postgres + Prisma
 - Auth: Supabase Auth
 - Object storage: Cloudflare R2
+- Template format: Label Studio-style XML/config metadata
 
 ## Local Development
 
@@ -189,10 +201,14 @@ Notes:
 
 ```bash
 pnpm --filter @goxai/api typecheck
+pnpm --filter @goxai/api build
 pnpm --filter @goxai/web typecheck
 pnpm --filter @goxai/web build
 pnpm --filter @goxai/database db:validate
+pnpm --filter @goxai/database db:generate
+pnpm --filter @goxai/database db:push
 pnpm --filter @goxai/database db:studio
+pnpm --filter @goxai/label-templates validate
 pnpm check:r2-cors
 ```
 
@@ -206,10 +222,13 @@ Core routes currently include:
 - `POST /api/auth/sync`
 - `PATCH /api/auth/profile`
 - `GET /api/auth/login-identifier`
+- `/api/applications`
+- `/api/admin`
 - `/api/organizations`
 - `/api/projects`
 - `/api/datasets`
 - `/api/assets`
+- `/api/annotation-templates`
 - `/api/tasks`
 - `/api/logs/client`
 
@@ -220,19 +239,19 @@ Most app routes require a valid Supabase bearer token.
 - Supabase setup: `docs/supabase.md`
 - Cloudflare R2 setup: `docs/r2.md`
 - Role permissions: `docs/rbac.md`
+- Built-in templates: `packages/label-templates/templates/README.md`
 
-## Still In Progress
+## Near-Term Priorities
 
-The platform is actively being built. Important areas still in progress:
+The project plan says not to start with Kubernetes, marketplace systems, advanced analytics, or complex AI. The current practical priorities are:
 
-- Annotation editor and review/QA workflows.
-- Complete task assignment queues and reviewer workflows.
-- Marketplace, jobs, wallets, payouts, notifications, API keys, webhooks, and exports.
-- Production deployment setup.
-- Automated test coverage.
-- More granular project/member permission screens.
-- Full account settings and verification badge workflow.
-- Production-ready observability, backups, and security hardening.
+1. Harden the annotation UX for image and text tasks.
+2. Add server-side task pagination and task-folder count endpoints for large projects.
+3. Add review/QA workflow screens.
+4. Add undo/redo and annotation history.
+5. Add export jobs for completed annotations.
+6. Expand media-specific editors for audio, video, PDF, and time-series templates.
+7. Add automated tests around tasks, templates, dataset imports, and permissions.
 
 ## Current Development Rule
 

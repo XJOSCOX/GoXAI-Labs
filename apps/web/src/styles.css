@@ -2113,7 +2113,7 @@ textarea:focus {
 .task-queue-heading {
   display: flex;
   align-items: flex-end;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 12px;
   min-width: 0;
 }
@@ -2132,6 +2132,13 @@ textarea:focus {
 
 .task-queue-heading .muted-copy {
   padding-bottom: 2px;
+}
+
+.task-queue-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .task-folder-panel {
@@ -2406,6 +2413,26 @@ textarea:focus {
   pointer-events: auto;
 }
 
+.media-source-card video {
+  display: block;
+  width: 100%;
+  max-height: 460px;
+  border-radius: 8px;
+  background: #050505;
+}
+
+.media-source-card audio {
+  width: 100%;
+}
+
+.pdf-source-card iframe {
+  width: 100%;
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
 .template-response-field span {
   display: flex;
   align-items: center;
@@ -2450,6 +2477,36 @@ textarea:focus {
 .template-response-field textarea {
   min-height: 220px;
   resize: vertical;
+}
+
+.compact-template-field {
+  align-content: start;
+}
+
+.template-rating-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-rating {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.template-rating.active {
+  border-color: var(--selected-border);
+  background: var(--selected-bg);
+  color: var(--selected-text);
 }
 
 .fullscreen-annotation-panel {
@@ -2701,6 +2758,18 @@ textarea:focus {
   border-color: color-mix(in srgb, var(--accent-strong) 34%, var(--border));
   background: color-mix(in srgb, var(--accent-strong) 12%, var(--surface-soft));
   color: var(--accent-deep);
+}
+
+.task-save-status.dirty {
+  border-color: color-mix(in srgb, #facc15 44%, var(--border));
+  background: color-mix(in srgb, #facc15 12%, var(--surface-soft));
+  color: color-mix(in srgb, #facc15 72%, var(--text));
+}
+
+.task-save-status.error {
+  border-color: color-mix(in srgb, var(--danger-text) 48%, var(--border));
+  background: color-mix(in srgb, var(--danger-bg) 72%, var(--surface-soft));
+  color: var(--danger-text);
 }
 
 .compact-section-label {
@@ -4710,6 +4779,19 @@ textarea:focus {
   gap: 14px;
   min-height: 100vh;
   background: var(--bg);
+}
+
+.loading-logo {
+  display: block;
+  width: clamp(88px, 8vw, 128px);
+  height: auto;
+  object-fit: contain;
+}
+
+.loading-screen p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .app-error-screen {

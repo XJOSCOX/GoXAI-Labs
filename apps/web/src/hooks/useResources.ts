@@ -4,16 +4,22 @@ import {
   getOrganization,
   getProject,
   getTask,
+  getTaskStats,
   listAssets,
   listDatasets,
   listOrganizations,
   listProjects,
+  listTaskFolders,
+  listTaskPage,
   listTasks,
   type AssetSummary,
   type DatasetSummary,
   type OrganizationDetail,
   type OrganizationSummary,
   type ProjectSummary,
+  type TaskDatasetFolderSummary,
+  type TaskProjectFolderSummary,
+  type TaskStatsSummary,
   type TaskSummary
 } from "../api";
 import { useAuth } from "../auth";
@@ -340,6 +346,171 @@ export function useTasks(
     reload,
     setError,
     tasks
+  };
+}
+
+export function useTaskPage(
+  session: ReturnType<typeof useAuth>["session"],
+  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string } = {}
+) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
+  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pageInfo, setPageInfo] = useState({
+    page: input.page ?? 1,
+    pageSize: input.pageSize ?? 25,
+    total: 0,
+    totalPages: 1
+  });
+
+  const reload = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
+      setTasks([]);
+      setPageInfo((current) => ({ ...current, total: 0, totalPages: 1 }));
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await listTaskPage(activeSession, input);
+      setTasks(result.tasks);
+      setPageInfo({
+        page: result.page,
+        pageSize: result.pageSize,
+        total: result.total,
+        totalPages: result.totalPages
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load tasks.");
+    } finally {
+      setLoading(false);
+    }
+  }, [input.datasetId, input.page, input.pageSize, input.projectId, sessionKey, sessionRef]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    pageInfo,
+    reload,
+    setError,
+    tasks
+  };
+}
+
+export function useTaskFolders(
+  session: ReturnType<typeof useAuth>["session"],
+  input: { projectId?: string } = {}
+) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
+  const [projects, setProjects] = useState<TaskProjectFolderSummary[]>([]);
+  const [datasets, setDatasets] = useState<TaskDatasetFolderSummary[]>([]);
+  const [project, setProject] = useState<{ id: string; name: string; slug: string; status: string } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
+      setProjects([]);
+      setDatasets([]);
+      setProject(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await listTaskFolders(activeSession, input);
+      setProjects(result.projects ?? []);
+      setDatasets(result.datasets ?? []);
+      setProject(result.project ?? null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load task folders.");
+    } finally {
+      setLoading(false);
+    }
+  }, [input.projectId, sessionKey, sessionRef]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    datasets,
+    error,
+    loading,
+    project,
+    projects,
+    reload,
+    setError
+  };
+}
+
+export function useTaskStats(
+  session: ReturnType<typeof useAuth>["session"],
+  input: { datasetId?: string; projectId?: string } = {}
+) {
+  const sessionRef = useLatestSessionRef(session);
+  const sessionKey = getSessionKey(session);
+  const [stats, setStats] = useState<TaskStatsSummary>({
+    active: 0,
+    done: 0,
+    pending: 0,
+    total: 0,
+    unassigned: 0
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession) {
+      setStats({
+        active: 0,
+        done: 0,
+        pending: 0,
+        total: 0,
+        unassigned: 0
+      });
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      setStats(await getTaskStats(activeSession, input));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load task stats.");
+    } finally {
+      setLoading(false);
+    }
+  }, [input.datasetId, input.projectId, sessionKey, sessionRef]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return {
+    error,
+    loading,
+    reload,
+    setError,
+    stats
   };
 }
 
