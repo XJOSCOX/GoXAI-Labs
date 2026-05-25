@@ -3,19 +3,22 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Database, Plus, Settings2, Shapes, X } from "lucide-react";
 import {
   createAnnotationCategory,
+  listBuiltInAnnotationTemplates,
   listAnnotationCategories,
   listAnnotationTemplates,
   type AnnotationCategorySummary,
+  type BuiltInAnnotationTemplateGroup,
   type AnnotationTemplateSummary
 } from "../../api";
 import {
-  builtInTemplateCategories,
-  builtInTemplatePresets,
+  builtInTemplateCategories as fallbackBuiltInTemplateCategories,
+  builtInTemplatePresets as fallbackBuiltInTemplatePresets,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
 import { getFormValue, useAuth } from "../../auth";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
+import { builtInTemplateToPreset } from "../../utils/templates";
 
 type TemplateCard = TemplatePreset & {
   canManage?: boolean;
@@ -44,6 +47,11 @@ export function LabelTemplatesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
+  const [builtInCategories, setBuiltInCategories] = useState<CategoryItem[]>(() => getBuiltInCategories(
+    fallbackBuiltInTemplateCategories,
+    fallbackBuiltInTemplatePresets
+  ));
+  const [builtInTemplates, setBuiltInTemplates] = useState<TemplatePreset[]>(fallbackBuiltInTemplatePresets);
   const [activeCategoryKey, setActiveCategoryKey] = useState<string | null>(searchParams.get("category"));
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
@@ -60,12 +68,16 @@ export function LabelTemplatesPage() {
       }
 
       try {
-        const [nextCategories, nextTemplates] = await Promise.all([
+        const [nextBuiltIns, nextCategories, nextTemplates] = await Promise.all([
+          listBuiltInAnnotationTemplates(session),
           listAnnotationCategories(session),
           listAnnotationTemplates(session)
         ]);
 
         if (!cancelled) {
+          const nextBuiltInTemplates = nextBuiltIns.templates.map(builtInTemplateToPreset);
+          setBuiltInCategories(getBuiltInCategories(nextBuiltIns.groups, nextBuiltInTemplates));
+          setBuiltInTemplates(nextBuiltInTemplates);
           setCategories(nextCategories);
           setTemplates(nextTemplates);
         }
@@ -93,7 +105,6 @@ export function LabelTemplatesPage() {
 
   const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
   const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
-  const builtInCategories = useMemo(() => getBuiltInCategories(), []);
   const categoryItems = useMemo<CategoryItem[]>(() => {
     const builtInNames = new Set(builtInCategories.map((category) => normalizeCategoryName(category.name)));
 
@@ -113,8 +124,8 @@ export function LabelTemplatesPage() {
   }, [builtInCategories, categories, templates]);
   const activeCategory = activeCategoryKey ? resolveActiveCategory(activeCategoryKey, categoryItems, categories) : null;
   const visibleTemplates = useMemo(
-    () => (activeCategory ? getTemplatesForCategory(activeCategory, templates) : []),
-    [activeCategory, templates]
+    () => (activeCategory ? getTemplatesForCategory(activeCategory, templates, builtInTemplates) : []),
+    [activeCategory, templates, builtInTemplates]
   );
   const activeTemplate = visibleTemplates.find((template) => template.id === activeTemplateId) ?? null;
   const selectedCategoryForNewTemplate =
@@ -406,20 +417,20 @@ export function LabelTemplatesPage() {
   );
 }
 
-function getBuiltInCategories(): CategoryItem[] {
-  return builtInTemplateCategories.map((category) => ({
+function getBuiltInCategories(categories: BuiltInAnnotationTemplateGroup[], templates: TemplatePreset[]): CategoryItem[] {
+  return categories.map((category) => ({
     description: category.description,
     id: category.id,
     key: `builtin:${category.id}`,
     name: category.name,
     source: "builtin",
-    templateCount: builtInTemplatePresets.filter((template) => template.categoryId === category.id || template.category === category.name).length
+    templateCount: templates.filter((template) => template.categoryId === category.id || template.category === category.name).length
   }));
 }
 
-function getTemplatesForCategory(category: CategoryItem, templates: AnnotationTemplateSummary[]): TemplateCard[] {
+function getTemplatesForCategory(category: CategoryItem, templates: AnnotationTemplateSummary[], builtInTemplates: TemplatePreset[]): TemplateCard[] {
   if (category.source === "builtin") {
-    const builtInTemplates = builtInTemplatePresets
+    const visibleBuiltIns = builtInTemplates
       .filter((template) => template.category === category.name)
       .map((template) => ({
         ...template,
@@ -430,7 +441,7 @@ function getTemplatesForCategory(category: CategoryItem, templates: AnnotationTe
       .filter((template) => normalizeCategoryName(template.category?.name ?? "") === normalizeCategoryName(category.name))
       .map(templateToCard);
 
-    return [...builtInTemplates, ...customTemplates];
+    return [...visibleBuiltIns, ...customTemplates];
   }
 
   return templates
@@ -513,7 +524,7 @@ function TemplatePreview({ template }: { template: TemplateCard }) {
       {template.tools.includes("BBOX") && <i className="bbox-demo demo-one" />}
       {template.tools.includes("POLYGON") && <i className="polygon-demo" />}
       {template.tools.includes("TEXT_SPAN") && <i className="text-demo" />}
-      {template.tools.includes("CLASSIFICATION") && <i className="class-demo" />}
+      {template.tools.some((tool) => ["CLASSIFICATION", "TAXONOMY", "RANKER", "RATING", "PAIRWISE"].includes(tool)) && <i className="class-demo" />}
       {template.tools.includes("KEYPOINT") && <i className="keypoint-demo" />}
       {template.tools.includes("BRUSH") && <i className="brush-demo" />}
     </span>

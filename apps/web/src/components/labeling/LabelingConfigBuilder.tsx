@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, GalleryHorizontalEnd, ImageIcon, Plus, Settings2, Shapes, Trash2 } from "lucide-react";
 import {
   annotationLabelColors,
@@ -24,9 +24,15 @@ export type ToolInput = {
 };
 
 type LabelingConfigBuilderProps = {
+  builtInCategories?: typeof builtInTemplateCategories;
+  builtInTemplates?: TemplatePreset[];
+  defaultLabelInputs?: LabelInput[];
   defaultLabels?: string;
   defaultSettings?: Partial<LabelingSettings>;
+  defaultTemplate?: TemplatePreset | null;
+  defaultTemplateId?: string | null;
   disabled?: boolean;
+  hideTemplateBrowser?: boolean;
   selectedTools?: string[];
   templates?: TemplatePreset[];
 };
@@ -73,40 +79,95 @@ const annotationToolOptions = [
   },
   {
     description: "Whole asset labels.",
-    label: "Classification",
+    label: "Choices",
     value: "CLASSIFICATION"
+  },
+  {
+    description: "Freeform text response.",
+    label: "Text area",
+    value: "TEXT_AREA"
+  },
+  {
+    description: "Editable multi-message conversation.",
+    label: "Chat",
+    value: "CHAT"
+  },
+  {
+    description: "Score with a numeric scale.",
+    label: "Rating",
+    value: "RATING"
+  },
+  {
+    description: "Hierarchical category selection.",
+    label: "Taxonomy",
+    value: "TAXONOMY"
+  },
+  {
+    description: "Rank items or responses.",
+    label: "Ranker",
+    value: "RANKER"
+  },
+  {
+    description: "Choose between two options.",
+    label: "Pairwise",
+    value: "PAIRWISE"
   },
   {
     description: "Link regions or entities together.",
     label: "Relation",
     value: "RELATION"
+  },
+  {
+    description: "Segments over audio.",
+    label: "Audio region",
+    value: "AUDIO_REGION"
+  },
+  {
+    description: "Segments over video.",
+    label: "Video region",
+    value: "VIDEO_REGION"
+  },
+  {
+    description: "Ranges in time series.",
+    label: "Time series",
+    value: "TIMESERIES_RANGE"
   }
 ];
 
 export function LabelingConfigBuilder({
+  builtInCategories: initialBuiltInCategories = builtInTemplateCategories,
+  builtInTemplates = builtInTemplatePresets,
+  defaultLabelInputs,
   defaultLabels = "",
   defaultSettings: initialSettings,
+  defaultTemplate,
+  defaultTemplateId,
   disabled = false,
+  hideTemplateBrowser = false,
   selectedTools = ["BBOX"],
   templates
 }: LabelingConfigBuilderProps) {
-  const allTemplates = useMemo(() => [...builtInTemplatePresets, ...(templates ?? [])], [templates]);
+  const allTemplates = useMemo(() => [...builtInTemplates, ...(templates ?? [])], [builtInTemplates, templates]);
   const categories = useMemo(() => {
-    const builtInCategories = builtInTemplateCategories.map((category) => category.name);
+    const builtInCategories = initialBuiltInCategories.map((category) => category.name);
     const extraCategories = allTemplates
       .map((template) => template.category)
       .filter((category) => !builtInCategories.includes(category));
 
     return [...builtInCategories, ...Array.from(new Set(extraCategories)), "Custom Templates"];
-  }, [allTemplates]);
+  }, [allTemplates, initialBuiltInCategories]);
   const [mode, setMode] = useState<"visual" | "code">("visual");
-  const [activeCategory, setActiveCategory] = useState(categories[0] ?? "Computer Vision");
-  const [activeTemplate, setActiveTemplate] = useState<TemplatePreset | null>(null);
-  const [labelRows, setLabelRows] = useState<LabelRow[]>(() => parseLabelRows(defaultLabels));
+  const [activeCategory, setActiveCategory] = useState(defaultTemplate?.category ?? categories[0] ?? "Computer Vision");
+  const [activeTemplate, setActiveTemplate] = useState<TemplatePreset | null>(defaultTemplate ?? null);
+  const templateTouchedRef = useRef(false);
+  const [labelRows, setLabelRows] = useState<LabelRow[]>(() => parseDefaultLabelRows(defaultLabelInputs, defaultLabels));
   const [labelSearch, setLabelSearch] = useState("");
   const [newLabelName, setNewLabelName] = useState("");
   const [activeTools, setActiveTools] = useState<string[]>(selectedTools.length > 0 ? selectedTools : ["BBOX"]);
   const [settings, setSettings] = useState<LabelingSettings>({ ...defaultSettings, ...initialSettings });
+  const generatedConfigCode = useMemo(() => buildConfigCode(labelRows, activeTools, settings), [activeTools, labelRows, settings]);
+  const [configCodeDraft, setConfigCodeDraft] = useState(() => defaultTemplate?.configCode ?? generatedConfigCode);
+  const [codeTouched, setCodeTouched] = useState(false);
 
   const visibleTemplates = allTemplates.filter((template) => template.category === activeCategory);
   const visibleLabelRows = useMemo(() => {
@@ -119,17 +180,40 @@ export function LabelingConfigBuilder({
 
     return indexedLabels.filter((entry) => entry.label.name.toLowerCase().includes(term));
   }, [labelRows, labelSearch]);
-  const configCode = useMemo(() => buildConfigCode(labelRows, activeTools, settings), [activeTools, labelRows, settings]);
+  const assetBindings = getAssetBindings(configCodeDraft, activeTemplate);
+
+  useEffect(() => {
+    if (templateTouchedRef.current || activeTemplate || !defaultTemplateId) {
+      return;
+    }
+
+    const selectedTemplate = findTemplateById(allTemplates, defaultTemplateId);
+
+    if (selectedTemplate) {
+      setActiveTemplate(selectedTemplate);
+      setActiveCategory(selectedTemplate.category);
+    }
+  }, [activeTemplate, allTemplates, defaultTemplateId]);
+
+  useEffect(() => {
+    if (!codeTouched && !activeTemplate?.configCode) {
+      setConfigCodeDraft(generatedConfigCode);
+    }
+  }, [activeTemplate?.configCode, codeTouched, generatedConfigCode]);
 
   function applyTemplate(template: TemplatePreset) {
     if (disabled) {
       return;
     }
 
+    templateTouchedRef.current = true;
     setActiveTemplate(template);
+    setActiveCategory(template.category);
     setLabelRows(parseLabelRows(template.labels.join("\n")));
     setActiveTools(template.tools);
     setSettings({ ...defaultSettings, ...template.settings });
+    setConfigCodeDraft(template.configCode ?? buildConfigCode(parseLabelRows(template.labels.join("\n")), template.tools, { ...defaultSettings, ...template.settings }));
+    setCodeTouched(false);
   }
 
   function addLabel() {
@@ -176,6 +260,18 @@ export function LabelingConfigBuilder({
   return (
     <section className="wide labeling-config-builder">
       <input name="annotationTemplateId" type="hidden" value={activeTemplate?.sourceTemplateId ?? ""} />
+      <input name="templateId" type="hidden" value={activeTemplate?.id ?? ""} />
+      <input name="configCode" type="hidden" value={configCodeDraft} />
+      {activeTools.map((tool) => (
+        <input key={tool} name="annotationTools" type="hidden" value={tool} />
+      ))}
+      {labelRows.map((label, index) => (
+        <span className="hidden-form-fields" key={`${label.name}-${index}`}>
+          <input name="labelName" type="hidden" value={label.name} />
+          <input name="labelColor" type="hidden" value={label.color} />
+          <input name="labelShortcut" type="hidden" value={label.shortcutKey} />
+        </span>
+      ))}
       <div className="labeling-config-head">
         <div>
           <p className="eyebrow">Labeling interface</p>
@@ -197,7 +293,7 @@ export function LabelingConfigBuilder({
         </div>
       </div>
 
-      <div className="template-browser">
+      {!hideTemplateBrowser && <div className="template-browser">
         <aside className="template-category-list">
           {categories.map((category) => {
             const categoryTemplates = allTemplates.filter((template) => template.category === category);
@@ -263,14 +359,14 @@ export function LabelingConfigBuilder({
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       <div className="label-config-layout">
         <div className="label-config-panel">
           <div className="configure-source">
             <ImageIcon size={18} />
             <span>Use asset from</span>
-            <code>$image</code>
+            <code>{assetBindings.join(", ")}</code>
           </div>
 
           <label>
@@ -311,9 +407,6 @@ export function LabelingConfigBuilder({
             {labelRows.length > 0 ? (
               visibleLabelRows.map(({ index, label }) => (
                 <div className="label-editor-row" key={`${label.name}-${index}`}>
-                  <input name="labelName" type="hidden" value={label.name} />
-                  <input name="labelColor" type="hidden" value={label.color} />
-                  <input name="labelShortcut" type="hidden" value={label.shortcutKey} />
                   <input
                     aria-label={`${label.name} color`}
                     disabled={disabled}
@@ -416,14 +509,26 @@ export function LabelingConfigBuilder({
                   {activeTools.includes("BBOX") && <i className="bbox-demo demo-two" />}
                   {activeTools.includes("POLYGON") && <i className="polygon-demo" />}
                   {activeTools.includes("KEYPOINT") && <i className="keypoint-demo" />}
+                  {activeTools.some(isChoiceLikeTool) && <i className="class-demo" />}
                 </div>
               </div>
               <ToolGrid activeTools={activeTools} disabled={disabled} onToggle={toggleTool} />
             </>
           ) : (
             <label className="code-preview-wrap">
-              <span>Generated Label Studio-style config</span>
-              <textarea className="config-code-preview" readOnly rows={16} value={configCode} />
+              <span>Label Studio-style config</span>
+              <textarea
+                className="config-code-preview"
+                disabled={disabled}
+                name="configCodeEditor"
+                onChange={(event) => {
+                  setConfigCodeDraft(event.target.value);
+                  setCodeTouched(true);
+                }}
+                rows={16}
+                spellCheck={false}
+                value={configCodeDraft}
+              />
             </label>
           )}
         </div>
@@ -449,7 +554,6 @@ function ToolGrid({
           <input
             checked={activeTools.includes(tool.value)}
             disabled={disabled}
-            name="annotationTools"
             onChange={() => onToggle(tool.value)}
             type="checkbox"
             value={tool.value}
@@ -472,7 +576,7 @@ function TemplatePreview({ template }: { template: TemplatePreset }) {
       {template.tools.includes("BBOX") && <i className="bbox-demo demo-one" />}
       {template.tools.includes("POLYGON") && <i className="polygon-demo" />}
       {template.tools.includes("TEXT_SPAN") && <i className="text-demo" />}
-      {template.tools.includes("CLASSIFICATION") && <i className="class-demo" />}
+      {template.tools.some(isChoiceLikeTool) && <i className="class-demo" />}
       {template.tools.includes("KEYPOINT") && <i className="keypoint-demo" />}
       {template.tools.includes("BRUSH") && <i className="brush-demo" />}
     </span>
@@ -490,6 +594,21 @@ function parseLabelRows(value: string) {
       name,
       shortcutKey: getShortcutKey(index) ?? ""
     }));
+}
+
+function parseDefaultLabelRows(defaultLabelInputs: LabelInput[] | undefined, defaultLabels: string) {
+  if (defaultLabelInputs && defaultLabelInputs.length > 0) {
+    return defaultLabelInputs
+      .filter((label) => label.name.trim().length > 0)
+      .slice(0, 50)
+      .map((label, index) => ({
+        color: label.color || annotationLabelColors[index % annotationLabelColors.length],
+        name: label.name.trim(),
+        shortcutKey: label.shortcutKey?.trim().slice(0, 1) ?? getShortcutKey(index) ?? ""
+      }));
+  }
+
+  return parseLabelRows(defaultLabels);
 }
 
 export function parseLabelInputsFromForm(form: HTMLFormElement): LabelInput[] {
@@ -548,11 +667,33 @@ export function getAnnotationTemplateIdFromForm(form: HTMLFormElement) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-export function buildLabelingConfig(labels: LabelInput[], tools: ToolInput[], settings: LabelingSettings, template?: TemplatePreset | null) {
+export function getConfigCodeFromForm(form: HTMLFormElement) {
+  const value = new FormData(form).get("configCode");
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function hasAnnotatableConfigCode(configCode: string | null | undefined) {
+  return Boolean(configCode && /<(RectangleLabels|Rectangle|PolygonLabels|Polygon|BrushLabels|BitmaskLabels|EllipseLabels|Ellipse|KeyPointLabels|KeyPoint|VectorLabels|VideoRectangle|VideoVector|Labels|HyperTextLabels|ParagraphLabels|OcrLabels|Choices|Taxonomy|Ranker|Rating|TextArea|Pairwise|TimeSeriesLabels|TimelineLabels)\b/.test(configCode));
+}
+
+export function buildLabelingConfig(
+  labels: LabelInput[],
+  tools: ToolInput[],
+  settings: LabelingSettings,
+  template?: TemplatePreset | null,
+  configCodeOverride?: string | null
+) {
   return {
     category: template?.category ?? null,
+    configCode: configCodeOverride ?? template?.configCode ?? null,
+    configPath: template?.configPath ?? null,
+    dataType: template?.dataType ?? null,
     labels,
     settings,
+    source: template?.source ?? null,
+    sourceRepo: template?.sourceRepo ?? null,
+    sourceTemplateId: template?.sourceTemplateId ?? template?.id ?? null,
     subtype: template?.subtype ?? null,
     templateId: template?.id ?? null,
     templateName: template?.name ?? null,
@@ -569,8 +710,8 @@ export function buildTemplateConfig(template: TemplatePreset) {
     ...buildLabelingConfig(labels, tools, { ...defaultSettings, ...template.settings }, template),
     configCode: template.configCode ?? null,
     configPath: template.configPath ?? null,
-    manifestPath: template.manifestPath ?? null,
-    source: template.source ?? null
+    source: template.source ?? null,
+    sourceRepo: template.sourceRepo ?? null
   };
 }
 
@@ -578,48 +719,177 @@ function buildConfigCode(labels: LabelRow[], tools: string[], settings: Labeling
   const labelMarkup = labels.length > 0
     ? labels.map((label) => `    <Label value="${escapeXml(label.name)}" background="${label.color}" />`).join("\n")
     : `    <Label value="Label" background="#7dd3fc" />`;
-  const zoom = settings.imageZoom ? "true" : "false";
-  const tagMarkup = tools.map((tool) => buildToolMarkup(tool, labelMarkup, settings)).join("\n\n");
+  const source = getDefaultSourceForTools(tools, settings);
+  const tagMarkup = tools.map((tool) => buildToolMarkup(tool, labelMarkup, settings, source.name)).join("\n\n");
 
   return `<View>
   <Header value="Select label and annotate the asset" />
-  <Image name="image" value="$image" zoom="${zoom}" zoomControl="${settings.zoomControls ? "true" : "false"}" rotateControl="${settings.rotateControls ? "true" : "false"}" />
+  ${source.markup}
 
 ${tagMarkup}
 </View>`;
 }
 
-function buildToolMarkup(tool: string, labelMarkup: string, settings: LabelingSettings) {
+function getAssetBindings(configCode: string, template: TemplatePreset | null) {
+  const bindings = Array.from(
+    new Set(Array.from(configCode.matchAll(/\b(?:value|valueList)="(\$[^"]+)"/g)).map((match) => match[1]))
+  );
+
+  if (bindings.length > 0) {
+    return bindings;
+  }
+
+  if (template?.dataType === "TEXT") {
+    return ["$text"];
+  }
+
+  if (template?.dataType === "AUDIO") {
+    return ["$audio"];
+  }
+
+  if (template?.dataType === "VIDEO") {
+    return ["$video"];
+  }
+
+  if (template?.dataType === "PDF") {
+    return ["$pdf"];
+  }
+
+  return ["$image"];
+}
+
+function isChoiceLikeTool(tool: string) {
+  return ["CLASSIFICATION", "TAXONOMY", "RANKER", "RATING", "PAIRWISE"].includes(tool);
+}
+
+function getDefaultSourceForTools(tools: string[], settings: LabelingSettings) {
+  if (tools.some((tool) => ["BBOX", "POLYGON", "BRUSH", "KEYPOINT"].includes(tool))) {
+    const zoom = settings.imageZoom ? "true" : "false";
+
+    return {
+      markup: `<Image name="image" value="$image" zoom="${zoom}" zoomControl="${settings.zoomControls ? "true" : "false"}" rotateControl="${settings.rotateControls ? "true" : "false"}" />`,
+      name: "image"
+    };
+  }
+
+  if (tools.includes("AUDIO_REGION")) {
+    return {
+      markup: `<Audio name="audio" value="$audio" />`,
+      name: "audio"
+    };
+  }
+
+  if (tools.includes("VIDEO_REGION")) {
+    return {
+      markup: `<Video name="video" value="$video" />`,
+      name: "video"
+    };
+  }
+
+  if (tools.includes("TIMESERIES_RANGE")) {
+    return {
+      markup: `<TimeSeries name="timeseries" value="$timeseries" />`,
+      name: "timeseries"
+    };
+  }
+
+  if (tools.includes("CHAT")) {
+    return {
+      markup: `<Chat name="chat" value="$chat" minMessages="1" messageroles="user,assistant" editable="true" />`,
+      name: "chat"
+    };
+  }
+
+  if (tools.includes("TEXT_SPAN") || tools.includes("TEXT_AREA")) {
+    return {
+      markup: `<Text name="text" value="$text" />`,
+      name: "text"
+    };
+  }
+
+  const zoom = settings.imageZoom ? "true" : "false";
+
+  return {
+    markup: `<Image name="image" value="$image" zoom="${zoom}" zoomControl="${settings.zoomControls ? "true" : "false"}" rotateControl="${settings.rotateControls ? "true" : "false"}" />`,
+    name: "image"
+  };
+}
+
+function buildToolMarkup(tool: string, labelMarkup: string, settings: LabelingSettings, sourceName: string) {
   const labelsPosition = ` labelPosition="${settings.labelPosition}"`;
 
   if (tool === "POLYGON") {
-    return `  <PolygonLabels name="polygon_label" toName="image" strokeWidth="${settings.regionBorderWidth}" pointSize="small" opacity="0.9"${labelsPosition}>
+    return `  <PolygonLabels name="polygon_label" toName="${sourceName}" strokeWidth="${settings.regionBorderWidth}" pointSize="small" opacity="0.9"${labelsPosition}>
 ${labelMarkup}
   </PolygonLabels>`;
   }
 
   if (tool === "BRUSH") {
-    return `  <BrushLabels name="mask_label" toName="image" opacity="0.45"${labelsPosition}>
+    return `  <BrushLabels name="mask_label" toName="${sourceName}" opacity="0.45"${labelsPosition}>
 ${labelMarkup}
   </BrushLabels>`;
   }
 
   if (tool === "TEXT_SPAN") {
-    return `  <Labels name="text_label" toName="text"${labelsPosition}>
+    return `  <Labels name="text_label" toName="${sourceName}"${labelsPosition}>
 ${labelMarkup}
   </Labels>`;
   }
 
   if (tool === "KEYPOINT") {
-    return `  <KeyPointLabels name="keypoint_label" toName="image" strokeWidth="${settings.regionBorderWidth}"${labelsPosition}>
+    return `  <KeyPointLabels name="keypoint_label" toName="${sourceName}" strokeWidth="${settings.regionBorderWidth}"${labelsPosition}>
 ${labelMarkup}
   </KeyPointLabels>`;
   }
 
   if (tool === "CLASSIFICATION") {
-    return `  <Choices name="classification" toName="image" choice="single"${labelsPosition}>
+    return `  <Choices name="classification" toName="${sourceName}" choice="single"${labelsPosition}>
 ${labelMarkup.replaceAll("<Label", "<Choice").replaceAll("background=", "valueColor=")}
   </Choices>`;
+  }
+
+  if (tool === "TEXT_AREA") {
+    return `  <TextArea name="answer" toName="${sourceName}" editable="true" maxSubmissions="1" />`;
+  }
+
+  if (tool === "CHAT") {
+    return "";
+  }
+
+  if (tool === "RATING") {
+    return `  <Rating name="rating" toName="${sourceName}" maxRating="5" />`;
+  }
+
+  if (tool === "TAXONOMY") {
+    return `  <Taxonomy name="taxonomy" toName="${sourceName}">
+${labelMarkup.replaceAll("<Label", "<Choice").replaceAll("background=", "valueColor=")}
+  </Taxonomy>`;
+  }
+
+  if (tool === "RANKER") {
+    return `  <Ranker name="ranker" toName="${sourceName}" />`;
+  }
+
+  if (tool === "PAIRWISE") {
+    return `  <Pairwise name="pairwise" toName="${sourceName}" />`;
+  }
+
+  if (tool === "AUDIO_REGION") {
+    return `  <Labels name="audio_label" toName="audio"${labelsPosition}>
+${labelMarkup}
+  </Labels>`;
+  }
+
+  if (tool === "VIDEO_REGION") {
+    return `  <Labels name="video_label" toName="video"${labelsPosition}>
+${labelMarkup}
+  </Labels>`;
+  }
+
+  if (tool === "TIMESERIES_RANGE") {
+    return `  <TimeSeriesLabels name="timeseries_label" toName="timeseries"${labelsPosition}>
+${labelMarkup}
+  </TimeSeriesLabels>`;
   }
 
   if (tool === "RELATION") {
@@ -628,7 +898,7 @@ ${labelMarkup.replaceAll("<Label", "<Choice").replaceAll("background=", "valueCo
   </Relations>`;
   }
 
-  return `  <RectangleLabels name="box_label" toName="image" strokeWidth="${settings.regionBorderWidth}" opacity="0.9"${labelsPosition}>
+  return `  <RectangleLabels name="box_label" toName="${sourceName}" strokeWidth="${settings.regionBorderWidth}" opacity="0.9"${labelsPosition}>
 ${labelMarkup}
   </RectangleLabels>`;
 }
@@ -644,4 +914,8 @@ function escapeXml(value: string) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+function findTemplateById(templates: TemplatePreset[], templateId: string) {
+  return templates.find((template) => template.id === templateId || template.sourceTemplateId === templateId) ?? null;
 }

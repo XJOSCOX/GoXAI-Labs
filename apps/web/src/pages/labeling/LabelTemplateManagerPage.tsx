@@ -6,26 +6,59 @@ import {
   createAnnotationTemplate,
   deleteAnnotationCategory,
   deleteAnnotationTemplate,
+  listBuiltInAnnotationTemplates,
   listAnnotationCategories,
   listAnnotationTemplates,
   updateAnnotationCategory,
   updateAnnotationTemplate,
   type AnnotationCategorySummary,
+  type BuiltInAnnotationTemplateGroup,
   type AnnotationTemplateSummary
 } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
 import {
   buildTemplateConfig,
-  builtInTemplateCategories,
-  builtInTemplatePresets,
+  builtInTemplateCategories as fallbackBuiltInTemplateCategories,
+  builtInTemplatePresets as fallbackBuiltInTemplatePresets,
   parseLabelInputsFromText,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
+import { builtInTemplateToPreset } from "../../utils/templates";
 
 const dataTypes = ["IMAGE", "VIDEO", "AUDIO", "TEXT", "PDF", "TIME_SERIES", "MULTIMODAL"];
-const templateTools = ["BBOX", "POLYGON", "BRUSH", "TEXT_SPAN", "KEYPOINT", "CLASSIFICATION", "RELATION"];
+const templateTools = [
+  "BBOX",
+  "POLYGON",
+  "BRUSH",
+  "BITMASK",
+  "ELLIPSE",
+  "VECTOR",
+  "TEXT_SPAN",
+  "HYPERTEXT_LABELS",
+  "PARAGRAPH_LABELS",
+  "KEYPOINT",
+  "CLASSIFICATION",
+  "TEXT_AREA",
+  "NUMBER",
+  "RATING",
+  "DATE_TIME",
+  "TAXONOMY",
+  "RANKER",
+  "PAIRWISE",
+  "CHAT",
+  "MAGIC_WAND",
+  "SHORTCUT",
+  "RELATION",
+  "AUDIO_REGION",
+  "VIDEO_REGION",
+  "VIDEO_RECTANGLE",
+  "VIDEO_VECTOR",
+  "TIME_SERIES_LABELS",
+  "TIMELINE_LABELS",
+  "TIMESERIES_RANGE"
+];
 
 type CategoryItem =
   | {
@@ -49,6 +82,11 @@ export function LabelTemplateManagerPage() {
   const [searchParams] = useSearchParams();
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
+  const [builtInCategories, setBuiltInCategories] = useState<CategoryItem[]>(() => getBuiltInCategories(
+    fallbackBuiltInTemplateCategories,
+    fallbackBuiltInTemplatePresets
+  ));
+  const [builtInTemplates, setBuiltInTemplates] = useState<TemplatePreset[]>(fallbackBuiltInTemplatePresets);
   const [selectedCategoryKey, setSelectedCategoryKey] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +95,6 @@ export function LabelTemplateManagerPage() {
 
   const manageableOrganizations = organizations.filter((organization) => ["OWNER", "ADMIN"].includes(organization.role));
   const canCreateCategory = dbUser?.globalRole === "SUPER_ADMIN" || manageableOrganizations.length > 0;
-  const builtInCategories = useMemo(() => getBuiltInCategories(), []);
   const categoryItems = useMemo<CategoryItem[]>(
     () => [
       ...builtInCategories,
@@ -78,7 +115,7 @@ export function LabelTemplateManagerPage() {
       : [];
   const selectedBuiltIns =
     selectedCategory?.source === "builtin"
-      ? builtInTemplatePresets.filter((template) => template.category === selectedCategory.name)
+      ? builtInTemplates.filter((template) => template.category === selectedCategory.name)
       : [];
   const canManageSelectedCategory = selectedCategory?.source === "custom" && selectedCategory.canManage;
 
@@ -87,11 +124,15 @@ export function LabelTemplateManagerPage() {
       return;
     }
 
-    const [nextCategories, nextTemplates] = await Promise.all([
+    const [nextBuiltIns, nextCategories, nextTemplates] = await Promise.all([
+      listBuiltInAnnotationTemplates(session),
       listAnnotationCategories(session),
       listAnnotationTemplates(session)
     ]);
 
+    const nextBuiltInTemplates = nextBuiltIns.templates.map(builtInTemplateToPreset);
+    setBuiltInCategories(getBuiltInCategories(nextBuiltIns.groups, nextBuiltInTemplates));
+    setBuiltInTemplates(nextBuiltInTemplates);
     setCategories(nextCategories);
     setTemplates(nextTemplates);
 
@@ -529,8 +570,8 @@ export function LabelTemplateManagerPage() {
   );
 }
 
-function getBuiltInCategories(): CategoryItem[] {
-  return builtInTemplateCategories.map((category) => ({
+function getBuiltInCategories(categories: BuiltInAnnotationTemplateGroup[], templates: TemplatePreset[]): CategoryItem[] {
+  return categories.map((category) => ({
     canManage: false,
     description: category.description,
     id: category.id,
@@ -538,7 +579,7 @@ function getBuiltInCategories(): CategoryItem[] {
     name: category.name,
     organizationId: null,
     source: "builtin",
-    templateCount: builtInTemplatePresets.filter((template) => template.categoryId === category.id || template.category === category.name).length
+    templateCount: templates.filter((template) => template.categoryId === category.id || template.category === category.name).length
   }));
 }
 

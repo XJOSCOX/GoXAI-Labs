@@ -3,48 +3,66 @@
     "id": "computer-vision",
     "name": "Computer Vision",
     "order": 10,
-    "description": "Image, OCR, segmentation, detection, classification, and visual understanding templates."
+    "description": "Image classification, detection, OCR, segmentation, captioning, keypoint, document, and visual question answering templates."
   },
   {
     "id": "natural-language-processing",
     "name": "Natural Language Processing",
     "order": 20,
-    "description": "Text extraction, classification, relation, summarization, translation, and moderation templates."
+    "description": "Text classification, entity extraction, relations, moderation, translation, taxonomy, summarization, and question answering templates."
   },
   {
-    "id": "audio-speech",
-    "name": "Audio / Speech",
+    "id": "audio-speech-processing",
+    "name": "Audio/Speech Processing",
     "order": 30,
-    "description": "Speech transcription, diarization, audio events, signal quality, and audio classification templates."
+    "description": "Speech transcription, segmented audio, speaker analysis, signal quality, sound events, intent, and conversation audio templates."
   },
   {
-    "id": "video",
-    "name": "Video",
+    "id": "conversational-ai",
+    "name": "Conversational AI",
     "order": 40,
-    "description": "Video classification, frame classification, timeline segmentation, and object tracking templates."
+    "description": "Intent, slot filling, response generation, response selection, and entity-linking templates for assistant and dialogue workflows."
   },
   {
-    "id": "time-series",
-    "name": "Time Series",
+    "id": "chat",
+    "name": "Chat",
     "order": 50,
-    "description": "Signal labeling, forecasting, quality review, activity recognition, and anomaly detection templates."
+    "description": "Chat evaluation, chatbot assessment, RLHF, red-team, and LLM conversation templates."
   },
   {
-    "id": "ranking-scoring",
-    "name": "Ranking / Scoring",
+    "id": "ranking-and-scoring",
+    "name": "Ranking & Scoring",
     "order": 60,
-    "description": "Ranking, retrieval, pairwise comparison, regression, and quality scoring templates."
+    "description": "Pairwise comparison, retrieval, search ranking, ASR hypothesis, image search, and text-to-image ranking templates."
   },
   {
     "id": "structured-data-parsing",
     "name": "Structured Data Parsing",
     "order": 70,
-    "description": "Metadata, tabular, PDF, HTML entity, and HTML classification templates."
+    "description": "PDF, HTML, tabular, and freeform metadata extraction or classification templates."
   },
   {
-    "id": "conversational-ai-chat-llm",
-    "name": "Conversational AI / Chat / LLM",
+    "id": "time-series-analysis",
+    "name": "Time Series Analysis",
     "order": 80,
-    "description": "Response generation, chat evaluation, RLHF, RAG, moderation, grading, and multi-turn evaluation templates."
+    "description": "Time series labeling, anomaly, change point, signal quality, forecasting, and activity recognition templates."
+  },
+  {
+    "id": "videos",
+    "name": "Videos",
+    "order": 90,
+    "description": "Video classification, frame labeling, object tracking, and timeline segmentation templates."
+  },
+  {
+    "id": "generative-ai",
+    "name": "Generative AI",
+    "order": 100,
+    "description": "LLM grading, supervised fine-tuning, human preference, chatbot assessment, and generative ranking templates."
+  },
+  {
+    "id": "community-contributions",
+    "name": "Community Contributions",
+    "order": 110,
+    "description": "Community-contributed domain templates and examples."
   }
 ]

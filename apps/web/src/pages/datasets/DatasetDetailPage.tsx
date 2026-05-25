@@ -26,6 +26,8 @@ import { buildUploadObjectKey, getFileKey, mergeFiles, toSafeObjectKeyPart } fro
 import { TasksTable } from "../tasks/TasksPage";
 
 const assetPageSize = 12;
+const maxStructuredImportRows = 500;
+const structuredImportExtensions = new Set(["csv", "json", "jsonl", "ndjson"]);
 
 function DatasetTasksPanel({
   canGenerateTasks,
@@ -464,7 +466,7 @@ export function DatasetDetailPage() {
                     <div className="row-actions compact">
                       <Link className="secondary-button compact-button" to={`/datasets/${dataset.id}/label-config`}>
                         <ClipboardList size={16} />
-                        Label config
+                        Template
                       </Link>
                       <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
                         <Edit3 size={16} />
@@ -493,8 +495,8 @@ export function DatasetDetailPage() {
                     </dd>
                   </div>
                   <div>
-                    <dt>Label config</dt>
-                    <dd>{dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) ? "Configured" : "Required"}</dd>
+                    <dt>Template</dt>
+                    <dd>{dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) ? "Applied" : "Required"}</dd>
                   </div>
                 </dl>
               </section>
@@ -579,7 +581,8 @@ async function uploadAndRegisterAsset(
   datasetId: string,
   file: File,
   objectKey?: string,
-  onProgress?: (progress: { loaded: number; percent: number; total: number }) => void
+  onProgress?: (progress: { loaded: number; percent: number; total: number }) => void,
+  metadata?: Record<string, unknown>
 ) {
   const signedUpload = await createAssetUploadUrl(session, {
     datasetId,
@@ -610,7 +613,10 @@ async function uploadAndRegisterAsset(
     throw error;
   }
 
-  return createAsset(session, signedUpload.asset);
+  return createAsset(session, {
+    ...signedUpload.asset,
+    metadata
+  });
 }
 
 function AssetForm({
@@ -629,12 +635,17 @@ function AssetForm({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [renameFiles, setRenameFiles] = useState(false);
+  const [textEntry, setTextEntry] = useState("");
+  const [textEntryTitle, setTextEntryTitle] = useState("");
   const [uploadFolder, setUploadFolder] = useState(`datasets/v${dataset.version}`);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [renamePrefix, setRenamePrefix] = useState(toSafeObjectKeyPart(dataset.name) || "asset");
   const assetDraft = useFormDraft(`goxai-draft-asset-${dataset.id}`);
   const selectedFilesRef = useRef<File[]>([]);
   const selectedBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
+  const datasetBindings = getDatasetBindings(dataset.labelingConfig);
+  const textSources = getDatasetTextSources(dataset.labelingConfig);
+  const primaryTextSource = textSources[0] ?? null;
 
   useEffect(() => {
     selectedFilesRef.current = selectedFiles;
@@ -671,6 +682,30 @@ function AssetForm({
 
         if (batchBytes > maxBulkUploadBytes) {
           throw new Error(`Upload up to ${formatBytes(String(maxBulkUploadBytes))} per batch.`);
+        }
+
+        const structuredFiles = selectedFiles.filter(isStructuredImportFile);
+
+        if (datasetBindings.length > 0 && structuredFiles.length > 0) {
+          if (structuredFiles.length !== selectedFiles.length) {
+            throw new Error("Import CSV, JSON, and JSONL row files separately from regular asset files.");
+          }
+
+          const importedCounts: number[] = [];
+
+          for (const file of structuredFiles) {
+            const result = await importStructuredRowsFromFile(file);
+            importedCounts.push(result.uploadedCount);
+          }
+
+          const importedTotal = importedCounts.reduce((total, count) => total + count, 0);
+
+          setSelectedFiles([]);
+          form.reset();
+          assetDraft.clearDraft();
+          setSavedMessage(`${importedTotal} row${importedTotal === 1 ? "" : "s"} imported as task data.`);
+          await onCreated();
+          return;
         }
 
         setUploadProgress({
@@ -803,6 +838,252 @@ function AssetForm({
     }
   }
 
+  async function handleCreateTextAsset() {
+    setSavedMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    if (!primaryTextSource) {
+      setPageError("This dataset template does not expose a text source like $text.");
+      return;
+    }
+
+    const text = textEntry.trim();
+
+    if (!text) {
+      setPageError("Paste the text for this task first.");
+      return;
+    }
+
+    const title = textEntryTitle.trim() || `${primaryTextSource.binding}-task`;
+    const fileName = `${toSafeObjectKeyPart(title) || "text-task"}-${Date.now()}.txt`;
+    const file = new File([text], fileName, { type: "text/plain;charset=utf-8" });
+
+    setSaving(true);
+    setUploadProgress({
+      completed: 0,
+      currentFile: file.name,
+      failed: 0,
+      currentFilePercent: 0,
+      currentLoadedBytes: 0,
+      currentTotalBytes: file.size,
+      status: "uploading",
+      total: 1
+    });
+
+    try {
+      await uploadAndRegisterAsset(
+        session,
+        dataset.id,
+        file,
+        buildUploadObjectKey(file, {
+          folder: `datasets/v${dataset.version}/text`,
+          prefix: toSafeObjectKeyPart(title) || primaryTextSource.binding,
+          rename: true
+        }),
+        (progress) => {
+          setUploadProgress({
+            completed: 0,
+            currentFile: file.name,
+            currentFilePercent: progress.percent,
+            currentLoadedBytes: progress.loaded,
+            currentTotalBytes: progress.total,
+            failed: 0,
+            status: "uploading",
+            total: 1
+          });
+        },
+        {
+          data: {
+            [primaryTextSource.binding]: text
+          },
+          source: "text-entry",
+          sourceName: primaryTextSource.name,
+          valueType: "text",
+          [primaryTextSource.binding]: text
+        }
+      );
+
+      setTextEntry("");
+      setTextEntryTitle("");
+      setSavedMessage("Text task data was added.");
+      setUploadProgress({
+        completed: 1,
+        currentFile: "",
+        failed: 0,
+        currentFilePercent: 100,
+        currentLoadedBytes: file.size,
+        currentTotalBytes: file.size,
+        status: "complete",
+        total: 1
+      });
+      await onCreated();
+    } catch (reason) {
+      setUploadProgress((current) => current ? { ...current, status: "error" } : null);
+      setPageError(reason instanceof Error ? reason.message : "Unable to add text task data.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function importStructuredRowsFromFile(file: File) {
+    if (!session) {
+      throw new Error("Authentication required.");
+    }
+
+    const rows = await parseStructuredImportFile(file);
+
+    if (rows.length === 0) {
+      throw new Error("No rows were found in that file.");
+    }
+
+    if (rows.length > maxStructuredImportRows) {
+      throw new Error(`Import up to ${maxStructuredImportRows} rows at once for now. Split larger files into smaller batches.`);
+    }
+
+    const missingBindings = datasetBindings.filter((binding) => rows.every((row) => row[binding] === undefined || row[binding] === null || row[binding] === ""));
+
+    if (missingBindings.length > 0) {
+      throw new Error(`Missing template column${missingBindings.length === 1 ? "" : "s"}: ${missingBindings.join(", ")}.`);
+    }
+
+    const uploaded: AssetSummary[] = [];
+    const failed: string[] = [];
+    const importName = toSafeObjectKeyPart(file.name.replace(/\.[^.]+$/, "")) || "structured-import";
+
+    setUploadProgress({
+      completed: 0,
+      currentFile: file.name,
+      failed: 0,
+      currentFilePercent: 0,
+      currentLoadedBytes: 0,
+      currentTotalBytes: file.size,
+      status: "uploading",
+      total: rows.length
+    });
+
+    for (const [index, row] of rows.entries()) {
+      const rowNumber = index + 1;
+      const rowTitle = getStructuredRowTitle(row, datasetBindings, rowNumber);
+      const rowFileName = `${importName}-row-${String(rowNumber).padStart(4, "0")}.json`;
+      const rowPayload = {
+        data: row,
+        importFileName: file.name,
+        rowNumber,
+        templateBindings: datasetBindings
+      };
+      const rowFile = new File([JSON.stringify(rowPayload, null, 2)], rowFileName, { type: "application/json" });
+
+      setUploadProgress({
+        completed: uploaded.length,
+        currentFile: rowFileName,
+        failed: failed.length,
+        currentFilePercent: 0,
+        currentLoadedBytes: 0,
+        currentTotalBytes: rowFile.size,
+        status: "uploading",
+        total: rows.length
+      });
+
+      try {
+        uploaded.push(
+          await uploadAndRegisterAsset(
+            session,
+            dataset.id,
+            rowFile,
+            buildUploadObjectKey(rowFile, {
+              folder: `datasets/v${dataset.version}/rows/${importName}`,
+              prefix: `${importName}-row-${rowNumber}`,
+              rename: true
+            }),
+            (progress) => {
+              setUploadProgress({
+                completed: uploaded.length,
+                currentFile: rowFileName,
+                currentFilePercent: progress.percent,
+                currentLoadedBytes: progress.loaded,
+                currentTotalBytes: progress.total,
+                failed: failed.length,
+                status: "uploading",
+                total: rows.length
+              });
+            },
+            {
+              data: row,
+              importFileName: file.name,
+              rowNumber,
+              rowTitle,
+              source: "structured-import",
+              templateBindings: datasetBindings
+            }
+          )
+        );
+      } catch (reason) {
+        failed.push(`Row ${rowNumber}: ${reason instanceof Error ? reason.message : "Upload failed."}`);
+      }
+    }
+
+    setUploadProgress({
+      completed: uploaded.length,
+      currentFile: "",
+      failed: failed.length,
+      currentFilePercent: failed.length > 0 ? undefined : 100,
+      currentLoadedBytes: undefined,
+      currentTotalBytes: undefined,
+      status: failed.length > 0 ? "error" : "complete",
+      total: rows.length
+    });
+
+    if (failed.length > 0) {
+      setPageError(failed.slice(0, 3).join(" "));
+    }
+
+    if (uploaded.length === 0) {
+      throw new Error("No rows imported. Check the first error and try again.");
+    }
+
+    return {
+      failedCount: failed.length,
+      uploadedCount: uploaded.length
+    };
+  }
+
+  async function handleImportStructuredFile(file: File | null) {
+    setSavedMessage(null);
+    setPageError(null);
+
+    if (!file) {
+      return;
+    }
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    if (datasetBindings.length === 0) {
+      setPageError("Choose a template before importing structured task data.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const result = await importStructuredRowsFromFile(file);
+      setSavedMessage(`${result.uploadedCount} row${result.uploadedCount === 1 ? "" : "s"} imported as task data.`);
+      await onCreated();
+    } catch (reason) {
+      setUploadProgress((current) => current ? { ...current, status: "error" } : null);
+      setPageError(reason instanceof Error ? reason.message : "Unable to import structured task data.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function addFiles(files: FileList | File[]) {
     const incoming = Array.from(files).filter((file) => file.size > 0);
 
@@ -858,6 +1139,68 @@ function AssetForm({
         <p className="eyebrow">Assets</p>
         <h2>Bulk upload</h2>
       </div>
+      {primaryTextSource && (
+        <section className="text-asset-entry wide">
+          <div>
+            <p className="eyebrow">Text task data</p>
+            <h3>Add text for {primaryTextSource.binding}</h3>
+            <p className="muted-copy">
+              This dataset template reads from ${primaryTextSource.binding}. Paste the source text here, then generate tasks from the dataset.
+            </p>
+          </div>
+          <label>
+            Title
+            <input
+              onChange={(event) => setTextEntryTitle(event.target.value)}
+              placeholder="Article, document, or prompt title"
+              value={textEntryTitle}
+            />
+          </label>
+          <label>
+            Source text
+            <textarea
+              onChange={(event) => setTextEntry(event.target.value)}
+              placeholder="Paste the text the annotator should summarize, classify, or answer from..."
+              rows={8}
+              value={textEntry}
+            />
+          </label>
+          <div className="asset-row-actions">
+            <span className="muted-copy">{textEntry.trim().length.toLocaleString()} characters</span>
+            <button className="primary-button" disabled={saving || !textEntry.trim()} onClick={handleCreateTextAsset} type="button">
+              <FileText size={16} />
+              Add text data
+            </button>
+          </div>
+        </section>
+      )}
+      {datasetBindings.length > 0 && (
+        <section className="text-asset-entry wide">
+          <div>
+            <p className="eyebrow">Structured import</p>
+            <h3>Import CSV, JSON, or JSONL rows</h3>
+            <p className="muted-copy">
+              Each row becomes one task data asset. You can also pick these files from bulk upload. Required columns: {datasetBindings.map((binding) => `$${binding}`).join(", ")}.
+            </p>
+          </div>
+          <div className="structured-import-row">
+            <label className="secondary-button file-picker-button">
+              <FileText size={16} />
+              Import rows
+              <input
+                accept=".csv,.json,.jsonl,application/json,text/csv,application/x-ndjson"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0] ?? null;
+                  event.currentTarget.value = "";
+                  void handleImportStructuredFile(file);
+                }}
+                type="file"
+              />
+            </label>
+            <span className="muted-copy">Up to {maxStructuredImportRows} rows per import.</span>
+          </div>
+        </section>
+      )}
       <div className="drop-zone wide">
         <CloudUpload size={22} />
         <strong>Drop images or files here</strong>
@@ -1439,6 +1782,179 @@ function getAssetFolderPrefix(objectKey: string) {
   const slashIndex = objectKey.lastIndexOf("/");
 
   return slashIndex > -1 ? objectKey.slice(0, slashIndex + 1) : "";
+}
+
+function getDatasetBindings(config: DatasetSummary["labelingConfig"]) {
+  const configCode = typeof config?.configCode === "string" ? config.configCode : "";
+  return Array.from(new Set(Array.from(configCode.matchAll(/\b(?:value|valueList)="\$([^"]+)"/g)).map((match) => match[1]).filter(Boolean)));
+}
+
+function getDatasetTextSources(config: DatasetSummary["labelingConfig"]) {
+  const configCode = typeof config?.configCode === "string" ? config.configCode : "";
+  const sources: { binding: string; name: string }[] = [];
+  const textTagPattern = /<(Text|HyperText|Paragraphs|List|Chat)\b([^>]*)\/?>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = textTagPattern.exec(configCode))) {
+    const attributes = match[2] ?? "";
+    const name = getXmlAttribute(attributes, "name");
+    const value = getXmlAttribute(attributes, "value") ?? getXmlAttribute(attributes, "valueList");
+
+    if (!name || !value?.startsWith("$")) {
+      continue;
+    }
+
+    sources.push({
+      binding: value.slice(1),
+      name
+    });
+  }
+
+  return sources;
+}
+
+function getXmlAttribute(attributes: string, name: string) {
+  const match = attributes.match(new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i"));
+  return match?.[1] ?? match?.[2] ?? null;
+}
+
+function isStructuredImportFile(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return structuredImportExtensions.has(extension) || ["application/json", "application/x-ndjson", "text/csv"].includes(file.type);
+}
+
+async function parseStructuredImportFile(file: File) {
+  const text = await file.text();
+  const extension = file.name.split(".").pop()?.toLowerCase();
+
+  if (extension === "csv" || file.type === "text/csv") {
+    return parseCsvRows(text);
+  }
+
+  if (extension === "jsonl" || extension === "ndjson") {
+    return parseJsonLines(text);
+  }
+
+  return parseJsonRows(text);
+}
+
+function parseJsonRows(text: string): Record<string, unknown>[] {
+  const parsed = JSON.parse(text) as unknown;
+  const rows = Array.isArray(parsed)
+    ? parsed
+    : isRecord(parsed) && Array.isArray(parsed.data)
+      ? parsed.data
+      : isRecord(parsed)
+        ? [parsed]
+        : [];
+
+  return rows.map((row, index) => {
+    if (!isRecord(row)) {
+      throw new Error(`JSON row ${index + 1} must be an object.`);
+    }
+
+    return row;
+  });
+}
+
+function parseJsonLines(text: string): Record<string, unknown>[] {
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const parsed = JSON.parse(line) as unknown;
+
+      if (!isRecord(parsed)) {
+        throw new Error(`JSONL line ${index + 1} must be an object.`);
+      }
+
+      return parsed;
+    });
+}
+
+function parseCsvRows(text: string): Record<string, unknown>[] {
+  const rows = parseCsvTable(text);
+
+  if (rows.length < 2) {
+    return [];
+  }
+
+  const headers = rows[0].map((header) => header.trim());
+
+  if (headers.some((header) => !header)) {
+    throw new Error("CSV headers cannot be empty.");
+  }
+
+  return rows.slice(1).filter((row) => row.some((cell) => cell.trim())).map((row) => {
+    const record: Record<string, unknown> = {};
+
+    headers.forEach((header, index) => {
+      record[header] = row[index] ?? "";
+    });
+
+    return record;
+  });
+}
+
+function parseCsvTable(text: string) {
+  const rows: string[][] = [];
+  let cell = "";
+  let row: string[] = [];
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  rows.push(row);
+
+  return rows;
+}
+
+function getStructuredRowTitle(row: Record<string, unknown>, bindings: string[], rowNumber: number) {
+  const titleValue = row.title ?? row.name ?? row.id ?? bindings.map((binding) => row[binding]).find((value) => typeof value === "string" && value.trim());
+
+  return typeof titleValue === "string" && titleValue.trim()
+    ? titleValue.trim().slice(0, 80)
+    : `Row ${rowNumber}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function AssetPreview({

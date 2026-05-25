@@ -3,6 +3,7 @@ import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand } from "@aws-s
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   getPrismaClient,
+  Prisma,
   StorageProvider,
   type StorageAsset
 } from "@goxai/database";
@@ -602,7 +603,8 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         height: parsed.value.height,
         duration: parsed.value.duration,
         metadata: {
-          source: "r2-registration"
+          source: "r2-registration",
+          ...parsed.value.metadata
         }
       },
       include: assetIncludes
@@ -672,6 +674,7 @@ type CreateAssetBody =
       width?: unknown;
       height?: unknown;
       duration?: unknown;
+      metadata?: unknown;
     }
   | undefined;
 
@@ -707,6 +710,7 @@ function parseCreateAssetBody(body: CreateAssetBody):
         width?: number;
         height?: number;
         duration?: number;
+        metadata?: Prisma.InputJsonObject;
       };
     }
   | { ok: false; error: string } {
@@ -720,6 +724,7 @@ function parseCreateAssetBody(body: CreateAssetBody):
   const width = parsePositiveInteger(body?.width);
   const height = parsePositiveInteger(body?.height);
   const duration = parsePositiveNumber(body?.duration);
+  const metadata = parseMetadata(body?.metadata);
 
   if (!datasetId) {
     return { ok: false, error: "Dataset is required." };
@@ -761,7 +766,8 @@ function parseCreateAssetBody(body: CreateAssetBody):
       checksum,
       width,
       height,
-      duration
+      duration,
+      metadata
     }
   };
 }
@@ -818,6 +824,14 @@ function parseCreateUploadUrlBody(body: CreateUploadUrlBody):
       fileSize
     }
   };
+}
+
+function parseMetadata(value: unknown): Prisma.InputJsonObject | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as Prisma.InputJsonObject;
 }
 
 function parseDeleteAssetsBody(body: DeleteAssetsBody):

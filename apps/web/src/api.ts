@@ -270,6 +270,34 @@ export interface AnnotationTemplateSummary {
   subtype?: string | null;
 }
 
+export interface BuiltInAnnotationTemplateSummary {
+  category: string;
+  categoryId: string;
+  configCode: string;
+  configJson: Record<string, unknown>;
+  configPath: string;
+  dataType: string;
+  description: string;
+  details: string | null;
+  id: string;
+  image: string | null;
+  labels: string[];
+  name: string;
+  order: number;
+  source: "builtin";
+  sourceRepo: string | null;
+  subtype: string;
+  tools: string[];
+  type: string;
+}
+
+export interface BuiltInAnnotationTemplateGroup {
+  description: string;
+  id: string;
+  name: string;
+  order: number;
+}
+
 export interface AnnotationCategorySummary {
   canManage: boolean;
   createdAt: string;
@@ -421,6 +449,7 @@ export interface CreateAssetInput {
   width?: string;
   height?: string;
   duration?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface AssetUploadRequest {
@@ -482,6 +511,9 @@ export interface TaskSummary {
     objectKey: string;
     mimeType: string;
     fileSize: string;
+    width: number | null;
+    height: number | null;
+    metadata: Record<string, unknown> | null;
   } | null;
   assignedTo: {
     id: string;
@@ -536,6 +568,12 @@ export interface TaskDetailResult {
 
 export interface SaveAnnotationInput {
   leadTimeSeconds?: number;
+  results?: {
+    fromName: string;
+    toName: string;
+    type: string;
+    value: Record<string, unknown>;
+  }[];
   regions: {
     geometry:
       | {
@@ -742,6 +780,19 @@ export async function listAnnotationTemplates(session: Session) {
   }
 
   return ((await response.json()) as { templates: AnnotationTemplateSummary[] }).templates;
+}
+
+export async function listBuiltInAnnotationTemplates(session: Session) {
+  const response = await authenticatedFetch(session, "/api/annotation-templates/builtins");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load built-in annotation templates."));
+  }
+
+  return (await response.json()) as {
+    groups: BuiltInAnnotationTemplateGroup[];
+    templates: BuiltInAnnotationTemplateSummary[];
+  };
 }
 
 export async function listAnnotationCategories(session: Session) {

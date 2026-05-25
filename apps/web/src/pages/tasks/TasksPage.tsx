@@ -14,20 +14,30 @@ export function TasksPage() {
   const datasetId = searchParams.get("datasetId") ?? undefined;
   const projectId = searchParams.get("projectId") ?? undefined;
   const { error, loading, reload, setError, tasks } = useTasks(session, { datasetId, projectId });
-  const isFiltered = Boolean(datasetId || projectId);
+  const selectedProjectName = tasks[0]?.project.name ?? "Project";
+  const selectedDatasetName = tasks[0]?.dataset?.name ?? "Dataset";
 
   return (
     <section className="page-stack">
       {error && <p className="form-error">{error}</p>}
       <section className="panel task-page-frame">
-        {isFiltered ? (
+        {datasetId ? (
           <>
-            <Link className="secondary-button compact-button task-back-button" to="/tasks">
+            <Link className="secondary-button compact-button task-back-button" to={projectId ? `/tasks?projectId=${projectId}` : "/tasks"}>
               <ArrowLeft size={16} />
-              Back to task folders
+              Back to dataset folders
             </Link>
+            <div className="task-queue-heading">
+              <div>
+                <p className="eyebrow">Dataset queue</p>
+                <h2>{selectedDatasetName}</h2>
+              </div>
+              <span className="muted-copy">{selectedProjectName}</span>
+            </div>
             <TasksTable loading={loading} onChanged={reload} session={session} setPageError={setError} tasks={tasks} />
           </>
+        ) : projectId ? (
+          <TaskDatasetFolders loading={loading} projectName={selectedProjectName} tasks={tasks} />
         ) : (
           <TaskProjectFolders loading={loading} tasks={tasks} />
         )}
@@ -46,7 +56,7 @@ function TaskProjectFolders({ loading, tasks }: { loading: boolean; tasks: TaskS
           <p className="eyebrow">Task folders</p>
           <h2>Projects with tasks</h2>
         </div>
-        <span className="muted-copy">Open a project folder to see its task queue.</span>
+        <span className="muted-copy">Open a project folder to choose a dataset queue.</span>
       </div>
       {loading ? (
         <div className="empty-state">
@@ -97,6 +107,90 @@ function TaskProjectFolders({ loading, tasks }: { loading: boolean; tasks: TaskS
           <ClipboardList size={28} />
           <strong>No task folders yet</strong>
           <span>Active projects with generated tasks will appear here.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TaskDatasetFolders({
+  loading,
+  projectName,
+  tasks
+}: {
+  loading: boolean;
+  projectName: string;
+  tasks: TaskSummary[];
+}) {
+  const folders = useMemo(() => buildDatasetFolders(tasks), [tasks]);
+  const projectId = tasks[0]?.projectId ?? "";
+
+  return (
+    <section className="task-folder-panel">
+      <Link className="secondary-button compact-button task-back-button" to="/tasks">
+        <ArrowLeft size={16} />
+        Back to project folders
+      </Link>
+      <div className="section-actions">
+        <div>
+          <p className="eyebrow">Dataset folders</p>
+          <h2>{projectName}</h2>
+        </div>
+        <span className="muted-copy">Choose the dataset queue you want to work on.</span>
+      </div>
+      {loading ? (
+        <div className="empty-state">
+          <ClipboardList size={28} />
+          <strong>Loading dataset folders</strong>
+          <span>Checking dataset queues and task access.</span>
+        </div>
+      ) : folders.length > 0 ? (
+        <div className="task-folder-grid">
+          {folders.map((folder) => (
+            <Link
+              className="task-folder-card"
+              key={folder.datasetId}
+              to={`/tasks?projectId=${projectId || folder.projectId}&datasetId=${folder.datasetId}`}
+            >
+              <div className="task-folder-head">
+                <span className="task-folder-icon">
+                  <FolderKanban size={22} />
+                </span>
+                <span>
+                  <strong>{folder.datasetName}</strong>
+                  <small>{folder.versionLabel}</small>
+                </span>
+              </div>
+              <div className="task-folder-stats">
+                <span>
+                  <strong>{folder.total}</strong>
+                  <small>Total</small>
+                </span>
+                <span>
+                  <strong>{folder.pending}</strong>
+                  <small>Pending</small>
+                </span>
+                <span>
+                  <strong>{folder.active}</strong>
+                  <small>Active</small>
+                </span>
+                <span>
+                  <strong>{folder.done}</strong>
+                  <small>Done</small>
+                </span>
+              </div>
+              <div className="task-folder-footer">
+                <span className="status-pill compact">{folder.readyLabel}</span>
+                <span>{folder.unassigned} unassigned</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <ClipboardList size={28} />
+          <strong>No dataset task folders yet</strong>
+          <span>Generate tasks from a dataset to make it appear here.</span>
         </div>
       )}
     </section>
@@ -323,4 +417,58 @@ function buildProjectFolders(tasks: TaskSummary[]) {
       datasetCount: folder.datasetIds.size
     }))
     .sort((left, right) => right.total - left.total || left.projectName.localeCompare(right.projectName));
+}
+
+function buildDatasetFolders(tasks: TaskSummary[]) {
+  const folders = new Map<
+    string,
+    {
+      active: number;
+      datasetId: string;
+      datasetName: string;
+      done: number;
+      pending: number;
+      projectId: string;
+      readyLabel: string;
+      total: number;
+      unassigned: number;
+      versionLabel: string;
+    }
+  >();
+
+  for (const task of tasks) {
+    const datasetId = task.datasetId ?? "no-dataset";
+    const folder =
+      folders.get(datasetId) ??
+      {
+        active: 0,
+        datasetId,
+        datasetName: task.dataset?.name ?? "No dataset",
+        done: 0,
+        pending: 0,
+        projectId: task.projectId,
+        readyLabel: task.dataset ? "Ready" : "Project task",
+        total: 0,
+        unassigned: 0,
+        versionLabel: task.dataset ? `Version ${task.dataset.version}` : task.project.name
+      };
+
+    folder.total += 1;
+
+    if (!task.assignedToId) {
+      folder.unassigned += 1;
+    }
+
+    if (task.status === "PENDING") {
+      folder.pending += 1;
+    } else if (["ASSIGNED", "IN_PROGRESS", "REVIEWING"].includes(task.status)) {
+      folder.active += 1;
+    } else if (["SUBMITTED", "APPROVED"].includes(task.status)) {
+      folder.done += 1;
+    }
+
+    folders.set(datasetId, folder);
+  }
+
+  return [...folders.values()].sort((left, right) => right.total - left.total || left.datasetName.localeCompare(right.datasetName));
 }

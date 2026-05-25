@@ -1,21 +1,33 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CheckCircle2, Save } from "lucide-react";
-import { listAnnotationTemplates, updateDataset, type AnnotationTemplateSummary } from "../../api";
+import { ArrowLeft, CheckCircle2, GalleryHorizontalEnd, Save, Settings2, X } from "lucide-react";
+import {
+  listAnnotationTemplates,
+  listBuiltInAnnotationTemplates,
+  updateDataset,
+  type AnnotationTemplateSummary
+} from "../../api";
 import { useAuth } from "../../auth";
 import {
+  annotationLabelColors,
   buildLabelingConfig,
+  builtInTemplateCategories as fallbackBuiltInTemplateCategories,
+  builtInTemplatePresets as fallbackBuiltInTemplatePresets,
   getAnnotationTemplateIdFromForm,
+  getConfigCodeFromForm,
+  hasAnnotatableConfigCode,
   LabelingConfigBuilder,
   parseLabelingSettingsFromForm,
   parseLabelInputsFromForm,
   parseLabelInputsFromText,
   parseToolInputsFromForm,
+  type LabelInput,
   type LabelingSettings,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
 import { useDataset } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
+import { builtInTemplateToPreset } from "../../utils/templates";
 
 export function DatasetLabelConfigPage() {
   const { datasetId = "" } = useParams();
@@ -26,6 +38,10 @@ export function DatasetLabelConfigPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
+  const [builtInTemplates, setBuiltInTemplates] = useState<TemplatePreset[]>(fallbackBuiltInTemplatePresets);
+  const [builtInCategories, setBuiltInCategories] = useState(fallbackBuiltInTemplateCategories);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [configDraft, setConfigDraft] = useState<{ source: "dataset" | "template"; template: TemplatePreset } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,9 +52,14 @@ export function DatasetLabelConfigPage() {
       }
 
       try {
-        const templateList = await listAnnotationTemplates(session);
+        const [builtIns, templateList] = await Promise.all([
+          listBuiltInAnnotationTemplates(session),
+          listAnnotationTemplates(session)
+        ]);
 
         if (!cancelled) {
+          setBuiltInCategories(builtIns.groups);
+          setBuiltInTemplates(builtIns.templates.map(builtInTemplateToPreset));
           setTemplates(templateList);
         }
       } catch {
@@ -56,6 +77,14 @@ export function DatasetLabelConfigPage() {
   }, [session]);
 
   const templatePresets = useMemo(() => templates.map(templateToPreset), [templates]);
+  const allTemplatePresets = useMemo(
+    () => [...builtInTemplates, ...templatePresets],
+    [builtInTemplates, templatePresets]
+  );
+  const appliedTemplate = useMemo(
+    () => dataset ? getAppliedTemplate(dataset, allTemplatePresets) : null,
+    [allTemplatePresets, dataset]
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,12 +101,13 @@ export function DatasetLabelConfigPage() {
     const tools = parseToolInputsFromForm(event.currentTarget);
     const settings = parseLabelingSettingsFromForm(form);
     const annotationTemplateId = getAnnotationTemplateIdFromForm(form);
-    const selectedTemplate = templatePresets.find((template) => template.sourceTemplateId === annotationTemplateId) ?? null;
+    const configCode = getConfigCodeFromForm(form);
+    const selectedTemplate = getSelectedTemplateFromForm(form, allTemplatePresets);
     const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
     const markReady = submitter?.value === "ready";
 
-    if (labels.length === 0) {
-      setPageError("Add at least one label before saving this dataset labeling config.");
+    if (labels.length === 0 && !hasAnnotatableConfigCode(configCode)) {
+      setPageError("Add at least one label or provide Label Studio config code with an annotation control.");
       return;
     }
 
@@ -91,19 +121,21 @@ export function DatasetLabelConfigPage() {
     try {
       await updateDataset(session, dataset.id, {
         annotationTemplateId,
-        labelingConfig: buildLabelingConfig(labels, tools, settings, selectedTemplate),
+        labelingConfig: buildLabelingConfig(labels, tools, settings, selectedTemplate, configCode),
         labels,
         tools,
         ...(markReady ? { status: "READY" } : {})
       });
-      setMessage(markReady ? "Dataset label config saved and marked ready." : "Dataset label config saved.");
+      setMessage(markReady ? "Dataset template saved and marked ready." : "Dataset template saved.");
       await reload();
+      setConfigDraft(null);
+      setShowTemplatePicker(false);
 
       if (markReady) {
         navigate(`/datasets/${dataset.id}`);
       }
     } catch (reason) {
-      setPageError(reason instanceof Error ? reason.message : "Unable to save dataset label config.");
+      setPageError(reason instanceof Error ? reason.message : "Unable to save dataset template.");
     } finally {
       setSaving(false);
     }
@@ -120,13 +152,13 @@ export function DatasetLabelConfigPage() {
         </div>
         {(error ?? pageError) && <p className="form-error">{error ?? pageError}</p>}
         {loading ? (
-          <p className="muted-copy">Loading dataset label config.</p>
+          <p className="muted-copy">Loading dataset template.</p>
         ) : dataset ? (
           <div className="label-config-page">
             <section className="panel">
               <div className="dataset-summary-head">
                 <div>
-                  <p className="eyebrow">Dataset label setup</p>
+                  <p className="eyebrow">Dataset template</p>
                   <h2>{dataset.name}</h2>
                 </div>
                 <span className="status-pill compact">{formatEnum(dataset.status)}</span>
@@ -150,35 +182,272 @@ export function DatasetLabelConfigPage() {
                 </div>
               </dl>
               <p className="muted-copy">
-                A dataset needs its own annotation template before it can be made ready for public or assigned work.
+                Apply a template to this dataset before making it ready for public or assigned work.
               </p>
             </section>
 
-            <form className="panel labeling-config-form" onSubmit={handleSubmit}>
-              <LabelingConfigBuilder
-                defaultLabels={datasetLabelsToText(dataset)}
-                defaultSettings={getDatasetSettings(dataset.labelingConfig)}
-                selectedTools={dataset.tools.filter((tool) => tool.enabled).map((tool) => tool.tool)}
-                templates={templatePresets}
-              />
-              {message && <p className="form-success">{message}</p>}
-              <div className="row-actions">
-                <button className="primary-button" type="submit" value="save" disabled={saving}>
-                  <Save size={18} />
-                  {saving ? "Saving" : "Save label config"}
-                </button>
-                <button className="secondary-button" type="submit" value="ready" disabled={saving}>
-                  <CheckCircle2 size={18} />
-                  Save and mark ready
+            <section className="panel dataset-template-assignment">
+              <div className="dataset-template-assignment-head">
+                <div>
+                  <p className="eyebrow">Assigned template</p>
+                  <h3>{appliedTemplate?.name ?? "No template assigned"}</h3>
+                  <p className="muted-copy">
+                    {appliedTemplate
+                      ? `${appliedTemplate.category} · ${appliedTemplate.dataType}`
+                      : "Choose a reusable template, then configure labels, tools, and settings in the popup."}
+                  </p>
+                </div>
+                <button className="primary-button" type="button" onClick={() => setShowTemplatePicker(true)}>
+                  <GalleryHorizontalEnd size={18} />
+                  {appliedTemplate ? "Change template" : "Assign template"}
                 </button>
               </div>
-            </form>
+              {appliedTemplate ? (
+                <div className="dataset-template-card">
+                  <TemplateMiniPreview template={appliedTemplate} />
+                  <div>
+                    <strong>{appliedTemplate.name}</strong>
+                    <span>{appliedTemplate.description}</span>
+                    <div className="label-chip-list compact">
+                      <span className="label-chip">{dataset.labels.length || appliedTemplate.labels.length} labels</span>
+                      <span className="label-chip">
+                        {dataset.tools.filter((tool) => tool.enabled).length || appliedTemplate.tools.length} tools
+                      </span>
+                      <span className="label-chip">{appliedTemplate.source === "custom" ? "Custom" : "Built-in"}</span>
+                    </div>
+                  </div>
+                  <button
+                    className="secondary-button compact-button"
+                    type="button"
+                    onClick={() => setConfigDraft({ source: "dataset", template: appliedTemplate })}
+                  >
+                    <Settings2 size={16} />
+                    Configure
+                  </button>
+                </div>
+              ) : (
+                <button className="dataset-template-empty" type="button" onClick={() => setShowTemplatePicker(true)}>
+                  <GalleryHorizontalEnd size={24} />
+                  <strong>Select a template</strong>
+                  <span>Browse categories on the left, pick a template, then configure it before saving.</span>
+                </button>
+              )}
+              {message && <p className="form-success">{message}</p>}
+            </section>
           </div>
         ) : !error ? (
           <p className="muted-copy">Dataset was not found.</p>
         ) : null}
       </section>
+      {showTemplatePicker && (
+        <TemplatePickerModal
+          categories={builtInCategories.map((category) => category.name)}
+          onClose={() => setShowTemplatePicker(false)}
+          onSelectTemplate={(template) => {
+            setShowTemplatePicker(false);
+            setConfigDraft({ source: "template", template });
+          }}
+          selectedTemplateId={appliedTemplate?.id ?? null}
+          templates={allTemplatePresets}
+        />
+      )}
+      {dataset && configDraft && (
+        <TemplateConfigModal
+          datasetLabels={configDraft.source === "dataset" ? getDatasetLabelInputs(dataset) : getTemplateLabelInputs(configDraft.template)}
+          defaultSettings={configDraft.source === "dataset" ? getDatasetSettings(dataset.labelingConfig) : configDraft.template.settings}
+          onBack={() => {
+            setConfigDraft(null);
+            setShowTemplatePicker(true);
+          }}
+          onClose={() => setConfigDraft(null)}
+          onSubmit={handleSubmit}
+          saving={saving}
+          selectedTools={
+            configDraft.source === "dataset"
+              ? dataset.tools.filter((tool) => tool.enabled).map((tool) => tool.tool)
+              : configDraft.template.tools
+          }
+          template={configDraft.template}
+          templatePresets={templatePresets}
+          builtInCategories={builtInCategories}
+          builtInTemplates={builtInTemplates}
+        />
+      )}
     </section>
+  );
+}
+
+function TemplatePickerModal({
+  categories,
+  onClose,
+  onSelectTemplate,
+  selectedTemplateId,
+  templates
+}: {
+  categories: string[];
+  onClose: () => void;
+  onSelectTemplate: (template: TemplatePreset) => void;
+  selectedTemplateId: string | null;
+  templates: TemplatePreset[];
+}) {
+  const categoryNames = useMemo(() => {
+    const extras = templates.map((template) => template.category).filter((category) => !categories.includes(category));
+    return [...categories, ...Array.from(new Set(extras))];
+  }, [categories, templates]);
+  const [activeCategory, setActiveCategory] = useState(categoryNames[0] ?? "Computer Vision");
+  const visibleTemplates = templates.filter((template) => template.category === activeCategory);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="template-picker-title"
+        aria-modal="true"
+        className="modal-panel dataset-template-picker-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Assign template</p>
+            <h2 id="template-picker-title">Choose a dataset template</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close template picker">
+            <X size={17} />
+          </button>
+        </div>
+        <div className="dataset-template-picker">
+          <aside className="dataset-template-category-list">
+            {categoryNames.map((category) => {
+              const count = templates.filter((template) => template.category === category).length;
+
+              return (
+                <button
+                  className={`dataset-template-category ${activeCategory === category ? "active" : ""}`}
+                  key={category}
+                  type="button"
+                  onClick={() => setActiveCategory(category)}
+                >
+                  <span>{category}</span>
+                  <small>{count}</small>
+                </button>
+              );
+            })}
+          </aside>
+          <div className="dataset-template-picker-grid">
+            {visibleTemplates.map((template) => (
+              <button
+                className={`dataset-template-option ${selectedTemplateId === template.id ? "active" : ""}`}
+                key={template.id}
+                type="button"
+                onClick={() => onSelectTemplate(template)}
+              >
+                <TemplateMiniPreview template={template} />
+                <strong>{template.name}</strong>
+                <span>{template.description}</span>
+                <small>{template.subtype} - {template.dataType}</small>
+              </button>
+            ))}
+            {visibleTemplates.length === 0 && (
+              <div className="template-empty-state">
+                <strong>No templates in this category yet.</strong>
+                <small>Create one from Label settings first.</small>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TemplateConfigModal({
+  builtInCategories,
+  builtInTemplates,
+  datasetLabels,
+  defaultSettings,
+  onBack,
+  onClose,
+  onSubmit,
+  saving,
+  selectedTools,
+  template,
+  templatePresets
+}: {
+  builtInCategories: typeof fallbackBuiltInTemplateCategories;
+  builtInTemplates: TemplatePreset[];
+  datasetLabels: LabelInput[];
+  defaultSettings?: Partial<LabelingSettings>;
+  onBack: () => void;
+  onClose: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  saving: boolean;
+  selectedTools: string[];
+  template: TemplatePreset;
+  templatePresets: TemplatePreset[];
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="template-config-title"
+        aria-modal="true"
+        className="modal-panel dataset-template-config-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Template configuration</p>
+            <h2 id="template-config-title">{template.name}</h2>
+          </div>
+          <div className="row-actions compact">
+            <button className="secondary-button compact-button" type="button" onClick={onBack}>
+              <ArrowLeft size={16} />
+              Back to templates
+            </button>
+            <button className="icon-button" type="button" onClick={onClose} aria-label="Close template configuration">
+              <X size={17} />
+            </button>
+          </div>
+        </div>
+        <form className="labeling-config-form dataset-template-config-form" onSubmit={onSubmit}>
+          <LabelingConfigBuilder
+            builtInCategories={builtInCategories}
+            builtInTemplates={builtInTemplates}
+            defaultLabelInputs={datasetLabels}
+            defaultLabels={template.labels.join("\n")}
+            defaultSettings={defaultSettings}
+            defaultTemplate={template}
+            defaultTemplateId={template.sourceTemplateId ?? template.id}
+            hideTemplateBrowser
+            selectedTools={selectedTools.length > 0 ? selectedTools : template.tools}
+            templates={templatePresets}
+          />
+          <div className="row-actions">
+            <button className="primary-button" type="submit" value="save" disabled={saving}>
+              <Save size={18} />
+              {saving ? "Saving" : "Save template"}
+            </button>
+            <button className="secondary-button" type="submit" value="ready" disabled={saving}>
+              <CheckCircle2 size={18} />
+              Save and mark ready
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function TemplateMiniPreview({ template }: { template: TemplatePreset }) {
+  return (
+    <span className="dataset-template-preview">
+      {template.tools.includes("BBOX") && <i className="bbox-demo demo-one" />}
+      {template.tools.includes("POLYGON") && <i className="polygon-demo" />}
+      {template.tools.includes("TEXT_SPAN") && <i className="text-demo" />}
+      {template.tools.some((tool) => ["CLASSIFICATION", "TAXONOMY", "RANKER", "RATING", "PAIRWISE"].includes(tool)) && <i className="class-demo" />}
+      {template.tools.includes("KEYPOINT") && <i className="keypoint-demo" />}
+      {template.tools.includes("BRUSH") && <i className="brush-demo" />}
+    </span>
   );
 }
 
@@ -210,6 +479,53 @@ function datasetLabelsToText(dataset: {
     })
     .filter(Boolean)
     .join("\n");
+}
+
+function getDatasetLabelInputs(dataset: {
+  labelingConfig: Record<string, unknown> | null;
+  labels: Array<{ color: string; name: string; shortcutKey: string | null }>;
+}): LabelInput[] {
+  if (dataset.labels.length > 0) {
+    return dataset.labels.map((label) => ({
+      color: label.color,
+      name: label.name,
+      shortcutKey: label.shortcutKey ?? undefined
+    }));
+  }
+
+  const config = dataset.labelingConfig;
+
+  if (!config || !Array.isArray(config.labels)) {
+    return [];
+  }
+
+  return config.labels
+    .flatMap((label, index): LabelInput[] => {
+      if (typeof label === "string") {
+        return [{
+          color: annotationLabelColors[index % annotationLabelColors.length],
+          name: label,
+          shortcutKey: index < 9 ? String(index + 1) : undefined
+        }];
+      }
+
+      if (!label || typeof label !== "object") {
+        return [];
+      }
+
+      const record = label as Record<string, unknown>;
+      const name = typeof record.name === "string" ? record.name.trim() : "";
+
+      if (!name) {
+        return [];
+      }
+
+      return [{
+        color: typeof record.color === "string" && record.color.trim() ? record.color.trim() : annotationLabelColors[index % annotationLabelColors.length],
+        name,
+        shortcutKey: typeof record.shortcutKey === "string" && record.shortcutKey.trim() ? record.shortcutKey.trim().slice(0, 1) : undefined
+      }];
+    });
 }
 
 function getDatasetSettings(config: Record<string, unknown> | null) {
@@ -253,12 +569,16 @@ function templateToPreset(template: AnnotationTemplateSummary): TemplatePreset {
 
   return {
     category: template.category?.name ?? getConfigString(config, "category") ?? "Custom Templates",
+    configCode: getConfigString(config, "configCode") ?? undefined,
+    configPath: getConfigString(config, "configPath") ?? undefined,
     dataType: template.dataType,
     description: template.description ?? "Custom GoXAi Lab labeling template.",
     id: `custom-${template.id}`,
     labels,
     name: template.name,
     settings: getDatasetSettings(config),
+    source: "custom",
+    sourceRepo: getConfigString(config, "sourceRepo") ?? undefined,
     sourceTemplateId: template.id,
     subtype: getConfigString(config, "subtype") ?? "Custom",
     tools: tools.length > 0 ? tools : ["BBOX"]
@@ -269,4 +589,113 @@ function getConfigString(config: Record<string, unknown>, key: string) {
   const value = config[key];
 
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getSelectedTemplateFromForm(form: HTMLFormElement, templates: TemplatePreset[]) {
+  const annotationTemplateId = getAnnotationTemplateIdFromForm(form);
+  const configTemplateId = new FormData(form).get("templateId");
+  const selectedId = typeof configTemplateId === "string" && configTemplateId.trim() ? configTemplateId.trim() : null;
+
+  return templates.find((template) =>
+    Boolean(
+      (annotationTemplateId && template.sourceTemplateId === annotationTemplateId) ||
+      (selectedId && (template.id === selectedId || template.sourceTemplateId === selectedId))
+    )
+  ) ?? null;
+}
+
+function getDatasetTemplateId(dataset: {
+  annotationTemplateId: string | null;
+  labelingConfig: Record<string, unknown> | null;
+}) {
+  if (dataset.annotationTemplateId) {
+    return dataset.annotationTemplateId;
+  }
+
+  const config = dataset.labelingConfig;
+  const templateId = getConfigString(config ?? {}, "templateId");
+  const sourceTemplateId = getConfigString(config ?? {}, "sourceTemplateId");
+
+  return templateId ?? sourceTemplateId;
+}
+
+function getTemplateLabelInputs(template: TemplatePreset): LabelInput[] {
+  return template.labels.map((name, index) => ({
+    color: annotationLabelColors[index % annotationLabelColors.length],
+    name,
+    shortcutKey: index < 9 ? String(index + 1) : undefined
+  }));
+}
+
+function getAppliedTemplate(
+  dataset: {
+    annotationTemplate: AnnotationTemplateSummary | null;
+    annotationTemplateId: string | null;
+    labelingConfig: Record<string, unknown> | null;
+  },
+  templates: TemplatePreset[]
+) {
+  const selectedId = getDatasetTemplateId(dataset);
+  const matchedTemplate = selectedId
+    ? templates.find((template) => template.id === selectedId || template.sourceTemplateId === selectedId)
+    : null;
+
+  if (matchedTemplate) {
+    return matchedTemplate;
+  }
+
+  const config = dataset.labelingConfig;
+  const templateName = getConfigString(config ?? {}, "templateName") ?? dataset.annotationTemplate?.name;
+
+  if (!templateName) {
+    return null;
+  }
+
+  const labels = Array.isArray(config?.labels)
+    ? config.labels
+        .map((label) => {
+          if (typeof label === "string") {
+            return label;
+          }
+
+          if (label && typeof label === "object" && "name" in label && typeof label.name === "string") {
+            return label.name;
+          }
+
+          return "";
+        })
+        .filter(Boolean)
+    : [];
+  const tools = Array.isArray(config?.tools)
+    ? config.tools
+        .map((tool) => {
+          if (typeof tool === "string") {
+            return tool;
+          }
+
+          if (tool && typeof tool === "object" && "tool" in tool && typeof tool.tool === "string") {
+            return tool.tool;
+          }
+
+          return "";
+        })
+        .filter(Boolean)
+    : [];
+
+  return {
+    category: getConfigString(config ?? {}, "category") ?? dataset.annotationTemplate?.category?.name ?? "Custom Templates",
+    configCode: getConfigString(config ?? {}, "configCode") ?? undefined,
+    configPath: getConfigString(config ?? {}, "configPath") ?? undefined,
+    dataType: getConfigString(config ?? {}, "dataType") ?? dataset.annotationTemplate?.dataType ?? "IMAGE",
+    description: dataset.annotationTemplate?.description ?? "Dataset template snapshot.",
+    id: getConfigString(config ?? {}, "templateId") ?? dataset.annotationTemplateId ?? "dataset-template",
+    labels,
+    name: templateName,
+    settings: getDatasetSettings(config),
+    source: getConfigString(config ?? {}, "source") === "custom" ? "custom" : "builtin",
+    sourceRepo: getConfigString(config ?? {}, "sourceRepo") ?? undefined,
+    sourceTemplateId: dataset.annotationTemplateId ?? getConfigString(config ?? {}, "sourceTemplateId") ?? undefined,
+    subtype: getConfigString(config ?? {}, "subtype") ?? templateName,
+    tools: tools.length > 0 ? tools : ["BBOX"]
+  } satisfies TemplatePreset;
 }

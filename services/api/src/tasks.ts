@@ -819,7 +819,8 @@ const taskIncludes = {
       mimeType: true,
       fileSize: true,
       width: true,
-      height: true
+      height: true,
+      metadata: true
     }
   },
   assignedTo: {
@@ -912,6 +913,7 @@ type TaskWithRelations = Task & {
     fileSize: bigint;
     width: number | null;
     height: number | null;
+    metadata: unknown;
   } | null;
   assignedTo: {
     id: string;
@@ -1057,7 +1059,19 @@ function parseAnnotationBody(body: unknown):
           metadata: Record<string, unknown>;
           type: AnnotationRegionType;
         }[];
+        results: {
+          from_name: string;
+          to_name: string;
+          type: string;
+          value: Prisma.InputJsonObject;
+        }[];
         resultJson: {
+          results: {
+            from_name: string;
+            to_name: string;
+            type: string;
+            value: Prisma.InputJsonObject;
+          }[];
           regions: {
             geometry: Prisma.InputJsonObject;
             label: string | null;
@@ -1073,9 +1087,14 @@ function parseAnnotationBody(body: unknown):
 
   const payload = body as Record<string, unknown>;
   const rawRegions = Array.isArray(payload.regions) ? payload.regions : [];
+  const rawResults = Array.isArray(payload.results) ? payload.results : [];
 
   if (rawRegions.length > 250) {
     return { ok: false, error: "Save up to 250 regions per annotation for now." };
+  }
+
+  if (rawResults.length > 250) {
+    return { ok: false, error: "Save up to 250 non-region results per annotation for now." };
   }
 
   const regions = [];
@@ -1170,13 +1189,39 @@ function parseAnnotationBody(body: unknown):
     typeof payload.leadTimeSeconds === "number" && Number.isFinite(payload.leadTimeSeconds) && payload.leadTimeSeconds >= 0
       ? payload.leadTimeSeconds
       : undefined;
+  const results = [];
+
+  for (const rawResult of rawResults) {
+    if (!rawResult || typeof rawResult !== "object") {
+      return { ok: false, error: "Each annotation result must be an object." };
+    }
+
+    const result = rawResult as Record<string, unknown>;
+    const fromName = normalizeShortText(result.fromName ?? result.from_name, 120);
+    const toName = normalizeShortText(result.toName ?? result.to_name, 120);
+    const type = normalizeShortText(result.type, 80);
+    const value = result.value;
+
+    if (!fromName || !toName || !type || !isPlainJsonObject(value)) {
+      return { ok: false, error: "Each annotation result needs fromName, toName, type, and a value object." };
+    }
+
+    results.push({
+      from_name: fromName,
+      to_name: toName,
+      type,
+      value: value as Prisma.InputJsonObject
+    });
+  }
 
   return {
     ok: true,
     value: {
       leadTimeSeconds,
       regions,
+      results,
       resultJson: {
+        results,
         regions: regions.map((region) => ({
           geometry: region.geometryJson,
           label: region.label,
@@ -1193,6 +1238,14 @@ function normalizeUnitNumber(value: unknown) {
   }
 
   return Math.max(0, Math.min(1, value));
+}
+
+function normalizeShortText(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : null;
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function normalizePositiveInteger(value: unknown) {

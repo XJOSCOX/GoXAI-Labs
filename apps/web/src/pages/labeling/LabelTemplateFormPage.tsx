@@ -5,24 +5,27 @@ import {
   createAnnotationCategory,
   createAnnotationTemplate,
   deleteAnnotationTemplate,
+  listBuiltInAnnotationTemplates,
   listAnnotationCategories,
   listAnnotationTemplates,
   updateAnnotationTemplate,
   type AnnotationCategorySummary,
+  type BuiltInAnnotationTemplateGroup,
   type AnnotationTemplateSummary
 } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
 import {
   annotationLabelColors,
   buildTemplateConfig,
-  builtInTemplateCategories,
-  builtInTemplatePresets,
+  builtInTemplateCategories as fallbackBuiltInTemplateCategories,
+  builtInTemplatePresets as fallbackBuiltInTemplatePresets,
   parseLabelInputsFromText,
   type LabelingSettings,
   type TemplatePreset
 } from "../../components/labeling/LabelingConfigBuilder";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
+import { builtInTemplateToPreset } from "../../utils/templates";
 
 const dataTypes = ["IMAGE", "VIDEO", "AUDIO", "TEXT", "PDF", "TIME_SERIES", "MULTIMODAL"];
 const labelPositions: Array<LabelingSettings["labelPosition"]> = ["top", "right", "bottom", "left"];
@@ -46,6 +49,7 @@ const templateToolDefinitions = [
   { id: "PARAGRAPH_LABELS", label: "Paragraph labels", tagNames: ["ParagraphLabels"], type: "label" },
   { id: "CLASSIFICATION", label: "Choices", tagNames: ["Choices"], type: "choice" },
   { id: "TEXT_AREA", label: "Text area", tagNames: ["TextArea"], type: "field" },
+  { id: "CHAT", label: "Chat", tagNames: ["Chat"], type: "field" },
   { id: "NUMBER", label: "Number", tagNames: ["Number"], type: "field" },
   { id: "RATING", label: "Rating", tagNames: ["Rating"], type: "field" },
   { id: "DATE_TIME", label: "Date/time", tagNames: ["DateTime"], type: "field" },
@@ -75,6 +79,8 @@ export function LabelTemplateFormPage() {
   const { organizations } = useOrganizations(session);
   const [categories, setCategories] = useState<AnnotationCategorySummary[]>([]);
   const [templates, setTemplates] = useState<AnnotationTemplateSummary[]>([]);
+  const [builtInCategories, setBuiltInCategories] = useState<BuiltInAnnotationTemplateGroup[]>(fallbackBuiltInTemplateCategories);
+  const [builtInTemplates, setBuiltInTemplates] = useState<TemplatePreset[]>(fallbackBuiltInTemplatePresets);
   const [error, setError] = useState<string | null>(null);
   const [editorMode, setEditorMode] = useState<"code" | "visual">("visual");
   const [configCodeDraft, setConfigCodeDraft] = useState<string | null>(null);
@@ -86,11 +92,11 @@ export function LabelTemplateFormPage() {
   const editableCategories = useMemo(() => categories.filter((category) => category.canManage), [categories]);
   const selectedTemplate = templates.find((template) => template.id === templateId) ?? null;
   const sourceTemplateId = searchParams.get("sourceTemplate");
-  const sourcePreset = builtInTemplatePresets.find((template) => template.id === sourceTemplateId) ?? null;
+  const sourcePreset = builtInTemplates.find((template) => template.id === sourceTemplateId) ?? null;
   const requestedCategoryId = searchParams.get("category");
   const requestedCategoryName = searchParams.get("categoryName");
   const routeCategoryId = getCustomCategoryId(categoryKey);
-  const routeCategoryName = getBuiltInCategoryName(categoryKey);
+  const routeCategoryName = getBuiltInCategoryName(categoryKey, builtInCategories);
   const routeEditableCategoryId =
     routeCategoryId && editableCategories.some((category) => category.id === routeCategoryId)
       ? routeCategoryId
@@ -145,12 +151,15 @@ export function LabelTemplateFormPage() {
       }
 
       try {
-        const [nextCategories, nextTemplates] = await Promise.all([
+        const [nextBuiltIns, nextCategories, nextTemplates] = await Promise.all([
+          listBuiltInAnnotationTemplates(session),
           listAnnotationCategories(session),
           listAnnotationTemplates(session)
         ]);
 
         if (!cancelled) {
+          setBuiltInCategories(nextBuiltIns.groups);
+          setBuiltInTemplates(nextBuiltIns.templates.map(builtInTemplateToPreset));
           setCategories(nextCategories);
           setTemplates(nextTemplates);
         }
@@ -1091,13 +1100,13 @@ function getCustomCategoryId(categoryKey?: string) {
   return categoryKey?.startsWith("custom:") ? categoryKey.replace("custom:", "") : null;
 }
 
-function getBuiltInCategoryName(categoryKey?: string) {
+function getBuiltInCategoryName(categoryKey: string | undefined, builtInCategories: BuiltInAnnotationTemplateGroup[]) {
   if (!categoryKey?.startsWith("builtin:")) {
     return null;
   }
 
   const categoryIdOrName = categoryKey.replace("builtin:", "");
-  return builtInTemplateCategories.find((category) => category.id === categoryIdOrName)?.name ?? categoryIdOrName;
+  return builtInCategories.find((category) => category.id === categoryIdOrName)?.name ?? categoryIdOrName;
 }
 
 function normalizePresetDataType(dataType?: string) {

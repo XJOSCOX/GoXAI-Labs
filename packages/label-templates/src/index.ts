@@ -1,3 +1,5 @@
+import { parse as parseYaml } from "yaml";
+
 export type LabelingSettings = {
   imageZoom: boolean;
   labelPosition: "top" | "right" | "bottom" | "left";
@@ -20,43 +22,31 @@ export type TemplatePreset = {
   configPath?: string;
   dataType: string;
   description: string;
+  details?: string;
   id: string;
+  image?: string;
   labels: string[];
-  manifestPath?: string;
   name: string;
+  order?: number;
   settings?: Partial<LabelingSettings>;
   source?: "builtin" | "custom";
+  sourceRepo?: string;
   sourceTemplateId?: string;
   subtype: string;
   tools: string[];
+  type?: string;
 };
 
-type TemplateManifest = {
-  category: string;
-  categoryDescription?: string;
-  categoryId?: string;
-  categoryOrder?: number;
-  configPath?: string;
-  dataType: string;
-  description: string;
-  id: string;
-  labels?: string[];
-  name: string;
-  settings?: Partial<LabelingSettings>;
-  source?: "builtin";
-  subtype: string;
-  templateOrder?: number;
-  tools?: string[];
-};
-
-type LoadedManifest = TemplateManifest & {
-  categoryId: string;
-  categoryOrder: number;
-  configPath: string;
-  labels: string[];
-  manifestPath: string;
-  templateOrder: number;
-  tools: string[];
+type TemplateRecipe = {
+  config: string;
+  dataType?: string;
+  details?: string;
+  group: string;
+  image?: string;
+  order?: number;
+  sourceRepo?: string;
+  title: string;
+  type?: string;
 };
 
 export const annotationLabelColors = ["#7dd3fc", "#86efac", "#fda4af", "#fde047", "#c4b5fd", "#fdba74", "#67e8f9", "#f9a8d4"];
@@ -66,37 +56,35 @@ const categoryModules = import.meta.glob<TemplateCategoryPreset[]>("../templates
   import: "default"
 });
 
-const manifestModules = import.meta.glob<Record<string, unknown>>("../templates/*/*/manifest.json", {
-  eager: true,
-  import: "default"
-});
-
-const configModules = import.meta.glob<string>("../templates/*/*/template.xml", {
+const groupModules = import.meta.glob<string>("../templates/groups.txt", {
   eager: true,
   import: "default",
   query: "?raw"
 });
 
-const configByPath = new Map(
-  Object.entries(configModules).map(([modulePath, configCode]) => [modulePathToTemplatePath(modulePath), configCode])
-);
+const recipeModules = import.meta.glob<string>("../templates/*/*/config.yml", {
+  eager: true,
+  import: "default",
+  query: "?raw"
+});
 
-const categoryDefaults = new Map(
-  (Object.values(categoryModules)[0] ?? []).map((category) => [category.id, category])
-);
+const groupNames = parseGroupList(Object.values(groupModules)[0] ?? "");
+const categoriesFromJson = applyGroupOrdering(Object.values(categoryModules)[0] ?? [], groupNames);
+const categoryDefaults = new Map(categoriesFromJson.map((category) => [category.id, category]));
 
-const loadedManifests = Object.entries(manifestModules)
-  .map(([modulePath, manifest]) => normalizeManifest(modulePath, manifest))
-  .sort((a, b) => a.categoryOrder - b.categoryOrder || a.templateOrder - b.templateOrder || a.name.localeCompare(b.name));
+const loadedRecipes = Object.entries(recipeModules)
+  .map(([modulePath, rawRecipe]) => normalizeRecipe(modulePath, rawRecipe))
+  .sort((a, b) => a.categoryOrder - b.categoryOrder || a.order - b.order || a.title.localeCompare(b.title));
 
 export const builtInTemplateCategories: TemplateCategoryPreset[] = Array.from(
-  loadedManifests.reduce((categories, manifest) => {
-    if (!categories.has(manifest.categoryId)) {
-      categories.set(manifest.categoryId, {
-        description: manifest.categoryDescription ?? categoryDefaults.get(manifest.categoryId)?.description ?? `${manifest.category} templates and starter settings.`,
-        id: manifest.categoryId,
-        name: manifest.category,
-        order: manifest.categoryOrder
+  loadedRecipes.reduce((categories, recipe) => {
+    if (!categories.has(recipe.categoryId)) {
+      const fallback = categoryDefaults.get(recipe.categoryId);
+      categories.set(recipe.categoryId, {
+        description: fallback?.description ?? `${recipe.group} templates and starter labeling configurations.`,
+        id: recipe.categoryId,
+        name: recipe.group,
+        order: recipe.categoryOrder
       });
     }
 
@@ -104,50 +92,234 @@ export const builtInTemplateCategories: TemplateCategoryPreset[] = Array.from(
   }, new Map<string, TemplateCategoryPreset>()).values()
 ).sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 
-export const builtInTemplatePresets: TemplatePreset[] = loadedManifests.map((manifest) => ({
-  category: manifest.category,
-  categoryId: manifest.categoryId,
-  configCode: configByPath.get(manifest.configPath),
-  configPath: manifest.configPath,
-  dataType: manifest.dataType,
-  description: manifest.description,
-  id: manifest.id,
-  labels: manifest.labels,
-  manifestPath: manifest.manifestPath,
-  name: manifest.name,
-  settings: manifest.settings ?? {},
-  source: "builtin",
-  subtype: manifest.subtype,
-  tools: manifest.tools
-}));
+export const builtInTemplatePresets: TemplatePreset[] = loadedRecipes.map((recipe) => {
+  const summary = summarizeConfig(recipe.config);
+
+  return {
+    category: recipe.group,
+    categoryId: recipe.categoryId,
+    configCode: recipe.config,
+    configPath: recipe.configPath,
+    dataType: recipe.dataType ?? summary.dataType,
+    description: detailsToDescription(recipe.details) ?? `${recipe.title} labeling template.`,
+    details: recipe.details,
+    id: recipe.id,
+    image: recipe.image,
+    labels: summary.labels,
+    name: recipe.title,
+    order: recipe.order,
+    settings: summary.settings,
+    source: "builtin",
+    sourceRepo: recipe.sourceRepo,
+    subtype: recipe.title,
+    tools: summary.tools,
+    type: recipe.type
+  };
+});
 
 export function getBuiltInTemplatePreset(templateId: string) {
   return builtInTemplatePresets.find((template) => template.id === templateId) ?? null;
 }
 
-function normalizeManifest(modulePath: string, manifestModule: Record<string, unknown>): LoadedManifest {
-  const manifest = manifestModule as TemplateManifest;
-  const categoryId = manifest.categoryId ?? categoryIdFromPath(modulePath);
-  const categoryDefault = categoryDefaults.get(categoryId);
-  const category = manifest.category || categoryDefault?.name || titleFromSlug(categoryId);
-  const templateOrder = manifest.templateOrder ?? templateOrderFromPath(modulePath);
-  const configPath = manifest.configPath ?? modulePathToTemplatePath(modulePath.replace(/manifest\.json$/, "template.xml"));
+function normalizeRecipe(modulePath: string, rawRecipe: string) {
+  const recipe = parseRecipeYaml(rawRecipe, modulePath);
+  const normalizedPath = modulePathToTemplatePath(modulePath);
+  const categoryId = categoryIdFromPath(modulePath);
+  const fallback = categoryDefaults.get(categoryId);
+  const templateId = `${categoryId}/${templateIdFromPath(modulePath)}`;
 
   return {
-    ...manifest,
-    category,
+    ...recipe,
     categoryId,
-    categoryOrder: manifest.categoryOrder ?? categoryDefault?.order ?? 100,
-    configPath,
-    labels: Array.isArray(manifest.labels) ? manifest.labels : [],
-    manifestPath: modulePathToTemplatePath(modulePath),
-    templateOrder,
-    tools: Array.isArray(manifest.tools) ? manifest.tools : []
+    categoryOrder: fallback?.order ?? 100,
+    configPath: normalizedPath,
+    group: recipe.group || fallback?.name || titleFromSlug(categoryId),
+    id: templateId,
+    order: recipe.order ?? templateOrderFromPath(modulePath)
   };
+}
+
+function parseRecipeYaml(rawRecipe: string, sourcePath: string): TemplateRecipe {
+  const result = parseYamlObject(rawRecipe, sourcePath);
+
+  return {
+    config: readString(result.config) ?? "<View></View>",
+    dataType: readString(result.dataType),
+    details: readString(result.details),
+    group: readString(result.group) ?? "Custom Templates",
+    image: readString(result.image),
+    order: readNumber(result.order),
+    sourceRepo: readString(result.source_repo),
+    title: readString(result.title) ?? "Untitled template",
+    type: readString(result.type)
+  };
+}
+
+function parseYamlObject(rawRecipe: string, sourcePath: string) {
+  try {
+    const parsed = parseYaml(rawRecipe) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Expected a YAML mapping at the document root.");
+    }
+
+    return parsed as Record<string, unknown>;
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : "Unknown YAML parse error.";
+    throw new Error(`Unable to parse template recipe ${sourcePath}: ${message}`);
+  }
+}
+
+function readString(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  return undefined;
+}
+
+function readNumber(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : undefined;
+  }
+
+  return undefined;
+}
+
+function parseGroupList(rawGroups: string) {
+  return rawGroups
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((group) => group.trim())
+    .filter(Boolean);
+}
+
+function applyGroupOrdering(categories: TemplateCategoryPreset[], groups: string[]) {
+  const orderByName = new Map(groups.map((group, index) => [normalizeGroupName(group), (index + 1) * 10]));
+
+  return categories.map((category) => ({
+    ...category,
+    order: orderByName.get(normalizeGroupName(category.name)) ?? category.order
+  }));
+}
+
+function normalizeGroupName(group: string) {
+  return group.trim().toLowerCase();
+}
+
+function summarizeConfig(config: string) {
+  const labels = Array.from(config.matchAll(/<(?:Label|Choice)\b[^>]*\bvalue="([^"]+)"/g)).map((match) => decodeXml(match[1]));
+  const tools = Array.from(new Set(getToolMatches(config)));
+
+  return {
+    dataType: inferDataType(config),
+    labels,
+    settings: inferSettings(config),
+    tools
+  };
+}
+
+function getToolMatches(config: string) {
+  const definitions: Array<[string, RegExp]> = [
+    ["BBOX", /<RectangleLabels\b|<Rectangle\b/],
+    ["POLYGON", /<PolygonLabels\b|<Polygon\b/],
+    ["BRUSH", /<BrushLabels\b|<BitmaskLabels\b/],
+    ["ELLIPSE", /<EllipseLabels\b|<Ellipse\b/],
+    ["KEYPOINT", /<KeyPointLabels\b|<KeyPoint\b/],
+    ["VECTOR", /<VectorLabels\b|<Vector\b/],
+    ["TEXT_SPAN", /<(?:Labels|HyperTextLabels|ParagraphLabels|OcrLabels)\b[^>]*toName="(?:text|html|paragraphs|ocr|pdf)"/],
+    ["AUDIO_REGION", /<Labels\b[^>]*toName="audio"/],
+    ["VIDEO_REGION", /<Labels\b[^>]*toName="video"|<VideoRectangle\b|<VideoVector/],
+    ["TIMESERIES_RANGE", /<TimeSeriesLabels\b|<TimelineLabels\b/],
+    ["CLASSIFICATION", /<Choices\b/],
+    ["TAXONOMY", /<Taxonomy\b/],
+    ["RANKER", /<Ranker\b/],
+    ["RATING", /<Rating\b/],
+    ["TEXT_AREA", /<TextArea\b/],
+    ["NUMBER", /<Number\b/],
+    ["DATE_TIME", /<DateTime\b/],
+    ["PAIRWISE", /<Pairwise\b/],
+    ["RELATION", /<Relations\b|<Relation\b/],
+    ["CHAT", /<Chat\b/]
+  ];
+
+  return definitions.filter(([, pattern]) => pattern.test(config)).map(([tool]) => tool);
+}
+
+function inferDataType(config: string) {
+  const objectTags = Array.from(config.matchAll(/<(Image|Video|Audio|Text|HyperText|Paragraphs|TimeSeries|Table|Pdf|PDF|List|Chat)\b([^>]*)/g)).map((match) => ({
+    attributes: match[2] ?? "",
+    tag: match[1]
+  }));
+  const dynamicTags = objectTags.filter((object) => getDataBindingAttribute(object.attributes)?.startsWith("$"));
+  const sourceTags = dynamicTags.length > 0 ? dynamicTags : objectTags;
+  const sourceTypes = Array.from(new Set(sourceTags.map((source) => objectTagToDataType(source.tag))));
+
+  if (sourceTypes.length === 0) return "IMAGE";
+  if (sourceTypes.length > 1) return "MULTIMODAL";
+  return sourceTypes[0];
+}
+
+function objectTagToDataType(tagName: string) {
+  if (tagName === "Video") return "VIDEO";
+  if (tagName === "Audio") return "AUDIO";
+  if (tagName === "Pdf" || tagName === "PDF") return "PDF";
+  if (tagName === "TimeSeries") return "TIME_SERIES";
+  if (tagName === "Image") return "IMAGE";
+  return "TEXT";
+}
+
+function inferSettings(config: string): Partial<LabelingSettings> {
+  const firstObject = /<(Image|Video|Audio)\b([^>]*)/.exec(config)?.[2] ?? "";
+  const firstTool = /<(RectangleLabels|PolygonLabels|BrushLabels|BitmaskLabels|EllipseLabels|KeyPointLabels|VectorLabels|Labels|Choices)\b([^>]*)/.exec(config)?.[2] ?? "";
+  const strokeWidth = Number(getAttribute(firstTool, "strokeWidth"));
+  const labelPosition = getAttribute(firstTool, "labelPosition");
+
+  return {
+    imageZoom: getAttribute(firstObject, "zoom") !== "false",
+    labelPosition: labelPosition === "right" || labelPosition === "bottom" || labelPosition === "left" ? labelPosition : "top",
+    regionBorderWidth: Number.isFinite(strokeWidth) && strokeWidth > 0 ? strokeWidth : 1,
+    rotateControls: getAttribute(firstObject, "rotateControl") === "true",
+    zoomControls: getAttribute(firstObject, "zoomControl") !== "false"
+  };
+}
+
+function getAttribute(attributes: string, name: string) {
+  const match = new RegExp(`${name}="([^"]*)"`).exec(attributes);
+  return match?.[1] ?? null;
+}
+
+function getDataBindingAttribute(attributes: string) {
+  return getAttribute(attributes, "value") ?? getAttribute(attributes, "valueList");
+}
+
+function detailsToDescription(details?: string) {
+  if (!details) {
+    return null;
+  }
+
+  return details
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
 }
 
 function categoryIdFromPath(modulePath: string) {
   return modulePath.replace(/\\/g, "/").split("/").at(-3) ?? "custom-templates";
+}
+
+function templateIdFromPath(modulePath: string) {
+  return modulePath.replace(/\\/g, "/").split("/").at(-2) ?? "untitled";
 }
 
 function modulePathToTemplatePath(modulePath: string) {
@@ -155,7 +327,7 @@ function modulePathToTemplatePath(modulePath: string) {
 }
 
 function templateOrderFromPath(modulePath: string) {
-  const templateSlug = modulePath.replace(/\\/g, "/").split("/").at(-2) ?? "";
+  const templateSlug = templateIdFromPath(modulePath);
 
   return templateSlug.charCodeAt(0) || 100;
 }
@@ -165,4 +337,13 @@ function titleFromSlug(slug: string) {
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }

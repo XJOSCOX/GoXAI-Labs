@@ -354,6 +354,27 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
+  if (parsed.value.annotationTemplateId) {
+    const template = await prisma.annotationTemplate.findUnique({
+      where: {
+        id: parsed.value.annotationTemplateId
+      },
+      select: {
+        organizationId: true
+      }
+    });
+
+    if (!template) {
+      response.status(400).json({ error: "Choose a valid annotation template for this dataset." });
+      return;
+    }
+
+    if (template.organizationId && template.organizationId !== dataset.organizationId) {
+      response.status(403).json({ error: "This annotation template belongs to another organization." });
+      return;
+    }
+  }
+
   if (
     parsed.value.status === DatasetStatus.READY &&
     !hasDatasetLabelConfig({

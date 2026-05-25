@@ -1,87 +1,108 @@
-import { Route, Routes } from "react-router-dom";
+import { lazy, Suspense, type ComponentType } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider } from "./auth";
 import { DatasetWorkspaceRoute } from "./components/auth/DatasetWorkspaceRoute";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
+import { AppErrorBoundary } from "./components/layout/AppErrorBoundary";
 import { AppShell } from "./components/layout/AppShell";
-import { AdminPage } from "./pages/admin/AdminPage";
-import { LoginPage } from "./pages/auth/LoginPage";
-import { OnboardingPage } from "./pages/auth/OnboardingPage";
-import { RegisterPage } from "./pages/auth/RegisterPage";
-import { AccountPage } from "./pages/account/AccountPage";
-import { DashboardPage } from "./pages/dashboard/DashboardPage";
-import { DatasetDetailPage } from "./pages/datasets/DatasetDetailPage";
-import { DatasetLabelConfigPage } from "./pages/datasets/DatasetLabelConfigPage";
-import { DatasetsPage } from "./pages/datasets/DatasetsPage";
-import { LabelTemplateFormPage } from "./pages/labeling/LabelTemplateFormPage";
-import { LabelTemplateManagerPage } from "./pages/labeling/LabelTemplateManagerPage";
-import { LabelTemplatesPage } from "./pages/labeling/LabelTemplatesPage";
-import { OrganizationSetupPage } from "./pages/organizations/OrganizationSetupPage";
-import { ProjectDetailPage, ProjectsPage } from "./pages/projects/ProjectsPage";
-import { TaskDetailPage } from "./pages/tasks/TaskDetailPage";
-import { TasksPage } from "./pages/tasks/TasksPage";
+import { LoadingScreen } from "./components/layout/LoadingScreen";
+
+const AccountPage = lazy(() => import("./pages/account/AccountPage").then((module) => toDefault(module.AccountPage)));
+const AdminPage = lazy(() => import("./pages/admin/AdminPage").then((module) => toDefault(module.AdminPage)));
+const DashboardPage = lazy(() => import("./pages/dashboard/DashboardPage").then((module) => toDefault(module.DashboardPage)));
+const DatasetDetailPage = lazy(() => import("./pages/datasets/DatasetDetailPage").then((module) => toDefault(module.DatasetDetailPage)));
+const DatasetLabelConfigPage = lazy(() => import("./pages/datasets/DatasetLabelConfigPage").then((module) => toDefault(module.DatasetLabelConfigPage)));
+const DatasetsPage = lazy(() => import("./pages/datasets/DatasetsPage").then((module) => toDefault(module.DatasetsPage)));
+const LabelTemplateFormPage = lazy(() => import("./pages/labeling/LabelTemplateFormPage").then((module) => toDefault(module.LabelTemplateFormPage)));
+const LabelTemplateManagerPage = lazy(() => import("./pages/labeling/LabelTemplateManagerPage").then((module) => toDefault(module.LabelTemplateManagerPage)));
+const LabelTemplatesPage = lazy(() => import("./pages/labeling/LabelTemplatesPage").then((module) => toDefault(module.LabelTemplatesPage)));
+const LoginPage = lazy(() => import("./pages/auth/LoginPage").then((module) => toDefault(module.LoginPage)));
+const OnboardingPage = lazy(() => import("./pages/auth/OnboardingPage").then((module) => toDefault(module.OnboardingPage)));
+const OrganizationSetupPage = lazy(() => import("./pages/organizations/OrganizationSetupPage").then((module) => toDefault(module.OrganizationSetupPage)));
+const ProjectDetailPage = lazy(() => import("./pages/projects/ProjectsPage").then((module) => toDefault(module.ProjectDetailPage)));
+const ProjectsPage = lazy(() => import("./pages/projects/ProjectsPage").then((module) => toDefault(module.ProjectsPage)));
+const RegisterPage = lazy(() => import("./pages/auth/RegisterPage").then((module) => toDefault(module.RegisterPage)));
+const TaskDetailPage = lazy(() => import("./pages/tasks/TaskDetailPage").then((module) => toDefault(module.TaskDetailPage)));
+const TasksPage = lazy(() => import("./pages/tasks/TasksPage").then((module) => toDefault(module.TasksPage)));
+
+function toDefault(component: ComponentType) {
+  return { default: component };
+}
 
 export function App() {
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route
-          path="/onboarding"
-          element={
-            <ProtectedRoute>
-              <OnboardingPage />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <AppShell />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<DashboardPage />} />
-          <Route path="organization" element={<OrganizationSetupPage />} />
-          <Route path="organization/:organizationId" element={<OrganizationSetupPage />} />
-          <Route path="projects" element={<ProjectsPage />} />
-          <Route path="projects/:projectId" element={<ProjectDetailPage />} />
-          <Route
-            path="datasets"
-            element={
-              <DatasetWorkspaceRoute>
-                <DatasetsPage />
-              </DatasetWorkspaceRoute>
-            }
-          />
-          <Route
-            path="datasets/:datasetId"
-            element={
-              <DatasetWorkspaceRoute>
-                <DatasetDetailPage />
-              </DatasetWorkspaceRoute>
-            }
-          />
-          <Route
-            path="datasets/:datasetId/label-config"
-            element={
-              <DatasetWorkspaceRoute>
-                <DatasetLabelConfigPage />
-              </DatasetWorkspaceRoute>
-            }
-          />
-          <Route path="tasks" element={<TasksPage />} />
-          <Route path="tasks/:taskId" element={<TaskDetailPage />} />
-          <Route path="label-templates" element={<LabelTemplatesPage />} />
-          <Route path="label-templates/manage" element={<LabelTemplateManagerPage />} />
-          <Route path="label-templates/categories/:categoryKey/templates/new" element={<LabelTemplateFormPage />} />
-          <Route path="label-templates/templates/new" element={<LabelTemplateFormPage />} />
-          <Route path="label-templates/templates/:templateId/edit" element={<LabelTemplateFormPage />} />
-          <Route path="account" element={<AccountPage />} />
-          <Route path="admin" element={<AdminPage />} />
-        </Route>
-      </Routes>
+      <AppRoutes />
     </AuthProvider>
+  );
+}
+
+function AppRoutes() {
+  const location = useLocation();
+
+  return (
+    <AppErrorBoundary resetKey={location.key}>
+      <Suspense fallback={<LoadingScreen />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/onboarding"
+            element={
+              <ProtectedRoute>
+                <OnboardingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <AppShell />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<DashboardPage />} />
+            <Route path="organization" element={<OrganizationSetupPage />} />
+            <Route path="organization/:organizationId" element={<OrganizationSetupPage />} />
+            <Route path="projects" element={<ProjectsPage />} />
+            <Route path="projects/:projectId" element={<ProjectDetailPage />} />
+            <Route
+              path="datasets"
+              element={
+                <DatasetWorkspaceRoute>
+                  <DatasetsPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="datasets/:datasetId"
+              element={
+                <DatasetWorkspaceRoute>
+                  <DatasetDetailPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="datasets/:datasetId/label-config"
+              element={
+                <DatasetWorkspaceRoute>
+                  <DatasetLabelConfigPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route path="tasks" element={<TasksPage />} />
+            <Route path="tasks/:taskId" element={<TaskDetailPage />} />
+            <Route path="label-templates" element={<LabelTemplatesPage />} />
+            <Route path="label-templates/manage" element={<LabelTemplateManagerPage />} />
+            <Route path="label-templates/categories/:categoryKey/templates/new" element={<LabelTemplateFormPage />} />
+            <Route path="label-templates/templates/new" element={<LabelTemplateFormPage />} />
+            <Route path="label-templates/templates/:templateId/edit" element={<LabelTemplateFormPage />} />
+            <Route path="account" element={<AccountPage />} />
+            <Route path="admin" element={<AdminPage />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </AppErrorBoundary>
   );
 }

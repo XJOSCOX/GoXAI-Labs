@@ -1,6 +1,7 @@
 import { DataType, getPrismaClient, GlobalRole, MembershipRole, Prisma } from "@goxai/database";
 import { Router, type Response } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { readBuiltInTemplates } from "./builtInTemplates.js";
 import { getRequestId } from "./logging.js";
 
 const router = Router();
@@ -243,6 +244,12 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   response.status(200).json({
     templates: templates.map((template) => serializeTemplate(template, canManageOwnedRecord(user, template.createdById)))
   });
+});
+
+router.get("/builtins", async (_request: AuthenticatedRequest, response) => {
+  const templatesAndGroups = await readBuiltInTemplates();
+
+  response.status(200).json(templatesAndGroups);
 });
 
 router.post("/", async (request: AuthenticatedRequest, response) => {
