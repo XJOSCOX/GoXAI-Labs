@@ -9,6 +9,7 @@ import {
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { recordDatasetVersionChange } from "./datasets.js";
 import { getRequestId, saveAuditLog } from "./logging.js";
 import { canManageProjectScope } from "./permissions.js";
 import { createR2Client, getR2Config } from "./r2.js";
@@ -421,6 +422,25 @@ router.post("/delete", async (request: AuthenticatedRequest, response) => {
         }
       }
     });
+
+    const datasetIds = [
+      ...new Set(
+        assets
+          .map((asset) => asset.datasetId)
+          .filter((datasetId): datasetId is string => typeof datasetId === "string" && datasetId.length > 0)
+      )
+    ];
+
+    for (const datasetId of datasetIds) {
+      await recordDatasetVersionChange(tx, {
+        datasetId,
+        reason: "assets_deleted",
+        summary: {
+          deletedCount: assets.filter((asset) => asset.datasetId === datasetId).length
+        },
+        userId: user.id
+      });
+    }
   });
 
   response.status(200).json({
@@ -626,6 +646,16 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
           projectName: dataset.project.name
         }
       }
+    });
+
+    await recordDatasetVersionChange(tx, {
+      datasetId: dataset.id,
+      reason: "asset_registered",
+      summary: {
+        fileName: createdAsset.fileName,
+        mimeType: createdAsset.mimeType
+      },
+      userId: user.id
     });
 
     return createdAsset;

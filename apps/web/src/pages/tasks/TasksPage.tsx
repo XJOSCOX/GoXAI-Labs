@@ -13,10 +13,11 @@ export function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const datasetId = searchParams.get("datasetId") ?? undefined;
   const projectId = searchParams.get("projectId") ?? undefined;
+  const queueMode = searchParams.get("queue") === "review" ? "review" : "work";
   const page = getPositivePage(searchParams.get("page"));
   const projectFolders = useTaskFolders(!projectId && !datasetId ? session : null);
   const datasetFolders = useTaskFolders(projectId && !datasetId ? session : null, { projectId });
-  const taskPage = useTaskPage(datasetId ? session : null, { datasetId, page, pageSize: taskPageSize, projectId });
+  const taskPage = useTaskPage(datasetId ? session : null, { datasetId, page, pageSize: taskPageSize, projectId, queue: queueMode });
   const [assigningDataset, setAssigningDataset] = useState(false);
   const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null);
   const selectedProjectName = taskPage.tasks[0]?.project.name ?? datasetFolders.project?.name ?? "Project";
@@ -25,7 +26,20 @@ export function TasksPage() {
 
   useEffect(() => {
     setAssignmentMessage(null);
-  }, [datasetId, projectId]);
+  }, [datasetId, projectId, queueMode]);
+
+  function handleQueueModeChange(nextQueue: "review" | "work") {
+    const nextParams = new URLSearchParams(searchParams);
+
+    if (nextQueue === "review") {
+      nextParams.set("queue", "review");
+    } else {
+      nextParams.delete("queue");
+    }
+
+    nextParams.delete("page");
+    setSearchParams(nextParams);
+  }
 
   function handleQueuePageChange(nextPage: number) {
     const nextParams = new URLSearchParams(searchParams);
@@ -50,6 +64,10 @@ export function TasksPage() {
 
     if (currentPage > 1) {
       nextParams.set("page", String(currentPage));
+    }
+
+    if (queueMode === "review") {
+      nextParams.set("queue", "review");
     }
 
     const query = nextParams.toString();
@@ -92,11 +110,19 @@ export function TasksPage() {
             </Link>
             <div className="task-queue-heading">
               <div>
-                <p className="eyebrow">Dataset queue</p>
+                <p className="eyebrow">{queueMode === "review" ? "Reviewer queue" : "Dataset queue"}</p>
                 <h2>{selectedDatasetName}</h2>
               </div>
               <div className="task-queue-actions">
                 <span className="muted-copy">{selectedProjectName}</span>
+                <div className="segmented-control compact-segmented">
+                  <button className={queueMode === "work" ? "active" : ""} onClick={() => handleQueueModeChange("work")} type="button">
+                    Work
+                  </button>
+                  <button className={queueMode === "review" ? "active" : ""} onClick={() => handleQueueModeChange("review")} type="button">
+                    Review
+                  </button>
+                </div>
                 <button
                   className="secondary-button compact-button"
                   disabled={!session || assigningDataset}
@@ -111,6 +137,7 @@ export function TasksPage() {
             {assignmentMessage && <p className="form-success">{assignmentMessage}</p>}
             <TasksTable
               detailQuery={getTaskDetailQuery}
+              mode={queueMode}
               loading={taskPage.loading}
               onChanged={taskPage.reload}
               onPageChange={handleQueuePageChange}
@@ -279,6 +306,7 @@ function TaskDatasetFolders({
 export function TasksTable({
   detailQuery,
   loading,
+  mode = "work",
   onChanged,
   onPageChange,
   pageInfo,
@@ -288,6 +316,7 @@ export function TasksTable({
 }: {
   detailQuery?: (task: TaskSummary, page: number) => string;
   loading: boolean;
+  mode?: "review" | "work";
   onChanged: () => Promise<void>;
   onPageChange?: (page: number) => void;
   pageInfo?: {
@@ -345,6 +374,7 @@ export function TasksTable({
             key={task.id}
             detailQuery={detailQuery}
             detailQueryPage={activePage}
+            mode={mode}
             onChanged={onChanged}
             session={session}
             setPageError={setPageError}
@@ -393,6 +423,7 @@ export function TasksTable({
 function TaskRow({
   detailQuery,
   detailQueryPage,
+  mode,
   onChanged,
   session,
   setPageError,
@@ -400,6 +431,7 @@ function TaskRow({
 }: {
   detailQuery?: (task: TaskSummary, page: number) => string;
   detailQueryPage: number;
+  mode: "review" | "work";
   onChanged: () => Promise<void>;
   session: ReturnType<typeof useAuth>["session"];
   setPageError: (error: string | null) => void;
@@ -444,7 +476,12 @@ function TaskRow({
       </span>
       <span>{task.assignedTo?.name ?? "Unassigned"}</span>
       <span>
-        {task.canWork && action ? (
+        {mode === "review" && task.canReview ? (
+          <Link className="secondary-button compact-button" to={`/tasks/${task.id}${detailQuery?.(task, detailQueryPage) ?? ""}`}>
+            <Eye size={16} />
+            Review
+          </Link>
+        ) : task.canWork && action ? (
           <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
             <Eye size={16} />
             {saving ? "Saving" : action.label}
@@ -465,6 +502,10 @@ function getPositivePage(value: string | null) {
 }
 
 function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start"; label: string } | null {
+  if (task.status === "REJECTED") {
+    return { kind: "start", label: "Revise" };
+  }
+
   if (task.status === "PENDING" || task.status === "ASSIGNED") {
     return { kind: "start", label: "Start" };
   }

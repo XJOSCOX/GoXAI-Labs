@@ -1,7 +1,7 @@
-import { type PointerEvent, type WheelEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent, type WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Eye, Hand, Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw, Save, Send, SquareDashedMousePointer, Trash2, Unlock } from "lucide-react";
-import { getAssetAccessUrl, getNextTask, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary, type SaveAnnotationInput, type TaskSummary } from "../../api";
+import { ArrowLeft, ArrowRight, CheckCircle2, Eye, Hand, History, Lock, Maximize2, MessageSquare, Minimize2, Minus, Plus, Redo2, RotateCcw, Save, Send, SquareDashedMousePointer, Trash2, Undo2, Unlock, XCircle } from "lucide-react";
+import { addTaskComment, getAssetAccessUrl, getNextTask, reviewTask, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary, type ReviewSummary, type SaveAnnotationInput, type TaskSummary } from "../../api";
 import { useAuth } from "../../auth";
 import { useTask } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
@@ -74,7 +74,25 @@ interface DateTimeControl {
   toName: string;
 }
 
-type TemplateFormControl = ChoiceControl | DateTimeControl | NumberControl | RatingControl | TextAreaControl;
+interface TemporalLabelControl {
+  labels: {
+    color: string | null;
+    value: string;
+  }[];
+  name: string;
+  required: boolean;
+  toName: string;
+  type: "labels" | "timeserieslabels";
+}
+
+interface TemporalRegionResponse {
+  end: string;
+  id: string;
+  label: string;
+  start: string;
+}
+
+type TemplateFormControl = ChoiceControl | DateTimeControl | NumberControl | RatingControl | TemporalLabelControl | TextAreaControl;
 
 interface ZoomAnchor {
   stageX: number;
@@ -118,6 +136,21 @@ interface PanDrag {
   scrollTop: number;
 }
 
+interface ShapeHistoryEntry {
+  action: string;
+  selectedShapeId: string | null;
+  shapes: AnnotationShape[];
+  timestamp: number;
+}
+
+interface TaskHistoryItem {
+  body: string;
+  id: string;
+  meta: string;
+  timestamp: string;
+  title: string;
+}
+
 type SaveStatus = "dirty" | "error" | "idle" | "saved" | "saving";
 
 const defaultLabel = "Object";
@@ -129,6 +162,7 @@ const autoSaveDelayMs = 650;
 const autoSaveRetryDelayMs = 3000;
 const editHandleHitRadius = 0.018;
 const polygonCloseHitRadius = 0.02;
+const maxUndoSteps = 60;
 const assetAccessUrlCache = new Map<string, { accessUrl: string; expiresAt: number }>();
 
 export function TaskDetailPage() {
@@ -138,12 +172,29 @@ export function TaskDetailPage() {
   const queueDatasetId = searchParams.get("datasetId");
   const queuePage = searchParams.get("page");
   const queueProjectId = searchParams.get("projectId");
+  const queueMode = searchParams.get("queue");
   const { session } = useAuth();
-  const { annotation, error, loading, reload, setAnnotation, setError, setTask, task } = useTask(session, taskId);
+  const {
+    annotation,
+    annotationHistory,
+    comments,
+    error,
+    loading,
+    reload,
+    reviews,
+    setAnnotation,
+    setComments,
+    setError,
+    setReviews,
+    setTask,
+    task
+  } = useTask(session, taskId);
   const [accessUrl, setAccessUrl] = useState<string | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
   const [assetLoading, setAssetLoading] = useState(false);
   const [shapes, setShapes] = useState<AnnotationShape[]>([]);
+  const [shapeRedoStack, setShapeRedoStack] = useState<ShapeHistoryEntry[]>([]);
+  const [shapeUndoStack, setShapeUndoStack] = useState<ShapeHistoryEntry[]>([]);
   const [draftShape, setDraftShape] = useState<AnnotationShape | null>(null);
   const [polygonClosePointHover, setPolygonClosePointHover] = useState(false);
   const [polygonPoints, setPolygonPoints] = useState<Point[]>([]);
@@ -164,13 +215,18 @@ export function TaskDetailPage() {
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [commentBody, setCommentBody] = useState("");
+  const [commentSaving, setCommentSaving] = useState(false);
   const [nextTask, setNextTask] = useState<TaskSummary | null>(null);
   const [nextTaskError, setNextTaskError] = useState<string | null>(null);
   const [nextTaskLoading, setNextTaskLoading] = useState(false);
+  const [reviewFeedback, setReviewFeedback] = useState("");
+  const [reviewSaving, setReviewSaving] = useState(false);
   const [choiceResponses, setChoiceResponses] = useState<Record<string, string[]>>({});
   const [dateTimeResponses, setDateTimeResponses] = useState<Record<string, string>>({});
   const [numberResponses, setNumberResponses] = useState<Record<string, string>>({});
   const [ratingResponses, setRatingResponses] = useState<Record<string, number>>({});
+  const [temporalResponses, setTemporalResponses] = useState<Record<string, TemporalRegionResponse[]>>({});
   const [textAssetContent, setTextAssetContent] = useState<string | null>(null);
   const [textResponses, setTextResponses] = useState<Record<string, string>>({});
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -180,23 +236,28 @@ export function TaskDetailPage() {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accessUrlAssetIdRef = useRef<string | null>(null);
   const editRegionRef = useRef<RegionEdit | null>(null);
+  const editShapeHistoryRef = useRef<ShapeHistoryEntry | null>(null);
   const latestPayloadTextRef = useRef("");
   const lastSavedPayloadTextRef = useRef("");
   const panDragRef = useRef<PanDrag | null>(null);
   const pendingZoomAnchorRef = useRef<ZoomAnchor | null>(null);
   const saveRequestIdRef = useRef(0);
+  const selectedShapeIdRef = useRef<string | null>(null);
+  const shapesRef = useRef<AnnotationShape[]>([]);
   const isImage = task?.asset?.mimeType.startsWith("image/") ?? false;
-  const canAnnotate = Boolean(task?.canWork && task.status !== "SUBMITTED" && task.status !== "APPROVED");
+  const canAnnotate = Boolean(task?.canWork && !["APPROVED", "REVIEWING", "SUBMITTED"].includes(task.status));
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
   const pageTitle = task?.asset?.fileName ?? "Task workspace";
-  const taskQueueLink = getTaskQueueLink({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId }, task);
+  const taskQueueLink = getTaskQueueLink({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId, queue: queueMode }, task);
+  const canReviewTask = Boolean(task?.canReview && (task.status === "SUBMITTED" || task.status === "REVIEWING"));
   const configCode = getConfigString(task?.dataset?.labelingConfig, "configCode") ?? "";
   const templateSources = useMemo(() => parseTemplateSources(configCode), [configCode]);
   const choiceControls = useMemo(() => parseChoiceControls(configCode), [configCode]);
   const dateTimeControls = useMemo(() => parseDateTimeControls(configCode), [configCode]);
   const numberControls = useMemo(() => parseNumberControls(configCode), [configCode]);
   const ratingControls = useMemo(() => parseRatingControls(configCode), [configCode]);
+  const temporalControls = useMemo(() => parseTemporalLabelControls(configCode), [configCode]);
   const textAreaControls = useMemo(() => parseTextAreaControls(configCode), [configCode]);
   const templateSourceByName = useMemo(() => new Map(templateSources.map((source) => [source.name, source])), [templateSources]);
   const labelOptions = useMemo(() => getLabelOptions(task?.dataset?.labels, task?.dataset?.labelingConfig), [task?.dataset?.labels, task?.dataset?.labelingConfig]);
@@ -207,8 +268,8 @@ export function TaskDetailPage() {
   const supportsPolygon = drawingToolOptions.includes("POLYGON");
   const supportsRegionDrawing = supportsBbox || supportsPolygon;
   const formControls = useMemo(
-    () => [...choiceControls, ...textAreaControls, ...numberControls, ...ratingControls, ...dateTimeControls],
-    [choiceControls, dateTimeControls, numberControls, ratingControls, textAreaControls]
+    () => [...choiceControls, ...textAreaControls, ...numberControls, ...ratingControls, ...dateTimeControls, ...temporalControls],
+    [choiceControls, dateTimeControls, numberControls, ratingControls, temporalControls, textAreaControls]
   );
   const formToolLabels = useMemo(
     () => formControls.length > 0 ? formControls.map((control) => formatControlName(control.name)) : toolOptions.filter((tool) => !["BBOX", "POLYGON"].includes(tool)).map(formatEnum),
@@ -219,6 +280,9 @@ export function TaskDetailPage() {
     () => shapes.find((shape) => shape.id === selectedShapeId) ?? null,
     [selectedShapeId, shapes]
   );
+  const canRedoShapeEdit = canAnnotate && shapeRedoStack.length > 0;
+  const canUndoShapeEdit = canAnnotate && shapeUndoStack.length > 0;
+  const taskHistoryItems = useMemo(() => buildTaskHistoryItems(annotationHistory, reviews), [annotationHistory, reviews]);
   const polygonInProgress = activeTool === "POLYGON" && polygonPoints.length > 0;
   const canStartPolygon = activeTool === "POLYGON" && (labelArmed || labelDrawLock);
 
@@ -228,6 +292,7 @@ export function TaskDetailPage() {
     const nextDateTimeResponses = annotationToScalarResponses(annotation, "datetime");
     const nextNumberResponses = annotationToScalarResponses(annotation, "number");
     const nextRatingResponses = annotationToRatingResponses(annotation);
+    const nextTemporalResponses = annotationToTemporalResponses(annotation);
     const nextTextResponses = annotationToTextResponses(annotation);
     const nextPayloadText = serializeAnnotationPayload({
       ...shapesToAnnotationPayload(nextShapes),
@@ -240,6 +305,8 @@ export function TaskDetailPage() {
         numberResponses: nextNumberResponses,
         ratingControls,
         ratingResponses: nextRatingResponses,
+        temporalControls,
+        temporalResponses: nextTemporalResponses,
         textControls: textAreaControls,
         textResponses: nextTextResponses
       })
@@ -250,11 +317,22 @@ export function TaskDetailPage() {
     setDateTimeResponses(nextDateTimeResponses);
     setNumberResponses(nextNumberResponses);
     setRatingResponses(nextRatingResponses);
+    setTemporalResponses(nextTemporalResponses);
     setTextResponses(nextTextResponses);
     setSelectedShapeId(null);
+    setShapeRedoStack([]);
+    setShapeUndoStack([]);
     latestPayloadTextRef.current = nextPayloadText;
     lastSavedPayloadTextRef.current = nextPayloadText;
-  }, [annotation?.id, annotation?.updatedAt, choiceControls, dateTimeControls, numberControls, ratingControls, textAreaControls]);
+  }, [annotation?.id, annotation?.updatedAt, choiceControls, dateTimeControls, numberControls, ratingControls, temporalControls, textAreaControls]);
+
+  useEffect(() => {
+    shapesRef.current = shapes;
+  }, [shapes]);
+
+  useEffect(() => {
+    selectedShapeIdRef.current = selectedShapeId;
+  }, [selectedShapeId]);
 
   useEffect(() => {
     setSaveErrorMessage(null);
@@ -277,7 +355,7 @@ export function TaskDetailPage() {
     setNextTaskLoading(true);
     setNextTaskError(null);
 
-    getNextTask(session, task.id, { datasetId, projectId })
+    getNextTask(session, task.id, { datasetId, projectId, queue: queueMode === "review" ? "review" : "work" })
       .then((result) => {
         if (active) {
           setNextTask(result.task);
@@ -298,7 +376,7 @@ export function TaskDetailPage() {
     return () => {
       active = false;
     };
-  }, [queueDatasetId, queueProjectId, session, task?.datasetId, task?.id, task?.projectId]);
+  }, [queueDatasetId, queueMode, queueProjectId, session, task?.datasetId, task?.id, task?.projectId]);
 
   useEffect(() => {
     setActiveTool((current) => (drawingToolOptions.includes(current) ? current : drawingToolOptions[0] ?? "BBOX"));
@@ -327,11 +405,137 @@ export function TaskDetailPage() {
     return () => window.clearTimeout(timer);
   }, [savedMessage]);
 
+  const pushShapeHistoryEntry = useCallback((entry: ShapeHistoryEntry) => {
+    setShapeUndoStack((current) => [...current.slice(-(maxUndoSteps - 1)), entry]);
+    setShapeRedoStack([]);
+  }, []);
+
+  const createShapeHistoryEntry = useCallback((action: string): ShapeHistoryEntry => ({
+    action,
+    selectedShapeId: selectedShapeIdRef.current,
+    shapes: cloneShapes(shapesRef.current),
+    timestamp: Date.now()
+  }), []);
+
+  const clearTransientShapeState = useCallback(() => {
+    drawStartRef.current = null;
+    editRegionRef.current = null;
+    editShapeHistoryRef.current = null;
+    setActiveEdit(null);
+    setDraftShape(null);
+    setPolygonClosePointHover(false);
+    setPolygonPoints([]);
+    setPolygonPreviewPoint(null);
+  }, []);
+
+  const commitShapeEdit = useCallback(
+    (action: string, update: (current: AnnotationShape[]) => AnnotationShape[], nextSelectedShapeId?: string | null) => {
+      setShapes((current) => {
+        const next = update(cloneShapes(current));
+
+        if (areShapesEqual(current, next)) {
+          return current;
+        }
+
+        setShapeUndoStack((stack) => [
+          ...stack.slice(-(maxUndoSteps - 1)),
+          {
+            action,
+            selectedShapeId: selectedShapeIdRef.current,
+            shapes: cloneShapes(current),
+            timestamp: Date.now()
+          }
+        ]);
+        setShapeRedoStack([]);
+        return cloneShapes(next);
+      });
+
+      if (nextSelectedShapeId !== undefined) {
+        setSelectedShapeId(nextSelectedShapeId);
+      }
+    },
+    []
+  );
+
+  const undoShapeEdit = useCallback(() => {
+    if (!canAnnotate) {
+      return;
+    }
+
+    setShapeUndoStack((current) => {
+      const entry = current.at(-1);
+
+      if (!entry) {
+        return current;
+      }
+
+      setShapeRedoStack((redoStack) => [
+        ...redoStack.slice(-(maxUndoSteps - 1)),
+        {
+          action: entry.action,
+          selectedShapeId: selectedShapeIdRef.current,
+          shapes: cloneShapes(shapesRef.current),
+          timestamp: Date.now()
+        }
+      ]);
+      setShapes(cloneShapes(entry.shapes));
+      setSelectedShapeId(entry.selectedShapeId);
+      clearTransientShapeState();
+
+      return current.slice(0, -1);
+    });
+  }, [canAnnotate, clearTransientShapeState]);
+
+  const redoShapeEdit = useCallback(() => {
+    if (!canAnnotate) {
+      return;
+    }
+
+    setShapeRedoStack((current) => {
+      const entry = current.at(-1);
+
+      if (!entry) {
+        return current;
+      }
+
+      setShapeUndoStack((undoStack) => [
+        ...undoStack.slice(-(maxUndoSteps - 1)),
+        {
+          action: entry.action,
+          selectedShapeId: selectedShapeIdRef.current,
+          shapes: cloneShapes(shapesRef.current),
+          timestamp: Date.now()
+        }
+      ]);
+      setShapes(cloneShapes(entry.shapes));
+      setSelectedShapeId(entry.selectedShapeId);
+      clearTransientShapeState();
+
+      return current.slice(0, -1);
+    });
+  }, [canAnnotate, clearTransientShapeState]);
+
   useEffect(() => {
     function handleKeyboard(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
 
       if (target?.closest("input, textarea, select, button")) {
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          redoShapeEdit();
+        } else {
+          undoShapeEdit();
+        }
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redoShapeEdit();
         return;
       }
 
@@ -417,7 +621,7 @@ export function TaskDetailPage() {
     window.addEventListener("keydown", handleKeyboard);
 
     return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [activeTool, canAnnotate, handleSaveDraft, handleSubmitAnnotation, labelOptions, polygonInProgress, polygonPoints.length, selectedShapeId, supportsBbox, supportsPolygon]);
+  }, [activeTool, canAnnotate, handleSaveDraft, handleSubmitAnnotation, labelOptions, polygonInProgress, polygonPoints.length, redoShapeEdit, selectedShapeId, supportsBbox, supportsPolygon, undoShapeEdit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -555,11 +759,13 @@ export function TaskDetailPage() {
         numberResponses,
         ratingControls,
         ratingResponses,
+        temporalControls,
+        temporalResponses,
         textControls: textAreaControls,
         textResponses
       })
     }),
-    [choiceControls, choiceResponses, dateTimeControls, dateTimeResponses, numberControls, numberResponses, ratingControls, ratingResponses, shapes, textAreaControls, textResponses]
+    [choiceControls, choiceResponses, dateTimeControls, dateTimeResponses, numberControls, numberResponses, ratingControls, ratingResponses, shapes, temporalControls, temporalResponses, textAreaControls, textResponses]
   );
   const annotationPayloadText = useMemo(() => serializeAnnotationPayload(annotationPayload), [annotationPayload]);
 
@@ -694,6 +900,7 @@ export function TaskDetailPage() {
     const handleHit = selectedForEdit ? findEditHandleAtPoint(selectedForEdit, point) : null;
 
     if (selectedForEdit && handleHit) {
+      editShapeHistoryRef.current = createShapeHistoryEntry(handleHit.kind === "move-point" ? "Moved polygon point" : "Resized box");
       editRegionRef.current = handleHit.kind === "move-point"
         ? {
             id: selectedForEdit.id,
@@ -717,6 +924,7 @@ export function TaskDetailPage() {
       const hitShape = findShapeAtPoint(shapes, point);
 
       if (hitShape) {
+        editShapeHistoryRef.current = createShapeHistoryEntry("Moved region");
         editRegionRef.current = {
           id: hitShape.id,
           kind: "move",
@@ -782,7 +990,11 @@ export function TaskDetailPage() {
             ? resizeBoxShape(edit.originalShape, edit.handle, point)
             : movePolygonPoint(edit.originalShape, edit.pointIndex, point);
 
-      setShapes((current) => current.map((shape) => (shape.id === edit.id ? nextShape : shape)));
+      setShapes((current) => {
+        const next = current.map((shape) => (shape.id === edit.id ? nextShape : shape));
+        shapesRef.current = next;
+        return next;
+      });
       return;
     }
 
@@ -818,8 +1030,15 @@ export function TaskDetailPage() {
     }
 
     if (editRegionRef.current) {
+      const historyEntry = editShapeHistoryRef.current;
       editRegionRef.current = null;
+      editShapeHistoryRef.current = null;
       setActiveEdit(null);
+
+      if (historyEntry && !areShapesEqual(historyEntry.shapes, shapesRef.current)) {
+        pushShapeHistoryEntry(historyEntry);
+      }
+
       return;
     }
 
@@ -831,8 +1050,7 @@ export function TaskDetailPage() {
 
     if ((draftShape.width ?? 0) > 0.01 && (draftShape.height ?? 0) > 0.01) {
       const boxId = `box-${Date.now()}`;
-      setShapes((current) => [...current, { ...draftShape, id: boxId }]);
-      setSelectedShapeId(boxId);
+      commitShapeEdit("Added box", (current) => [...current, { ...draftShape, id: boxId }], boxId);
     }
 
     setDraftShape(null);
@@ -847,8 +1065,7 @@ export function TaskDetailPage() {
   }
 
   function removeBox(boxId: string) {
-    setShapes((current) => current.filter((shape) => shape.id !== boxId));
-    setSelectedShapeId((current) => (current === boxId ? null : current));
+    commitShapeEdit("Deleted region", (current) => current.filter((shape) => shape.id !== boxId), selectedShapeId === boxId ? null : selectedShapeId);
   }
 
   function finishPolygon() {
@@ -858,7 +1075,7 @@ export function TaskDetailPage() {
 
     const nextLabelArmed = labelDrawLock;
     const polygonId = `polygon-${Date.now()}`;
-    setShapes((current) => [
+    commitShapeEdit("Added polygon", (current) => [
       ...current,
       {
         id: polygonId,
@@ -866,7 +1083,7 @@ export function TaskDetailPage() {
         points: polygonPoints,
         type: "POLYGON"
       }
-    ]);
+    ], null);
     setPolygonClosePointHover(false);
     setPolygonPoints([]);
     setPolygonPreviewPoint(null);
@@ -959,7 +1176,7 @@ export function TaskDetailPage() {
       }
     }
 
-    navigate(`/tasks/${nextTask.id}${getTaskDetailSearch({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId }, nextTask)}`);
+    navigate(`/tasks/${nextTask.id}${getTaskDetailSearch({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId, queue: queueMode }, nextTask)}`);
   }
 
   function clearAutoSaveTimers() {
@@ -1089,6 +1306,64 @@ export function TaskDetailPage() {
     }
   }
 
+  async function handleReviewDecision(decision: "approve" | "reject") {
+    if (!session || !task) {
+      return;
+    }
+
+    if (decision === "reject" && !reviewFeedback.trim()) {
+      setError("Add review feedback before rejecting.");
+      return;
+    }
+
+    setReviewSaving(true);
+    setSavedMessage(null);
+    setError(null);
+
+    try {
+      const result = await reviewTask(session, task.id, {
+        decision,
+        feedback: reviewFeedback
+      });
+
+      setAnnotation(result.annotation);
+      setTask(result.task);
+      setReviews((current) => [result.review, ...current]);
+      if (result.comment) {
+        setComments((current) => [...current, result.comment!]);
+      }
+      setReviewFeedback("");
+      setSavedMessage(decision === "approve" ? "Task approved." : "Task sent back with feedback.");
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to review task.");
+    } finally {
+      setReviewSaving(false);
+    }
+  }
+
+  async function handleAddComment() {
+    if (!session || !task || !commentBody.trim()) {
+      return;
+    }
+
+    setCommentSaving(true);
+    setError(null);
+
+    try {
+      const comment = await addTaskComment(session, task.id, {
+        annotationId: annotation?.id,
+        body: commentBody
+      });
+      setComments((current) => [...current, comment]);
+      setCommentBody("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to add comment.");
+    } finally {
+      setCommentSaving(false);
+    }
+  }
+
   const livePolygonPoints = polygonPoints.length > 0 && polygonPreviewPoint
     ? [...polygonPoints, polygonPreviewPoint]
     : polygonPoints;
@@ -1144,6 +1419,26 @@ export function TaskDetailPage() {
                   <div className="annotation-toolbar">
                     {!usesTemplateForm && (
                       <>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          onClick={undoShapeEdit}
+                          disabled={!canUndoShapeEdit}
+                          aria-label="Undo annotation edit"
+                          title="Undo"
+                        >
+                          <Undo2 size={16} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          onClick={redoShapeEdit}
+                          disabled={!canRedoShapeEdit}
+                          aria-label="Redo annotation edit"
+                          title="Redo"
+                        >
+                          <Redo2 size={16} />
+                        </button>
                         <button className="icon-button" type="button" onClick={zoomOut} disabled={zoom <= minZoom} aria-label="Zoom out" title="Zoom out">
                           <Minus size={16} />
                         </button>
@@ -1198,12 +1493,15 @@ export function TaskDetailPage() {
                       onChange={setTextResponses}
                       onNumberChange={setNumberResponses}
                       onRatingChange={setRatingResponses}
+                      onTemporalChange={setTemporalResponses}
                       ratingControls={ratingControls}
                       ratingResponses={ratingResponses}
                       responses={textResponses}
                       sources={templateSources}
                       sourceByName={templateSourceByName}
                       task={task}
+                      temporalControls={temporalControls}
+                      temporalResponses={temporalResponses}
                       textAssetContent={textAssetContent}
                     />
                   ) : accessUrl && isImage ? (
@@ -1290,6 +1588,8 @@ export function TaskDetailPage() {
                       <span>B/P switches tool</span>
                       <span>Enter closes polygon</span>
                       <span>Delete removes selected region</span>
+                      <span>Ctrl+Z undo</span>
+                      <span>Ctrl+Y redo</span>
                       <span>Ctrl+S saves</span>
                       <span>Ctrl+Enter submits</span>
                     </div>
@@ -1355,6 +1655,36 @@ export function TaskDetailPage() {
                     </div>
                   </>
                 )}
+                <div className="task-inline-actions">
+                  <div>
+                    <p className="eyebrow">Actions</p>
+                    {nextTaskError && <p className="form-error compact-error">{nextTaskError}</p>}
+                  </div>
+                  {task.canWork ? (
+                    <div className="task-action-stack horizontal">
+                      {nextAction && (
+                        <button className="secondary-button" type="button" onClick={handleTaskAction} disabled={saving}>
+                          <Eye size={17} />
+                          {saving ? "Saving" : nextAction.label}
+                        </button>
+                      )}
+                      <button className="secondary-button" type="button" onClick={handleSaveDraft} disabled={!canAnnotate || saving}>
+                        <Save size={17} />
+                        Save draft
+                      </button>
+                      <button className="secondary-button" type="button" onClick={handleGoToNextTask} disabled={saving || nextTaskLoading || !nextTask}>
+                        <ArrowRight size={17} />
+                        {nextTaskLoading ? "Finding next" : nextTask ? "Next task" : "No next task"}
+                      </button>
+                      <button className="primary-button" type="button" onClick={handleSubmitAnnotation} disabled={!canAnnotate || saving}>
+                        <Send size={17} />
+                        Submit annotation
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="muted-copy">Read-only access. You can inspect this task but cannot submit annotations.</p>
+                  )}
+                </div>
               </section>
             </section>
             <aside className="side-column task-side-panel">
@@ -1459,7 +1789,7 @@ export function TaskDetailPage() {
                         <button className="annotation-region-chip" type="button" disabled>
                           <span>{formatControlName(control.name)}</span>
                           <small>
-                            {hasControlResponse(control, textResponses, choiceResponses, numberResponses, ratingResponses, dateTimeResponses)
+                            {hasControlResponse(control, textResponses, choiceResponses, numberResponses, ratingResponses, dateTimeResponses, temporalResponses)
                               ? "Draft"
                               : control.required
                                 ? "Required"
@@ -1499,33 +1829,74 @@ export function TaskDetailPage() {
                   )}
                 </div>
               </section>
-              <section className="panel">
-                <p className="eyebrow">Actions</p>
-                {nextTaskError && <p className="form-error compact-error">{nextTaskError}</p>}
-                {task.canWork ? (
+              {canReviewTask && (
+                <section className="panel task-review-panel">
+                  <p className="eyebrow">Review decision</p>
+                  <textarea
+                    className="review-feedback-input"
+                    onChange={(event) => setReviewFeedback(event.currentTarget.value)}
+                    placeholder="Feedback for the annotator..."
+                    value={reviewFeedback}
+                  />
                   <div className="task-action-stack">
-                    {nextAction && (
-                      <button className="secondary-button" type="button" onClick={handleTaskAction} disabled={saving}>
-                        <Eye size={17} />
-                        {saving ? "Saving" : "Start task"}
-                      </button>
-                    )}
-                    <button className="secondary-button" type="button" onClick={handleSaveDraft} disabled={!canAnnotate || saving}>
-                      <Save size={17} />
-                      Save draft
+                    <button className="primary-button" disabled={reviewSaving} onClick={() => void handleReviewDecision("approve")} type="button">
+                      <CheckCircle2 size={17} />
+                      {reviewSaving ? "Saving" : "Approve"}
                     </button>
-                    <button className="secondary-button" type="button" onClick={handleGoToNextTask} disabled={saving || nextTaskLoading || !nextTask}>
-                      <ArrowRight size={17} />
-                      {nextTaskLoading ? "Finding next" : nextTask ? "Next task" : "No next task"}
-                    </button>
-                    <button className="primary-button" type="button" onClick={handleSubmitAnnotation} disabled={!canAnnotate || saving}>
-                      <Send size={17} />
-                      Submit annotation
+                    <button className="secondary-button danger-button" disabled={reviewSaving} onClick={() => void handleReviewDecision("reject")} type="button">
+                      <XCircle size={17} />
+                      Send back
                     </button>
                   </div>
-                ) : (
-                  <p className="muted-copy">Read-only access. You can inspect this task but cannot submit annotations.</p>
+                </section>
+              )}
+              <section className="panel task-comments-panel">
+                <div className="task-panel-title">
+                  <p className="eyebrow">Comments</p>
+                  <MessageSquare size={16} />
+                </div>
+                <div className="task-timeline-list">
+                  {comments.length > 0 ? (
+                    comments.map((comment) => (
+                      <article className="task-timeline-item" key={comment.id}>
+                        <strong>{comment.user.name}</strong>
+                        <span>{comment.body}</span>
+                        <small>{formatDateTime(comment.createdAt)}</small>
+                      </article>
+                    ))
+                  ) : (
+                    <span className="muted-copy">No comments yet.</span>
+                  )}
+                </div>
+                {task.canWork && (
+                  <div className="task-comment-form">
+                    <textarea
+                      onChange={(event) => setCommentBody(event.currentTarget.value)}
+                      placeholder="Add a task comment..."
+                      value={commentBody}
+                    />
+                    <button className="secondary-button compact-button" disabled={commentSaving || !commentBody.trim()} onClick={handleAddComment} type="button">
+                      {commentSaving ? "Adding" : "Add comment"}
+                    </button>
+                  </div>
                 )}
+              </section>
+              <section className="panel task-history-panel">
+                <div className="task-panel-title">
+                  <p className="eyebrow">History</p>
+                  <History size={16} />
+                </div>
+                <div className="task-timeline-list">
+                  {taskHistoryItems.map((item) => (
+                    <article className="task-timeline-item" key={item.id}>
+                      <strong>{item.title}</strong>
+                      <span>{item.body}</span>
+                      <small>{item.meta}</small>
+                      <small>{formatDateTime(item.timestamp)}</small>
+                    </article>
+                  ))}
+                  {taskHistoryItems.length === 0 && <span className="muted-copy">No history yet.</span>}
+                </div>
               </section>
             </aside>
           </div>
@@ -1552,12 +1923,15 @@ function TemplateResponseWorkspace({
   onChange,
   onNumberChange,
   onRatingChange,
+  onTemporalChange,
   ratingControls,
   ratingResponses,
   responses,
   sourceByName,
   sources,
   task,
+  temporalControls,
+  temporalResponses,
   textAssetContent
 }: {
   accessUrl: string | null;
@@ -1574,15 +1948,18 @@ function TemplateResponseWorkspace({
   onChange: (responses: Record<string, string>) => void;
   onNumberChange: (responses: Record<string, string>) => void;
   onRatingChange: (responses: Record<string, number>) => void;
+  onTemporalChange: (responses: Record<string, TemporalRegionResponse[]>) => void;
   ratingControls: RatingControl[];
   ratingResponses: Record<string, number>;
   responses: Record<string, string>;
   sourceByName: Map<string, TemplateSource>;
   sources: TemplateSource[];
   task: NonNullable<ReturnType<typeof useTask>["task"]>;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
   textAssetContent: string | null;
 }) {
-  const referencedSources = [...choiceControls, ...controls, ...numberControls, ...ratingControls, ...dateTimeControls]
+  const referencedSources = [...choiceControls, ...controls, ...numberControls, ...ratingControls, ...dateTimeControls, ...temporalControls]
     .map((control) => sourceByName.get(control.toName))
     .filter((source): source is TemplateSource => Boolean(source));
   const visibleSources = dedupeSources([...sources, ...referencedSources]);
@@ -1597,8 +1974,22 @@ function TemplateResponseWorkspace({
             <TemplateSourcePreview
               accessUrl={accessUrl}
               key={source.name}
+              onAddTemporalRegion={(controlName, region) => {
+                onTemporalChange({
+                  ...temporalResponses,
+                  [controlName]: [
+                    ...(temporalResponses[controlName] ?? []),
+                    {
+                      ...region,
+                      id: `temporal-${Date.now()}`
+                    }
+                  ]
+                });
+              }}
               source={source}
               task={task}
+              temporalControls={temporalControls}
+              temporalResponses={temporalResponses}
               textAssetContent={textAssetContent}
             />
           ))
@@ -1723,6 +2114,19 @@ function TemplateResponseWorkspace({
             />
           </label>
         ))}
+        {temporalControls.map((control) => (
+          <TemporalRegionEditor
+            control={control}
+            key={control.name}
+            onChange={(regions) => {
+              onTemporalChange({
+                ...temporalResponses,
+                [control.name]: regions
+              });
+            }}
+            regions={temporalResponses[control.name] ?? []}
+          />
+        ))}
       </div>
     </div>
   );
@@ -1730,16 +2134,23 @@ function TemplateResponseWorkspace({
 
 function TemplateSourcePreview({
   accessUrl,
+  onAddTemporalRegion,
   source,
   task,
+  temporalControls,
+  temporalResponses,
   textAssetContent
 }: {
   accessUrl: string | null;
+  onAddTemporalRegion: (controlName: string, region: Omit<TemporalRegionResponse, "id">) => void;
   source: TemplateSource;
   task: NonNullable<ReturnType<typeof useTask>["task"]>;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
   textAssetContent: string | null;
 }) {
   const sourceValue = getTemplateSourceValue(task, source, textAssetContent);
+  const sourceTemporalControls = temporalControls.filter((control) => control.toName === source.name);
 
   if (source.type === "IMAGE") {
     const imageUrl = sourceValue || accessUrl;
@@ -1759,46 +2170,27 @@ function TemplateSourcePreview({
   if (source.type === "VIDEO") {
     const videoUrl = sourceValue || accessUrl;
 
-    return (
-      <div className="template-source-card media-source-card">
-        <p className="eyebrow">{source.name}</p>
-        {videoUrl ? (
-          <video controls src={videoUrl} />
-        ) : (
-          <p className="muted-copy">No video source is available.</p>
-        )}
-      </div>
-    );
+    return <VideoSourceCard fileName={task.asset?.fileName ?? source.name} name={source.name} videoUrl={videoUrl} />;
   }
 
   if (source.type === "AUDIO") {
     const audioUrl = sourceValue || accessUrl;
 
     return (
-      <div className="template-source-card media-source-card">
-        <p className="eyebrow">{source.name}</p>
-        {audioUrl ? (
-          <audio controls src={audioUrl} />
-        ) : (
-          <p className="muted-copy">No audio source is available.</p>
-        )}
-      </div>
+      <AudioSourceCard
+        audioUrl={audioUrl}
+        name={source.name}
+        onAddTemporalRegion={onAddTemporalRegion}
+        temporalControls={sourceTemporalControls}
+        temporalResponses={temporalResponses}
+      />
     );
   }
 
   if (source.type === "PDF") {
     const pdfUrl = sourceValue || accessUrl;
 
-    return (
-      <div className="template-source-card pdf-source-card">
-        <p className="eyebrow">{source.name}</p>
-        {pdfUrl ? (
-          <iframe src={pdfUrl} title={source.name} />
-        ) : (
-          <p className="muted-copy">No PDF source is available.</p>
-        )}
-      </div>
-    );
+    return <PdfSourceCard name={source.name} pdfUrl={pdfUrl} />;
   }
 
   if (source.type === "TEXT") {
@@ -1812,10 +2204,14 @@ function TemplateSourcePreview({
 
   if (source.type === "TIME_SERIES") {
     return (
-      <div className="template-source-card text-source-card">
-        <p className="eyebrow">{source.name}</p>
-        <div>{sourceValue || textAssetContent || "No time series data is available for this task."}</div>
-      </div>
+      <TimeSeriesSourceCard
+        name={source.name}
+        onAddTemporalRegion={onAddTemporalRegion}
+        sourceText={sourceValue || textAssetContent || ""}
+        sourceUrl={accessUrl}
+        temporalControls={sourceTemporalControls}
+        temporalResponses={temporalResponses}
+      />
     );
   }
 
@@ -1829,6 +2225,584 @@ function TemplateSourcePreview({
       ) : (
         <p className="muted-copy">No preview is available.</p>
       )}
+    </div>
+  );
+}
+
+function VideoSourceCard({ fileName, name, videoUrl }: { fileName: string; name: string; videoUrl: string | null }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
+
+  function seekBy(seconds: number) {
+    const video = videoRef.current;
+
+    if (!video) {
+      return;
+    }
+
+    video.currentTime = Math.max(0, Math.min(duration || video.duration || 0, video.currentTime + seconds));
+  }
+
+  function updatePlaybackRate(nextRate: number) {
+    const video = videoRef.current;
+    setPlaybackRate(nextRate);
+
+    if (video) {
+      video.playbackRate = nextRate;
+    }
+  }
+
+  return (
+    <div className="template-source-card media-source-card video-source-card">
+      <div className="template-source-head">
+        <div>
+          <p className="eyebrow">{name}</p>
+          <strong>{fileName}</strong>
+        </div>
+        <span>{formatMediaTime(currentTime)} / {formatMediaTime(duration)}</span>
+      </div>
+      {videoUrl ? (
+        <>
+          <video
+            controls
+            onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+            onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+            ref={videoRef}
+            src={videoUrl}
+          />
+          <div className="media-control-row">
+            <button className="secondary-button compact-button" onClick={() => seekBy(-1)} type="button">-1s</button>
+            <button className="secondary-button compact-button" onClick={() => seekBy(1 / 30)} type="button">+1 frame</button>
+            <button className="secondary-button compact-button" onClick={() => seekBy(1)} type="button">+1s</button>
+            <select value={playbackRate} onChange={(event) => updatePlaybackRate(Number(event.target.value))}>
+              <option value={0.5}>0.5x</option>
+              <option value={1}>1x</option>
+              <option value={1.5}>1.5x</option>
+              <option value={2}>2x</option>
+            </select>
+            <a className="secondary-button compact-button" href={videoUrl} target="_blank" rel="noreferrer">Open source</a>
+          </div>
+        </>
+      ) : (
+        <p className="muted-copy">No video source is available.</p>
+      )}
+    </div>
+  );
+}
+
+function AudioSourceCard({
+  audioUrl,
+  name,
+  onAddTemporalRegion,
+  temporalControls,
+  temporalResponses
+}: {
+  audioUrl: string | null;
+  name: string;
+  onAddTemporalRegion: (controlName: string, region: Omit<TemporalRegionResponse, "id">) => void;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
+}) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const waveformRef = useRef<HTMLDivElement | null>(null);
+  const [activeControlName, setActiveControlName] = useState(temporalControls[0]?.name ?? "");
+  const [activeLabel, setActiveLabel] = useState(temporalControls[0]?.labels[0]?.value ?? "");
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [dragSelection, setDragSelection] = useState<{ end: number; start: number } | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const activeControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+  const canSelectRange = Boolean(activeControl && duration > 0);
+  const selectedRegionCount = activeControl ? temporalResponses[activeControl.name]?.length ?? 0 : 0;
+
+  useEffect(() => {
+    const nextControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+
+    if (!nextControl) {
+      setActiveControlName("");
+      setActiveLabel("");
+      return;
+    }
+
+    if (nextControl.name !== activeControlName) {
+      setActiveControlName(nextControl.name);
+    }
+
+    if (!nextControl.labels.some((label) => label.value === activeLabel)) {
+      setActiveLabel(nextControl.labels[0]?.value ?? "");
+    }
+  }, [activeControlName, activeLabel, temporalControls]);
+
+  function seekBy(seconds: number) {
+    const audio = audioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    audio.currentTime = Math.max(0, Math.min(duration || audio.duration || 0, audio.currentTime + seconds));
+  }
+
+  function updatePlaybackRate(nextRate: number) {
+    const audio = audioRef.current;
+    setPlaybackRate(nextRate);
+
+    if (audio) {
+      audio.playbackRate = nextRate;
+    }
+  }
+
+  function getWaveformPercent(event: PointerEvent<HTMLDivElement>) {
+    const element = waveformRef.current;
+
+    if (!element) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return clamp((event.clientX - rect.left) / Math.max(rect.width, 1));
+  }
+
+  function handleWaveformPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!canSelectRange) {
+      return;
+    }
+
+    const percent = getWaveformPercent(event);
+
+    if (percent === null) {
+      return;
+    }
+
+    setDragSelection({ end: percent, start: percent });
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleWaveformPointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!dragSelection) {
+      return;
+    }
+
+    const percent = getWaveformPercent(event);
+
+    if (percent === null) {
+      return;
+    }
+
+    setDragSelection((current) => current ? { ...current, end: percent } : current);
+  }
+
+  function handleWaveformPointerUp() {
+    if (!dragSelection || !activeControl || !activeLabel || duration <= 0) {
+      setDragSelection(null);
+      return;
+    }
+
+    const startPercent = Math.min(dragSelection.start, dragSelection.end);
+    const endPercent = Math.max(dragSelection.start, dragSelection.end);
+
+    if (endPercent - startPercent >= 0.006) {
+      onAddTemporalRegion(activeControl.name, {
+        end: (endPercent * duration).toFixed(2),
+        label: activeLabel,
+        start: (startPercent * duration).toFixed(2)
+      });
+    }
+
+    setDragSelection(null);
+  }
+
+  return (
+    <div className="template-source-card media-source-card audio-source-card">
+      <div className="template-source-head">
+        <div>
+          <p className="eyebrow">{name}</p>
+          <strong>Audio waveform workspace</strong>
+        </div>
+        <span>{formatMediaTime(currentTime)} / {formatMediaTime(duration)}</span>
+      </div>
+      {audioUrl ? (
+        <>
+          <TemporalSourceControls
+            activeControlName={activeControlName}
+            activeLabel={activeLabel}
+            controls={temporalControls}
+            onControlChange={setActiveControlName}
+            onLabelChange={setActiveLabel}
+            regionCount={selectedRegionCount}
+          />
+          <div
+            className={canSelectRange ? "audio-waveform-preview selectable" : "audio-waveform-preview"}
+            onPointerDown={handleWaveformPointerDown}
+            onPointerMove={handleWaveformPointerMove}
+            onPointerUp={handleWaveformPointerUp}
+            onPointerLeave={handleWaveformPointerUp}
+            ref={waveformRef}
+          >
+            {Array.from({ length: 56 }, (_, index) => (
+              <span key={index} style={{ height: `${22 + Math.round(Math.abs(Math.sin(index * 1.7)) * 44)}%` }} />
+            ))}
+            {dragSelection && (
+              <div
+                className="audio-waveform-selection"
+                style={{
+                  left: `${Math.min(dragSelection.start, dragSelection.end) * 100}%`,
+                  width: `${Math.abs(dragSelection.end - dragSelection.start) * 100}%`
+                }}
+              />
+            )}
+          </div>
+          <audio
+            controls
+            onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+            onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+            ref={audioRef}
+            src={audioUrl}
+          />
+          <div className="media-control-row">
+            <button className="secondary-button compact-button" onClick={() => seekBy(-1)} type="button">-1s</button>
+            <button className="secondary-button compact-button" onClick={() => seekBy(1)} type="button">+1s</button>
+            <select value={playbackRate} onChange={(event) => updatePlaybackRate(Number(event.target.value))}>
+              <option value={0.5}>0.5x</option>
+              <option value={1}>1x</option>
+              <option value={1.5}>1.5x</option>
+              <option value={2}>2x</option>
+            </select>
+            <a className="secondary-button compact-button" href={audioUrl} target="_blank" rel="noreferrer">Open source</a>
+          </div>
+        </>
+      ) : (
+        <p className="muted-copy">No audio source is available.</p>
+      )}
+    </div>
+  );
+}
+
+function PdfSourceCard({ name, pdfUrl }: { name: string; pdfUrl: string | null }) {
+  return (
+    <div className="template-source-card pdf-source-card">
+      <div className="template-source-head">
+        <div>
+          <p className="eyebrow">{name}</p>
+          <strong>Document workspace</strong>
+        </div>
+        {pdfUrl && (
+          <a className="secondary-button compact-button" href={pdfUrl} target="_blank" rel="noreferrer">
+            Open source
+          </a>
+        )}
+      </div>
+      {pdfUrl ? (
+        <iframe src={pdfUrl} title={name} />
+      ) : (
+        <p className="muted-copy">No PDF source is available.</p>
+      )}
+    </div>
+  );
+}
+
+function TimeSeriesSourceCard({
+  name,
+  onAddTemporalRegion,
+  sourceText,
+  sourceUrl,
+  temporalControls,
+  temporalResponses
+}: {
+  name: string;
+  onAddTemporalRegion: (controlName: string, region: Omit<TemporalRegionResponse, "id">) => void;
+  sourceText: string;
+  sourceUrl: string | null;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
+}) {
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const [activeControlName, setActiveControlName] = useState(temporalControls[0]?.name ?? "");
+  const [activeLabel, setActiveLabel] = useState(temporalControls[0]?.labels[0]?.value ?? "");
+  const [dragSelection, setDragSelection] = useState<{ end: number; start: number } | null>(null);
+  const preview = buildTimeSeriesPreview(sourceText);
+  const activeControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+  const canSelectRange = Boolean(activeControl && preview && preview.rows.length > 0);
+  const selectedRegionCount = activeControl ? temporalResponses[activeControl.name]?.length ?? 0 : 0;
+
+  useEffect(() => {
+    const nextControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+
+    if (!nextControl) {
+      setActiveControlName("");
+      setActiveLabel("");
+      return;
+    }
+
+    if (nextControl.name !== activeControlName) {
+      setActiveControlName(nextControl.name);
+    }
+
+    if (!nextControl.labels.some((label) => label.value === activeLabel)) {
+      setActiveLabel(nextControl.labels[0]?.value ?? "");
+    }
+  }, [activeControlName, activeLabel, temporalControls]);
+
+  function getChartPercent(event: PointerEvent<HTMLDivElement>) {
+    const element = chartRef.current;
+
+    if (!element) {
+      return null;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return clamp((event.clientX - rect.left) / Math.max(rect.width, 1));
+  }
+
+  function handleChartPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!canSelectRange) {
+      return;
+    }
+
+    const percent = getChartPercent(event);
+
+    if (percent === null) {
+      return;
+    }
+
+    setDragSelection({ end: percent, start: percent });
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleChartPointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!dragSelection) {
+      return;
+    }
+
+    const percent = getChartPercent(event);
+
+    if (percent === null) {
+      return;
+    }
+
+    setDragSelection((current) => current ? { ...current, end: percent } : current);
+  }
+
+  function handleChartPointerUp() {
+    if (!dragSelection || !activeControl || !activeLabel || !preview) {
+      setDragSelection(null);
+      return;
+    }
+
+    const startPercent = Math.min(dragSelection.start, dragSelection.end);
+    const endPercent = Math.max(dragSelection.start, dragSelection.end);
+    const startIndex = getTimeSeriesRowIndex(startPercent, preview.rows.length);
+    const endIndex = getTimeSeriesRowIndex(endPercent, preview.rows.length);
+    const startRow = preview.rows[Math.min(startIndex, endIndex)];
+    const endRow = preview.rows[Math.max(startIndex, endIndex)];
+
+    if (startRow && endRow) {
+      onAddTemporalRegion(activeControl.name, {
+        end: endRow.label,
+        label: activeLabel,
+        start: startRow.label
+      });
+    }
+
+    setDragSelection(null);
+  }
+
+  return (
+    <div className="template-source-card time-series-source-card">
+      <div className="template-source-head">
+        <div>
+          <p className="eyebrow">{name}</p>
+          <strong>{preview ? preview.valueColumn : "Time series workspace"}</strong>
+        </div>
+        {sourceUrl && (
+          <a className="secondary-button compact-button" href={sourceUrl} target="_blank" rel="noreferrer">
+            Open source
+          </a>
+        )}
+      </div>
+      {preview ? (
+        <>
+          <TemporalSourceControls
+            activeControlName={activeControlName}
+            activeLabel={activeLabel}
+            controls={temporalControls}
+            onControlChange={setActiveControlName}
+            onLabelChange={setActiveLabel}
+            regionCount={selectedRegionCount}
+          />
+          <div
+            className={canSelectRange ? "time-series-chart-wrap selectable" : "time-series-chart-wrap"}
+            onPointerDown={handleChartPointerDown}
+            onPointerMove={handleChartPointerMove}
+            onPointerUp={handleChartPointerUp}
+            onPointerLeave={handleChartPointerUp}
+            ref={chartRef}
+          >
+            <svg className="time-series-chart" preserveAspectRatio="none" viewBox="0 0 100 42">
+              <polyline points={preview.polyline} />
+            </svg>
+            {dragSelection && (
+              <div
+                className="time-series-selection"
+                style={{
+                  left: `${Math.min(dragSelection.start, dragSelection.end) * 100}%`,
+                  width: `${Math.abs(dragSelection.end - dragSelection.start) * 100}%`
+                }}
+              />
+            )}
+          </div>
+          <div className="time-series-table">
+            {preview.rows.slice(0, 8).map((row, index) => (
+              <div key={`${row.label}-${index}`}>
+                <span>{row.label}</span>
+                <strong>{row.value}</strong>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="text-source-card">
+          <div>{sourceText || "No inline time series data is available. Open the source file to inspect it."}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TemporalSourceControls({
+  activeControlName,
+  activeLabel,
+  controls,
+  onControlChange,
+  onLabelChange,
+  regionCount
+}: {
+  activeControlName: string;
+  activeLabel: string;
+  controls: TemporalLabelControl[];
+  onControlChange: (controlName: string) => void;
+  onLabelChange: (label: string) => void;
+  regionCount: number;
+}) {
+  const activeControl = controls.find((control) => control.name === activeControlName) ?? controls[0] ?? null;
+
+  if (!activeControl) {
+    return null;
+  }
+
+  return (
+    <div className="temporal-source-controls">
+      <label>
+        Region tool
+        <select value={activeControl.name} onChange={(event) => onControlChange(event.target.value)}>
+          {controls.map((control) => (
+            <option key={control.name} value={control.name}>{formatControlName(control.name)}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Label
+        <select value={activeLabel} onChange={(event) => onLabelChange(event.target.value)}>
+          {activeControl.labels.map((label) => (
+            <option key={label.value} value={label.value}>{label.value}</option>
+          ))}
+        </select>
+      </label>
+      <span>{regionCount} regions</span>
+    </div>
+  );
+}
+
+function TemporalRegionEditor({
+  control,
+  onChange,
+  regions
+}: {
+  control: TemporalLabelControl;
+  onChange: (regions: TemporalRegionResponse[]) => void;
+  regions: TemporalRegionResponse[];
+}) {
+  const firstLabel = control.labels[0]?.value ?? "Region";
+  const [draftLabel, setDraftLabel] = useState(firstLabel);
+  const [draftStart, setDraftStart] = useState("");
+  const [draftEnd, setDraftEnd] = useState("");
+  const isTimeSeries = control.type === "timeserieslabels";
+
+  function addRegion() {
+    const start = draftStart.trim();
+    const end = (draftEnd.trim() || start).trim();
+
+    if (!start || !end) {
+      return;
+    }
+
+    onChange([
+      ...regions,
+      {
+        end,
+        id: `temporal-${Date.now()}`,
+        label: draftLabel || firstLabel,
+        start
+      }
+    ]);
+    setDraftStart("");
+    setDraftEnd("");
+  }
+
+  return (
+    <div className="template-response-field temporal-region-editor">
+      <span>
+        {formatControlName(control.name)}
+        {control.required && <strong>Required</strong>}
+      </span>
+      <div className="temporal-region-form">
+        <label>
+          Label
+          <select value={draftLabel} onChange={(event) => setDraftLabel(event.target.value)}>
+            {control.labels.map((label) => (
+              <option key={label.value} value={label.value}>{label.value}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Start
+          <input
+            placeholder={isTimeSeries ? "2020-01-05 00:00:00" : "0.00"}
+            value={draftStart}
+            onChange={(event) => setDraftStart(event.target.value)}
+          />
+        </label>
+        <label>
+          End
+          <input
+            placeholder={isTimeSeries ? "2020-01-19 00:00:00" : "3.50"}
+            value={draftEnd}
+            onChange={(event) => setDraftEnd(event.target.value)}
+          />
+        </label>
+        <button className="secondary-button compact-button" onClick={addRegion} type="button">Add region</button>
+      </div>
+      <div className="temporal-region-list">
+        {regions.length > 0 ? regions.map((region, index) => (
+          <div key={region.id}>
+            <strong>{index + 1}. {region.label}</strong>
+            <span>{region.start} to {region.end}</span>
+            <button
+              aria-label={`Delete ${region.label} region ${index + 1}`}
+              className="annotation-region-delete"
+              onClick={() => onChange(regions.filter((item) => item.id !== region.id))}
+              title="Delete region"
+              type="button"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        )) : (
+          <small className="muted-copy">Add time spans or instants for this source.</small>
+        )}
+      </div>
     </div>
   );
 }
@@ -2128,6 +3102,62 @@ function parseDateTimeControls(configCode: string): DateTimeControl[] {
   return controls;
 }
 
+function parseTemporalLabelControls(configCode: string): TemporalLabelControl[] {
+  const controls: TemporalLabelControl[] = [];
+  const labelsPattern = /<(Labels|TimeSeriesLabels)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = labelsPattern.exec(configCode))) {
+    const tagName = match[1];
+    const attributes = match[2] ?? "";
+    const body = match[3] ?? "";
+    const name = getXmlAttribute(attributes, "name");
+    const toName = getXmlAttribute(attributes, "toName");
+
+    if (!name || !toName) {
+      continue;
+    }
+
+    const labels = parseLabelValues(body);
+
+    if (labels.length === 0) {
+      continue;
+    }
+
+    controls.push({
+      labels,
+      name,
+      required: getXmlAttribute(attributes, "required") === "true",
+      toName,
+      type: tagName === "TimeSeriesLabels" ? "timeserieslabels" : "labels"
+    });
+  }
+
+  return controls;
+}
+
+function parseLabelValues(body: string): TemporalLabelControl["labels"] {
+  const labels: TemporalLabelControl["labels"] = [];
+  const labelPattern = /<Label\b([^>]*)\/?>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = labelPattern.exec(body))) {
+    const attributes = match[1] ?? "";
+    const value = getXmlAttribute(attributes, "value");
+
+    if (!value) {
+      continue;
+    }
+
+    labels.push({
+      color: getXmlAttribute(attributes, "background") ?? getXmlAttribute(attributes, "valueColor"),
+      value
+    });
+  }
+
+  return labels;
+}
+
 function getXmlAttribute(attributes: string, name: string) {
   const pattern = new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i");
   const match = attributes.match(pattern);
@@ -2313,6 +3343,50 @@ function annotationToRatingResponses(annotation: AnnotationSummary | null): Reco
   return responses;
 }
 
+function annotationToTemporalResponses(annotation: AnnotationSummary | null): Record<string, TemporalRegionResponse[]> {
+  if (!annotation?.resultJson || !Array.isArray(annotation.resultJson.results)) {
+    return {};
+  }
+
+  const responses: Record<string, TemporalRegionResponse[]> = {};
+
+  annotation.resultJson.results.forEach((rawResult, index) => {
+    if (!rawResult || typeof rawResult !== "object") {
+      return;
+    }
+
+    const result = rawResult as Record<string, unknown>;
+    const fromName = typeof result.from_name === "string" ? result.from_name : typeof result.fromName === "string" ? result.fromName : null;
+    const value = result.value;
+
+    if (!fromName || !value || typeof value !== "object") {
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    const rawLabelList = Array.isArray(record.labels) ? record.labels : Array.isArray(record.timeserieslabels) ? record.timeserieslabels : null;
+    const rawLabel = rawLabelList?.find((item): item is string => typeof item === "string");
+    const start = record.start;
+    const end = record.end;
+
+    if (!rawLabel || (typeof start !== "string" && typeof start !== "number") || (typeof end !== "string" && typeof end !== "number")) {
+      return;
+    }
+
+    responses[fromName] = [
+      ...(responses[fromName] ?? []),
+      {
+        end: String(end),
+        id: typeof result.id === "string" ? result.id : `${fromName}-${index}`,
+        label: rawLabel,
+        start: String(start)
+      }
+    ];
+  });
+
+  return responses;
+}
+
 function formResponsesToResults({
   choiceControls,
   choiceResponses,
@@ -2322,6 +3396,8 @@ function formResponsesToResults({
   numberResponses,
   ratingControls,
   ratingResponses,
+  temporalControls,
+  temporalResponses,
   textControls,
   textResponses
 }: {
@@ -2333,6 +3409,8 @@ function formResponsesToResults({
   numberResponses: Record<string, string>;
   ratingControls: RatingControl[];
   ratingResponses: Record<string, number>;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
   textControls: TextAreaControl[];
   textResponses: Record<string, string>;
 }): SaveAnnotationInput["results"] {
@@ -2391,7 +3469,34 @@ function formResponsesToResults({
     }))
     .filter((result) => result.value.datetime.length > 0);
 
-  return [...choiceResults, ...textResults, ...numberResults, ...ratingResults, ...dateTimeResults];
+  const temporalResults = temporalControls.flatMap((control) =>
+    (temporalResponses[control.name] ?? []).map((region) => ({
+      fromName: control.name,
+      toName: control.toName,
+      type: control.type,
+      value:
+        control.type === "timeserieslabels"
+          ? {
+              end: region.end,
+              instant: region.start === region.end,
+              start: region.start,
+              timeserieslabels: [region.label]
+            }
+          : {
+              end: Number(region.end),
+              labels: [region.label],
+              start: Number(region.start)
+            }
+    }))
+  ).filter((result) => {
+    if (result.type === "timeserieslabels") {
+      return typeof result.value.start === "string" && result.value.start.length > 0 && typeof result.value.end === "string" && result.value.end.length > 0;
+    }
+
+    return Number.isFinite(result.value.start) && Number.isFinite(result.value.end) && result.value.end >= result.value.start;
+  });
+
+  return [...choiceResults, ...textResults, ...numberResults, ...ratingResults, ...dateTimeResults, ...temporalResults];
 }
 
 function toggleChoiceValue(current: string[], value: string, mode: ChoiceControl["choice"]) {
@@ -2408,10 +3513,15 @@ function hasControlResponse(
   choiceResponses: Record<string, string[]>,
   numberResponses: Record<string, string>,
   ratingResponses: Record<string, number>,
-  dateTimeResponses: Record<string, string>
+  dateTimeResponses: Record<string, string>,
+  temporalResponses: Record<string, TemporalRegionResponse[]>
 ) {
   if ("choices" in control) {
     return (choiceResponses[control.name]?.length ?? 0) > 0;
+  }
+
+  if ("labels" in control) {
+    return (temporalResponses[control.name]?.length ?? 0) > 0;
   }
 
   if ("maxRating" in control) {
@@ -2520,6 +3630,17 @@ function annotationToShapes(annotation: AnnotationSummary | null): AnnotationSha
   });
 
   return shapes;
+}
+
+function cloneShapes(shapes: AnnotationShape[]): AnnotationShape[] {
+  return shapes.map((shape) => ({
+    ...shape,
+    points: shape.points?.map((point) => ({ ...point }))
+  }));
+}
+
+function areShapesEqual(first: AnnotationShape[], second: AnnotationShape[]) {
+  return JSON.stringify(first) === JSON.stringify(second);
 }
 
 function isBoxGeometry(value: unknown): value is { height: number; width: number; x: number; y: number } {
@@ -2874,8 +3995,7 @@ function getAnnotationCanvasWidth({
   const availableWidth = Math.max(280, stageSize.width - 24);
   const availableHeight = Math.max(280, stageSize.height - 24);
   const cappedWidth = fullscreen ? availableWidth : Math.min(availableWidth, 980);
-  const cappedHeight = fullscreen ? availableHeight : Math.min(availableHeight, 680);
-  const baseWidth = Math.min(cappedWidth, cappedHeight * aspectRatio);
+  const baseWidth = Math.min(cappedWidth, availableHeight * aspectRatio);
 
   return `${Math.max(260, Math.round(baseWidth * zoom))}px`;
 }
@@ -2889,7 +4009,7 @@ function getShortcutKey(index: number) {
 }
 
 function getTaskQueueLink(
-  queueQuery: { datasetId: string | null; page: string | null; projectId: string | null },
+  queueQuery: { datasetId: string | null; page: string | null; projectId: string | null; queue: string | null },
   task: TaskSummary | null | undefined
 ) {
   const params = new URLSearchParams();
@@ -2908,11 +4028,18 @@ function getTaskQueueLink(
     params.set("page", queueQuery.page);
   }
 
+  if (queueQuery.queue === "review") {
+    params.set("queue", "review");
+  }
+
   const query = params.toString();
   return query ? `/tasks?${query}` : "/tasks";
 }
 
-function getTaskDetailSearch(queueQuery: { datasetId: string | null; page: string | null; projectId: string | null }, task: TaskSummary) {
+function getTaskDetailSearch(
+  queueQuery: { datasetId: string | null; page: string | null; projectId: string | null; queue: string | null },
+  task: TaskSummary
+) {
   const params = new URLSearchParams();
   const projectId = queueQuery.projectId ?? task.projectId;
   const datasetId = queueQuery.datasetId ?? task.datasetId;
@@ -2927,13 +4054,184 @@ function getTaskDetailSearch(queueQuery: { datasetId: string | null; page: strin
     params.set("page", queueQuery.page);
   }
 
+  if (queueQuery.queue === "review") {
+    params.set("queue", "review");
+  }
+
   const query = params.toString();
   return query ? `?${query}` : "";
 }
 
-function getNextTaskAction(status: string) {
+function buildTaskHistoryItems(annotationHistory: AnnotationSummary[], reviews: ReviewSummary[]): TaskHistoryItem[] {
+  const annotationItems = annotationHistory.map((item) => ({
+    body: `${formatEnum(item.status)} by ${item.user.name}`,
+    id: `annotation-${item.id}`,
+    meta: item.submittedAt ? "Submitted annotation" : "Draft saved",
+    timestamp: item.updatedAt,
+    title: `Annotation v${item.version}`
+  }));
+  const reviewItems = reviews.map((review) => ({
+    body: review.feedback?.trim() || `Reviewed by ${review.reviewer.name}`,
+    id: `review-${review.id}`,
+    meta: `Annotation v${review.annotation.version}`,
+    timestamp: review.createdAt,
+    title: formatEnum(review.status)
+  }));
+
+  return [...annotationItems, ...reviewItems].sort(
+    (first, second) => new Date(second.timestamp).getTime() - new Date(first.timestamp).getTime()
+  );
+}
+
+function formatMediaTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "0:00";
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function buildTimeSeriesPreview(sourceText: string) {
+  const rows = parseDelimitedRows(sourceText);
+
+  if (rows.length < 2) {
+    return null;
+  }
+
+  const headers = rows[0] ?? [];
+  const dataRows = rows.slice(1).filter((row: string[]) => row.some((cell: string) => cell.trim().length > 0));
+  const valueColumnIndex = headers.findIndex((_header: string, index: number) => index > 0 && dataRows.some((row: string[]) => Number.isFinite(Number(row[index]))));
+
+  if (valueColumnIndex < 0) {
+    return null;
+  }
+
+  const labelColumnIndex = headers.findIndex((header: string) => /time|date|timestamp/i.test(header));
+  const normalizedLabelIndex = labelColumnIndex >= 0 ? labelColumnIndex : 0;
+  const points = dataRows
+    .map((row, index) => ({
+      index,
+      label: row[normalizedLabelIndex] ?? String(index + 1),
+      value: Number(row[valueColumnIndex])
+    }))
+    .filter((point) => Number.isFinite(point.value));
+
+  if (points.length < 2) {
+    return null;
+  }
+
+  const minValue = Math.min(...points.map((point) => point.value));
+  const maxValue = Math.max(...points.map((point) => point.value));
+  const valueRange = maxValue - minValue || 1;
+  const polyline = points
+    .map((point, index) => {
+      const x = points.length === 1 ? 0 : (index / (points.length - 1)) * 100;
+      const y = 38 - ((point.value - minValue) / valueRange) * 34;
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return {
+    polyline,
+    rows: points.map((point) => ({
+      label: point.label,
+      value: Number.isInteger(point.value) ? String(point.value) : point.value.toFixed(3)
+    })),
+    valueColumn: headers[valueColumnIndex] ?? "Value"
+  };
+}
+
+function getTimeSeriesRowIndex(percent: number, rowCount: number) {
+  return Math.max(0, Math.min(Math.max(0, rowCount - 1), Math.round(clamp(percent) * Math.max(0, rowCount - 1))));
+}
+
+function parseDelimitedRows(sourceText: string): string[][] {
+  const trimmed = sourceText.trim();
+
+  if (!trimmed || /^https?:\/\//i.test(trimmed) || trimmed.startsWith("/")) {
+    return [];
+  }
+
+  if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      const parsedRecord = isRecord(parsed) ? parsed : {};
+      const objects = Array.isArray(parsed) ? parsed : Array.isArray(parsedRecord.data) ? parsedRecord.data : [];
+
+      if (objects.every((item) => isRecord(item))) {
+        const records = objects as Array<Record<string, unknown>>;
+        const headers = Array.from(new Set<string>(records.flatMap((item) => Object.keys(item))));
+        return [
+          headers,
+          ...records.map((item) => headers.map((header) => {
+            const value = item[header];
+            return value == null ? "" : String(value);
+          }))
+        ];
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  const lines = trimmed.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  const delimiter = trimmed.includes("\t") ? "\t" : ",";
+  return lines.map((line) => splitDelimitedLine(line, delimiter));
+}
+
+function splitDelimitedLine(line: string, delimiter: string) {
+  const cells: string[] = [];
+  let current = "";
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    const nextCharacter = line[index + 1];
+
+    if (character === "\"" && nextCharacter === "\"") {
+      current += "\"";
+      index += 1;
+      continue;
+    }
+
+    if (character === "\"") {
+      quoted = !quoted;
+      continue;
+    }
+
+    if (character === delimiter && !quoted) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += character;
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function formatDateTime(value: string | Date | null | undefined) {
+  if (!value) {
+    return "Not recorded";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(value));
+}
+
+function getNextTaskAction(status: string): { label: string } | null {
+  if (status === "REJECTED") {
+    return { label: "Revise task" };
+  }
+
   if (status === "PENDING" || status === "ASSIGNED") {
-    return "start";
+    return { label: "Start task" };
   }
 
   return null;

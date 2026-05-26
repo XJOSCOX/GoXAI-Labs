@@ -92,6 +92,15 @@ export function canWorkTasks(membership: RoleMembership) {
   ]);
 }
 
+export function canReviewTasks(membership: RoleMembership) {
+  return hasRole(membership, [
+    MembershipRole.OWNER,
+    MembershipRole.ADMIN,
+    MembershipRole.MANAGER,
+    MembershipRole.REVIEWER
+  ]);
+}
+
 function hasRole(membership: RoleMembership, roles: MembershipRole[]) {
   return roles.includes(membership.role);
 }

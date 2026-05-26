@@ -384,6 +384,31 @@ export interface DatasetSummary {
   updatedAt: string;
 }
 
+export interface DatasetVersionSummary {
+  id: string;
+  datasetId: string;
+  version: number;
+  summary: {
+    reason: string;
+    labelCount: number;
+    toolCount: number;
+    assetCount: number;
+    taskCount: number;
+    datasetName: string;
+    datasetStatus: string;
+    templateName: string | null;
+    restoredFromVersion: number | null;
+  };
+  createdById: string | null;
+  createdBy: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+  createdAt: string;
+}
+
 export interface CreateDatasetInput {
   projectId: string;
   name: string;
@@ -475,6 +500,54 @@ export interface AssetAccessUrl {
   expiresInSeconds: number;
 }
 
+export interface ExportJobSummary {
+  completedAt: string | null;
+  createdAt: string;
+  dataset: {
+    id: string;
+    name: string;
+    version: number;
+  } | null;
+  datasetId: string | null;
+  errorMessage: string | null;
+  format: string;
+  id: string;
+  metadata: Record<string, unknown> | null;
+  outputAsset: {
+    id: string;
+    bucket: string;
+    fileName: string;
+    fileSize: string;
+    mimeType: string;
+    objectKey: string;
+    provider: string;
+  } | null;
+  outputAssetId: string | null;
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  projectId: string;
+  requestedBy: {
+    id: string;
+    email: string;
+    name: string;
+  } | null;
+  requestedById: string | null;
+  startedAt: string | null;
+  status: string;
+  updatedAt: string;
+}
+
+export type ExportFormat = "ASR_JSONL" | "COCO" | "CONLL_2003" | "CSV" | "JSON" | "JSON_MIN" | "PASCAL_VOC" | "TSV" | "YOLO";
+
+export interface ExportDownloadUrl {
+  downloadUrl: string;
+  expiresInSeconds: number;
+  export: ExportJobSummary;
+}
+
 export interface DeleteAssetsResult {
   deletedCount: number;
 }
@@ -525,6 +598,7 @@ export interface TaskSummary {
     email: string;
     name: string;
   } | null;
+  canReview: boolean;
   canWork: boolean;
   createdAt: string;
   updatedAt: string;
@@ -561,13 +635,64 @@ export interface AnnotationSummary {
   updatedAt: string;
 }
 
+export interface ReviewSummary {
+  annotation: {
+    id: string;
+    status: string;
+    version: number;
+  };
+  annotationId: string;
+  createdAt: string;
+  feedback: string | null;
+  id: string;
+  metadata: Record<string, unknown> | null;
+  reviewer: {
+    id: string;
+    email: string;
+    name: string;
+  };
+  reviewerId: string;
+  score: number | null;
+  status: string;
+  taskId: string;
+  updatedAt: string;
+}
+
+export interface CommentSummary {
+  annotationId: string | null;
+  body: string;
+  createdAt: string;
+  id: string;
+  metadata: Record<string, unknown> | null;
+  parentId: string | null;
+  resolved: boolean;
+  taskId: string | null;
+  updatedAt: string;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+  };
+  userId: string;
+}
+
 export interface TaskDetailResult {
   annotation: AnnotationSummary | null;
+  annotationHistory: AnnotationSummary[];
+  comments: CommentSummary[];
+  reviews: ReviewSummary[];
   task: TaskSummary;
 }
 
 export interface NextTaskResult {
   task: TaskSummary | null;
+}
+
+export interface ReviewTaskResult {
+  annotation: AnnotationSummary | null;
+  comment: CommentSummary | null;
+  review: ReviewSummary;
+  task: TaskSummary;
 }
 
 export interface SaveAnnotationInput {
@@ -1257,6 +1382,32 @@ export async function updateDataset(session: Session, datasetId: string, input: 
   return ((await response.json()) as { dataset: DatasetSummary }).dataset;
 }
 
+export async function listDatasetVersions(session: Session, datasetId: string) {
+  const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}/versions`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load dataset versions."));
+  }
+
+  return ((await response.json()) as { versions: DatasetVersionSummary[] }).versions;
+}
+
+export async function rollbackDatasetVersion(session: Session, datasetId: string, version: number) {
+  const response = await authenticatedFetch(
+    session,
+    `/api/datasets/${encodeURIComponent(datasetId)}/versions/${encodeURIComponent(String(version))}/rollback`,
+    {
+      method: "POST"
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to rollback dataset version."));
+  }
+
+  return ((await response.json()) as { dataset: DatasetSummary }).dataset;
+}
+
 export async function archiveDataset(session: Session, datasetId: string) {
   const response = await authenticatedFetch(session, `/api/datasets/${encodeURIComponent(datasetId)}/archive`, {
     method: "POST"
@@ -1354,6 +1505,50 @@ export async function getAssetAccessUrl(session: Session, assetId: string) {
   return (await response.json()) as AssetAccessUrl;
 }
 
+export async function listExportJobs(session: Session, input: { datasetId?: string; projectId?: string }) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/exports${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load exports."));
+  }
+
+  return ((await response.json()) as { exports: ExportJobSummary[] }).exports;
+}
+
+export async function createExportJob(session: Session, input: { datasetId?: string; format?: ExportFormat; includeSourceFiles?: boolean; projectId?: string }) {
+  const response = await authenticatedFetch(session, "/api/exports", {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues({ ...input, format: input.format ?? "JSON" }))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create export."));
+  }
+
+  return ((await response.json()) as { export: ExportJobSummary }).export;
+}
+
+export async function getExportDownloadUrl(session: Session, exportId: string) {
+  const response = await authenticatedFetch(session, `/api/exports/${encodeURIComponent(exportId)}/download-url`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to create export download URL."));
+  }
+
+  return (await response.json()) as ExportDownloadUrl;
+}
+
 export async function deleteAssets(
   session: Session,
   input: { assetIds?: string[]; datasetId?: string; folderPrefix?: string }
@@ -1393,7 +1588,7 @@ export async function listTasks(session: Session, input: { datasetId?: string; p
 
 export async function listTaskPage(
   session: Session,
-  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string } = {}
+  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string; queue?: "review" | "work" } = {}
 ) {
   const params = new URLSearchParams();
 
@@ -1411,6 +1606,10 @@ export async function listTaskPage(
 
   if (input.pageSize) {
     params.set("pageSize", String(input.pageSize));
+  }
+
+  if (input.queue === "review") {
+    params.set("queue", "review");
   }
 
   const query = params.toString();
@@ -1471,10 +1670,40 @@ export async function getTask(session: Session, taskId: string) {
   return (await response.json()) as TaskDetailResult;
 }
 
+export async function addTaskComment(session: Session, taskId: string, input: { annotationId?: string | null; body: string }) {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/comments`, {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to add comment."));
+  }
+
+  return ((await response.json()) as { comment: CommentSummary }).comment;
+}
+
+export async function reviewTask(
+  session: Session,
+  taskId: string,
+  input: { decision: "approve" | "reject"; feedback?: string }
+) {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/review`, {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to review task."));
+  }
+
+  return (await response.json()) as ReviewTaskResult;
+}
+
 export async function getNextTask(
   session: Session,
   taskId: string,
-  input: { datasetId?: string; projectId?: string } = {}
+  input: { datasetId?: string; projectId?: string; queue?: "review" | "work" } = {}
 ) {
   const params = new URLSearchParams();
 
@@ -1484,6 +1713,10 @@ export async function getNextTask(
 
   if (input.projectId) {
     params.set("projectId", input.projectId);
+  }
+
+  if (input.queue === "review") {
+    params.set("queue", "review");
   }
 
   const query = params.toString();

@@ -199,6 +199,79 @@ router.get("/:datasetId", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.get("/:datasetId/versions", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.projectMembership.findFirst({
+    where: {
+      userId: user.id,
+      projectId: dataset.projectId,
+      status: "ACTIVE"
+    }
+  });
+
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to view dataset versions." });
+    return;
+  }
+
+  const versions = await prisma.datasetVersion.findMany({
+    where: {
+      datasetId: dataset.id
+    },
+    include: {
+      createdBy: {
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true
+        }
+      }
+    },
+    orderBy: {
+      version: "desc"
+    }
+  });
+
+  response.status(200).json({
+    versions: versions.map(serializeDatasetVersion)
+  });
+});
+
 router.post("/", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
 
@@ -258,6 +331,16 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         createdById: user.id
       },
       include: datasetIncludes
+    });
+
+    await createDatasetVersionSnapshot(tx, {
+      datasetId: createdDataset.id,
+      reason: "dataset_created",
+      summary: {
+        projectName: project.name
+      },
+      userId: user.id,
+      version: createdDataset.version
     });
 
     await tx.auditLog.create({
@@ -407,6 +490,19 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
       await syncDatasetTools(tx, saved.id, tools);
     }
 
+    if (hasDatasetVersionChange(parsed.value)) {
+      await recordDatasetVersionChange(tx, {
+        datasetId: saved.id,
+        reason: getDatasetUpdateReason(parsed.value),
+        summary: {
+          changedFields: Object.keys(parsed.value).filter((key) => key !== "labels" && key !== "tools"),
+          labelsChanged: Boolean(labels),
+          toolsChanged: Boolean(tools)
+        },
+        userId: user.id
+      });
+    }
+
     await tx.auditLog.create({
       data: {
         organizationId: saved.organizationId,
@@ -429,6 +525,161 @@ router.patch("/:datasetId", async (request: AuthenticatedRequest, response) => {
 
   response.status(200).json({
     dataset: serializeDataset(updatedDataset, user.id)
+  });
+});
+
+router.post("/:datasetId/versions/:version/rollback", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.params.datasetId);
+  const version = normalizePositiveInteger(request.params.version);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  if (!version) {
+    response.status(400).json({ error: "Choose a valid dataset version." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const membership = await prisma.projectMembership.findFirst({
+    where: {
+      userId: user.id,
+      projectId: dataset.projectId,
+      status: "ACTIVE"
+    }
+  });
+
+  if (dataset.project.createdById !== user.id && (!membership || !canManageProjectScope(membership))) {
+    response.status(403).json({ error: "You need project owner or admin access to rollback this dataset." });
+    return;
+  }
+
+  const targetVersion = await prisma.datasetVersion.findUnique({
+    where: {
+      datasetId_version: {
+        datasetId: dataset.id,
+        version
+      }
+    }
+  });
+
+  if (!targetVersion) {
+    response.status(404).json({ error: "Dataset version was not found." });
+    return;
+  }
+
+  const rollbackState = parseDatasetSnapshotForRollback(targetVersion.snapshotJson);
+
+  if (!rollbackState.ok) {
+    response.status(400).json({ error: rollbackState.error });
+    return;
+  }
+
+  const restoredDataset = await prisma.$transaction(async (tx) => {
+    const nextVersion = await getNextDatasetVersion(tx, dataset.id);
+    const restoredTemplate = rollbackState.value.annotationTemplateId
+      ? await tx.annotationTemplate.findFirst({
+          where: {
+            id: rollbackState.value.annotationTemplateId,
+            OR: [
+              {
+                organizationId: null
+              },
+              {
+                organizationId: dataset.organizationId
+              }
+            ]
+          },
+          select: {
+            id: true
+          }
+        })
+      : null;
+
+    await tx.dataset.update({
+      where: {
+        id: dataset.id
+      },
+      data: {
+        annotationTemplateId: restoredTemplate?.id ?? null,
+        description: rollbackState.value.description,
+        labelingConfig: rollbackState.value.labelingConfig,
+        metadata: rollbackState.value.metadata,
+        name: rollbackState.value.name,
+        status: rollbackState.value.status,
+        version: nextVersion
+      }
+    });
+
+    await syncDatasetLabels(tx, dataset.id, rollbackState.value.labels);
+    await syncDatasetTools(tx, dataset.id, rollbackState.value.tools);
+
+    await createDatasetVersionSnapshot(tx, {
+      datasetId: dataset.id,
+      reason: "rollback",
+      summary: {
+        restoredFromVersion: version
+      },
+      userId: user.id,
+      version: nextVersion
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: dataset.organizationId,
+        projectId: dataset.projectId,
+        userId: user.id,
+        action: "dataset.version_rolled_back",
+        entityType: "dataset",
+        entityId: dataset.id,
+        metadata: {
+          requestId: getRequestId(request),
+          restoredFromVersion: version,
+          newVersion: nextVersion
+        }
+      }
+    });
+
+    return tx.dataset.findUniqueOrThrow({
+      where: {
+        id: dataset.id
+      },
+      include: datasetIncludes
+    });
+  });
+
+  response.status(200).json({
+    dataset: serializeDataset(restoredDataset, user.id)
   });
 });
 
@@ -975,6 +1226,436 @@ function serializeDataset(dataset: DatasetWithRelations, currentUserId?: string)
   };
 }
 
+type DatasetVersionWithRelations = {
+  id: string;
+  datasetId: string;
+  version: number;
+  snapshotJson: unknown;
+  createdAt: Date;
+  createdById: string | null;
+  createdBy: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  } | null;
+};
+
+function serializeDatasetVersion(version: DatasetVersionWithRelations) {
+  return {
+    id: version.id,
+    datasetId: version.datasetId,
+    version: version.version,
+    summary: summarizeDatasetVersionSnapshot(version.snapshotJson),
+    createdBy: version.createdBy,
+    createdById: version.createdById,
+    createdAt: version.createdAt
+  };
+}
+
+export function summarizeDatasetVersionSnapshot(snapshotJson: unknown) {
+  const snapshot = isRecord(snapshotJson) ? snapshotJson : {};
+  const dataset = isRecord(snapshot.dataset) ? snapshot.dataset : {};
+  const template = isRecord(snapshot.template) ? snapshot.template : {};
+  const labels = Array.isArray(snapshot.labels) ? snapshot.labels : [];
+  const tools = Array.isArray(snapshot.tools) ? snapshot.tools : [];
+  const assets = isRecord(snapshot.assets) ? snapshot.assets : {};
+  const tasks = isRecord(snapshot.tasks) ? snapshot.tasks : {};
+  const summary = isRecord(snapshot.summary) ? snapshot.summary : {};
+  const reason = typeof snapshot.reason === "string" ? snapshot.reason : "snapshot";
+
+  return {
+    reason,
+    labelCount: labels.length,
+    toolCount: tools.filter((tool) => isRecord(tool) && tool.enabled !== false).length,
+    assetCount: typeof assets.count === "number" ? assets.count : 0,
+    taskCount: typeof tasks.count === "number" ? tasks.count : 0,
+    datasetName: typeof dataset.name === "string" ? dataset.name : "Dataset snapshot",
+    datasetStatus: typeof dataset.status === "string" ? dataset.status : "DRAFT",
+    templateName: typeof template.name === "string" ? template.name : null,
+    restoredFromVersion: typeof summary.restoredFromVersion === "number" ? summary.restoredFromVersion : null
+  };
+}
+
+type SnapshotDataset = Dataset & {
+  annotationTemplate: {
+    id: string;
+    name: string;
+    description: string | null;
+    dataType: string;
+    configJson: unknown;
+  } | null;
+  labels: {
+    id: string;
+    name: string;
+    color: string;
+    shortcutKey: string | null;
+    metadata: unknown;
+  }[];
+  tools: {
+    id: string;
+    tool: AnnotationTool;
+    enabled: boolean;
+    configJson: unknown;
+  }[];
+  assets: {
+    id: string;
+    objectKey: string;
+    fileName: string;
+    mimeType: string;
+    fileSize: bigint;
+    width: number | null;
+    height: number | null;
+    duration: number | null;
+    createdAt: Date;
+  }[];
+  tasks: {
+    id: string;
+    assetId: string | null;
+    status: string;
+    assignedToId: string | null;
+    reviewerId: string | null;
+    priority: number;
+    metadata: unknown;
+    createdAt: Date;
+    updatedAt: Date;
+  }[];
+};
+
+const datasetSnapshotIncludes = {
+  annotationTemplate: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      dataType: true,
+      configJson: true
+    }
+  },
+  labels: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      name: true,
+      color: true,
+      shortcutKey: true,
+      metadata: true
+    }
+  },
+  tools: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      tool: true,
+      enabled: true,
+      configJson: true
+    }
+  },
+  assets: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      objectKey: true,
+      fileName: true,
+      mimeType: true,
+      fileSize: true,
+      width: true,
+      height: true,
+      duration: true,
+      createdAt: true
+    }
+  },
+  tasks: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    select: {
+      id: true,
+      assetId: true,
+      status: true,
+      assignedToId: true,
+      reviewerId: true,
+      priority: true,
+      metadata: true,
+      createdAt: true,
+      updatedAt: true
+    }
+  }
+} as const;
+
+export async function recordDatasetVersionChange(
+  tx: Prisma.TransactionClient,
+  input: {
+    datasetId: string;
+    reason: string;
+    summary?: Prisma.InputJsonObject;
+    userId?: string;
+  }
+) {
+  const nextVersion = await getNextDatasetVersion(tx, input.datasetId);
+
+  await tx.dataset.update({
+    where: {
+      id: input.datasetId
+    },
+    data: {
+      version: nextVersion
+    }
+  });
+
+  await createDatasetVersionSnapshot(tx, {
+    ...input,
+    version: nextVersion
+  });
+
+  return nextVersion;
+}
+
+export async function createDatasetVersionSnapshot(
+  tx: Prisma.TransactionClient,
+  input: {
+    datasetId: string;
+    reason: string;
+    summary?: Prisma.InputJsonObject;
+    userId?: string;
+    version: number;
+  }
+) {
+  const dataset = await tx.dataset.findUnique({
+    where: {
+      id: input.datasetId
+    },
+    include: datasetSnapshotIncludes
+  });
+
+  if (!dataset) {
+    return null;
+  }
+
+  const snapshotJson = buildDatasetSnapshot(dataset as SnapshotDataset, {
+    reason: input.reason,
+    summary: input.summary,
+    version: input.version
+  });
+
+  return tx.datasetVersion.upsert({
+    where: {
+      datasetId_version: {
+        datasetId: input.datasetId,
+        version: input.version
+      }
+    },
+    create: {
+      datasetId: input.datasetId,
+      version: input.version,
+      snapshotJson,
+      ...(input.userId ? { createdById: input.userId } : {})
+    },
+    update: {
+      snapshotJson,
+      ...(input.userId ? { createdById: input.userId } : {})
+    }
+  });
+}
+
+async function getNextDatasetVersion(tx: Prisma.TransactionClient, datasetId: string) {
+  const [dataset, latestVersion] = await Promise.all([
+    tx.dataset.findUnique({
+      where: {
+        id: datasetId
+      },
+      select: {
+        version: true
+      }
+    }),
+    tx.datasetVersion.aggregate({
+      where: {
+        datasetId
+      },
+      _max: {
+        version: true
+      }
+    })
+  ]);
+
+  return Math.max(dataset?.version ?? 0, latestVersion._max.version ?? 0) + 1;
+}
+
+function buildDatasetSnapshot(
+  dataset: SnapshotDataset,
+  input: {
+    reason: string;
+    summary?: Prisma.InputJsonObject;
+    version: number;
+  }
+): Prisma.InputJsonObject {
+  const taskStatusCounts = dataset.tasks.reduce<Record<string, number>>((counts, task) => {
+    counts[task.status] = (counts[task.status] ?? 0) + 1;
+    return counts;
+  }, {});
+
+  const snapshot = {
+    schemaVersion: 1,
+    reason: input.reason,
+    summary: input.summary ?? {},
+    capturedAt: new Date().toISOString(),
+    version: input.version,
+    dataset: {
+      id: dataset.id,
+      organizationId: dataset.organizationId,
+      projectId: dataset.projectId,
+      name: dataset.name,
+      description: dataset.description,
+      version: input.version,
+      status: dataset.status,
+      annotationTemplateId: dataset.annotationTemplateId,
+      labelingConfig: dataset.labelingConfig,
+      metadata: dataset.metadata
+    },
+    template: dataset.annotationTemplate
+      ? {
+          id: dataset.annotationTemplate.id,
+          name: dataset.annotationTemplate.name,
+          description: dataset.annotationTemplate.description,
+          dataType: dataset.annotationTemplate.dataType,
+          configJson: dataset.annotationTemplate.configJson
+        }
+      : null,
+    labels: dataset.labels.map((label) => ({
+      name: label.name,
+      color: label.color,
+      shortcutKey: label.shortcutKey,
+      metadata: label.metadata
+    })),
+    tools: dataset.tools.map((tool) => ({
+      tool: tool.tool,
+      enabled: tool.enabled,
+      configJson: tool.configJson
+    })),
+    assets: {
+      count: dataset.assets.length,
+      items: dataset.assets.map((asset) => ({
+        id: asset.id,
+        objectKey: asset.objectKey,
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+        fileSize: asset.fileSize.toString(),
+        width: asset.width,
+        height: asset.height,
+        duration: asset.duration,
+        createdAt: asset.createdAt.toISOString()
+      }))
+    },
+    tasks: {
+      count: dataset.tasks.length,
+      byStatus: taskStatusCounts,
+      items: dataset.tasks.map((task) => ({
+        id: task.id,
+        assetId: task.assetId,
+        status: task.status,
+        assignedToId: task.assignedToId,
+        reviewerId: task.reviewerId,
+        priority: task.priority,
+        metadata: task.metadata,
+        createdAt: task.createdAt.toISOString(),
+        updatedAt: task.updatedAt.toISOString()
+      }))
+    }
+  };
+
+  return JSON.parse(JSON.stringify(snapshot)) as Prisma.InputJsonObject;
+}
+
+function parseDatasetSnapshotForRollback(snapshotJson: unknown):
+  | {
+      ok: true;
+      value: {
+        annotationTemplateId: string | null;
+        description: string | null;
+        labelingConfig: Prisma.InputJsonObject | typeof Prisma.JsonNull;
+        labels: ParsedDatasetLabel[];
+        metadata: Prisma.InputJsonObject | typeof Prisma.JsonNull;
+        name: string;
+        status: DatasetStatus;
+        tools: ParsedDatasetTool[];
+      };
+    }
+  | { ok: false; error: string } {
+  if (!isRecord(snapshotJson)) {
+    return { ok: false, error: "This dataset version does not contain a readable snapshot." };
+  }
+
+  const dataset = isRecord(snapshotJson.dataset) ? snapshotJson.dataset : null;
+
+  if (!dataset) {
+    return { ok: false, error: "This dataset version is missing dataset configuration." };
+  }
+
+  const name = normalizeText(dataset.name);
+  const status = parseEnumValue(DatasetStatus, dataset.status);
+  const labels = parseDatasetLabels(snapshotJson.labels);
+  const tools = parseDatasetTools(snapshotJson.tools);
+
+  if (!name) {
+    return { ok: false, error: "This dataset version has an invalid name." };
+  }
+
+  if (!status) {
+    return { ok: false, error: "This dataset version has an invalid status." };
+  }
+
+  if (!labels.ok) {
+    return labels;
+  }
+
+  if (!tools.ok) {
+    return tools;
+  }
+
+  return {
+    ok: true,
+    value: {
+      annotationTemplateId: typeof dataset.annotationTemplateId === "string" ? dataset.annotationTemplateId : null,
+      description: typeof dataset.description === "string" ? dataset.description : null,
+      labelingConfig: isRecord(dataset.labelingConfig) ? (dataset.labelingConfig as Prisma.InputJsonObject) : Prisma.JsonNull,
+      labels: labels.labels,
+      metadata: isRecord(dataset.metadata) ? (dataset.metadata as Prisma.InputJsonObject) : Prisma.JsonNull,
+      name,
+      status,
+      tools: tools.tools
+    }
+  };
+}
+
+function hasDatasetVersionChange(value: {
+  annotationTemplateId?: string | null;
+  description?: string | null;
+  labelingConfig?: Prisma.InputJsonObject;
+  labels?: ParsedDatasetLabel[];
+  name?: string;
+  status?: DatasetStatus;
+  tools?: ParsedDatasetTool[];
+}) {
+  return Object.keys(value).length > 0;
+}
+
+function getDatasetUpdateReason(value: {
+  annotationTemplateId?: string | null;
+  labelingConfig?: Prisma.InputJsonObject;
+  labels?: ParsedDatasetLabel[];
+  tools?: ParsedDatasetTool[];
+}) {
+  return value.annotationTemplateId !== undefined || value.labelingConfig !== undefined || value.labels !== undefined || value.tools !== undefined
+    ? "template_config_updated"
+    : "dataset_details_updated";
+}
+
 function normalizeId(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -985,6 +1666,11 @@ function normalizeText(value: unknown) {
 
 function normalizeNullableText(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizePositiveInteger(value: unknown) {
+  const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
 }
 
 function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: unknown) {
@@ -1218,6 +1904,10 @@ function normalizeBoolean(value: unknown) {
 }
 
 function isPlainJsonObject(value: unknown): value is Prisma.InputJsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 

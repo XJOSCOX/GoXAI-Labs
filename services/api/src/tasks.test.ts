@@ -1,7 +1,7 @@
 import { TaskStatus } from "@goxai/database";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getNextTaskCursorWhere, summarizeTaskStatsForGroups } from "./tasks.js";
+import { getNextTaskCursorWhere, getTaskActionUpdate, summarizeTaskStatsForGroups } from "./tasks.js";
 
 describe("summarizeTaskStatsForGroups", () => {
   it("buckets pending, active, done, total, and unassigned tasks", () => {
@@ -70,5 +70,17 @@ describe("getNextTaskCursorWhere", () => {
         priority: 5
       }
     ]);
+  });
+});
+
+describe("getTaskActionUpdate", () => {
+  it("lets rejected tasks return to in-progress for revision", () => {
+    assert.deepEqual(getTaskActionUpdate({ assignedToId: "user-1", status: TaskStatus.REJECTED }, "start", "user-1"), {
+      ok: true,
+      data: {
+        assignedToId: "user-1",
+        status: TaskStatus.IN_PROGRESS
+      }
+    });
   });
 });

@@ -1,20 +1,28 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ClipboardList, CloudUpload, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, Maximize2, Save, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ClipboardList, CloudUpload, Download, Edit3, ExternalLink, Eye, FileText, FolderOpen, HardDrive, History, Maximize2, RotateCcw, Save, Search, Trash2, X } from "lucide-react";
 import {
   archiveDataset,
   createAsset,
+  createExportJob,
   createAssetUploadUrl,
   deleteAssets,
   deleteDataset,
   generateTasksFromDataset,
   getAssetAccessUrl,
+  getExportDownloadUrl,
+  listDatasetVersions,
+  listExportJobs,
   logClientEvent,
   restoreDataset,
+  rollbackDatasetVersion,
   updateDataset,
   uploadFileToSignedUrl,
   type AssetSummary,
   type DatasetSummary,
+  type DatasetVersionSummary,
+  type ExportFormat,
+  type ExportJobSummary,
   type TaskSummary
 } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
@@ -157,6 +165,354 @@ function DatasetTasksPanel({
       />
     </section>
   );
+}
+
+function DatasetExportsPanel({
+  canExport,
+  dataset,
+  session,
+  setPageError
+}: {
+  canExport: boolean;
+  dataset: DatasetSummary;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [exports, setExports] = useState<ExportJobSummary[]>([]);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("JSON");
+  const [includeSourceFiles, setIncludeSourceFiles] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const exportFormats = getDatasetExportFormats(dataset);
+  const canIncludeSourceFiles = isSourceFileExportFormat(exportFormat);
+
+  useEffect(() => {
+    if (!exportFormats.some((format) => format.value === exportFormat)) {
+      setExportFormat("JSON");
+    }
+  }, [dataset.id, exportFormat]);
+
+  useEffect(() => {
+    if (!canIncludeSourceFiles && includeSourceFiles) {
+      setIncludeSourceFiles(false);
+    }
+  }, [canIncludeSourceFiles, includeSourceFiles]);
+
+  async function reloadExports() {
+    if (!session) {
+      setExports([]);
+      return;
+    }
+
+    setLoading(true);
+    setPageError(null);
+
+    try {
+      setExports(await listExportJobs(session, { datasetId: dataset.id, projectId: dataset.projectId }));
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to load exports.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void reloadExports();
+  }, [dataset.id, dataset.projectId, session?.access_token]);
+
+  async function handleCreateExport() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setCreating(true);
+
+    try {
+      const exportJob = await createExportJob(session, {
+        datasetId: dataset.id,
+        format: exportFormat,
+        includeSourceFiles: canIncludeSourceFiles ? includeSourceFiles : false,
+        projectId: dataset.projectId
+      });
+      setExports((current) => [exportJob, ...current.filter((item) => item.id !== exportJob.id)]);
+      setMessage(`${formatEnum(exportFormat)} export created.`);
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to create export.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleDownload(exportJob: ExportJobSummary) {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    setDownloadingId(exportJob.id);
+
+    try {
+      const result = await getExportDownloadUrl(session, exportJob.id);
+      window.open(result.downloadUrl, "_blank", "noopener,noreferrer");
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to download export.");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  return (
+    <section className="panel export-panel">
+      <div className="task-panel-head">
+        <div>
+          <p className="eyebrow">Delivery</p>
+          <h2>Approved annotation exports</h2>
+          <span>Approved tasks, accepted annotations, reviews, labels, and source asset references.</span>
+        </div>
+        {canExport ? (
+          <div className="export-actions">
+            <label>
+              <span className="eyebrow">Format</span>
+              <select value={exportFormat} onChange={(event) => setExportFormat(event.currentTarget.value as ExportFormat)}>
+                {exportFormats.map((format) => (
+                  <option key={format.value} value={format.value}>
+                    {format.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {canIncludeSourceFiles ? (
+              <label className="export-source-toggle">
+                <input
+                  checked={includeSourceFiles}
+                  onChange={(event) => setIncludeSourceFiles(event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>Include source files</span>
+              </label>
+            ) : null}
+            <button className="primary-button" type="button" onClick={handleCreateExport} disabled={creating}>
+              <Download size={18} />
+              {creating ? "Exporting" : "Export"}
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {message && <p className="form-success">{message}</p>}
+      <div className="export-list">
+        {loading ? (
+          <div className="compact-empty">
+            <strong>Loading exports</strong>
+            <span>Checking recent export jobs for this dataset.</span>
+          </div>
+        ) : exports.length > 0 ? (
+          exports.map((exportJob) => (
+            <article className="export-row" key={exportJob.id}>
+              <div>
+                <strong>{exportJob.outputAsset?.fileName ?? "Approved annotations export"}</strong>
+                <span>
+                  {formatEnum(exportJob.status)} · {formatDate(exportJob.createdAt)}
+                  {exportJob.format ? ` · ${formatEnum(exportJob.format)}` : ""}
+                  {exportJob.metadata && typeof exportJob.metadata.taskCount === "number" ? ` · ${exportJob.metadata.taskCount} tasks` : ""}
+                </span>
+                {exportJob.errorMessage && <span className="danger-copy">{exportJob.errorMessage}</span>}
+              </div>
+              <div className="row-actions compact">
+                {exportJob.outputAsset ? <span className="muted-copy">{formatBytes(exportJob.outputAsset.fileSize)}</span> : null}
+                <button
+                  className="secondary-button compact-button"
+                  disabled={!exportJob.outputAsset || downloadingId === exportJob.id}
+                  onClick={() => {
+                    void handleDownload(exportJob);
+                  }}
+                  type="button"
+                >
+                  <Download size={16} />
+                  {downloadingId === exportJob.id ? "Opening" : "Download"}
+                </button>
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="compact-empty">
+            <strong>No exports yet</strong>
+            <span>Approve tasks first, then create an export for delivery, training, or backup.</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function getDatasetExportFormats(dataset: DatasetSummary): { label: string; value: ExportFormat }[] {
+  const formats: { label: string; value: ExportFormat }[] = [
+    { label: "JSON", value: "JSON" },
+    { label: "JSON_MIN", value: "JSON_MIN" },
+    { label: "CSV", value: "CSV" },
+    { label: "TSV", value: "TSV" }
+  ];
+  const enabledTools = new Set(dataset.tools.filter((tool) => tool.enabled).map((tool) => tool.tool.toUpperCase()));
+  const configCode = typeof dataset.labelingConfig?.configCode === "string" ? dataset.labelingConfig.configCode : "";
+  const hasImageSource = dataset.project.dataType.toUpperCase() === "IMAGE" || /<Image\b/i.test(configCode);
+  const hasImageRegions = hasImageSource && (enabledTools.has("BBOX") || enabledTools.has("POLYGON"));
+  const hasTextSource = dataset.project.dataType.toUpperCase() === "TEXT" || /<(Text|HyperText|Paragraphs|List|Chat)\b/i.test(configCode);
+  const hasAudioSource = dataset.project.dataType.toUpperCase() === "AUDIO" || /<Audio\b/i.test(configCode);
+  const hasTextAnswers = /<TextArea\b/i.test(configCode) || enabledTools.has("TEXT_AREA");
+
+  if (hasImageRegions) {
+    formats.push(
+      { label: "COCO", value: "COCO" },
+      { label: "YOLO", value: "YOLO" },
+      { label: "Pascal VOC", value: "PASCAL_VOC" }
+    );
+  }
+
+  if (hasTextSource && enabledTools.has("TEXT_SPAN")) {
+    formats.push({ label: "CoNLL 2003", value: "CONLL_2003" });
+  }
+
+  if (hasAudioSource || hasTextAnswers) {
+    formats.push({ label: "ASR JSONL", value: "ASR_JSONL" });
+  }
+
+  return formats;
+}
+
+function isSourceFileExportFormat(format: ExportFormat) {
+  return format === "COCO" || format === "YOLO" || format === "PASCAL_VOC";
+}
+
+function DatasetVersionsPanel({
+  currentVersion,
+  datasetId,
+  loading,
+  onRollback,
+  session,
+  setPageError,
+  versions,
+  versionsError
+}: {
+  currentVersion: number;
+  datasetId: string;
+  loading: boolean;
+  onRollback: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+  versions: DatasetVersionSummary[];
+  versionsError: string | null;
+}) {
+  const [rollingBackVersion, setRollingBackVersion] = useState<number | null>(null);
+
+  async function handleRollback(version: DatasetVersionSummary) {
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Rollback this dataset to v${version.version}? This creates a new version from that snapshot and keeps the history.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setRollingBackVersion(version.version);
+    setPageError(null);
+
+    try {
+      await rollbackDatasetVersion(session, datasetId, version.version);
+      await onRollback();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to rollback dataset version.");
+    } finally {
+      setRollingBackVersion(null);
+    }
+  }
+
+  return (
+    <section className="panel dataset-version-panel">
+      <div className="compact-panel-head">
+        <div>
+          <p className="eyebrow">Version history</p>
+          <h3>Dataset snapshots</h3>
+        </div>
+        <History size={18} />
+      </div>
+      {versionsError ? <p className="form-error">{versionsError}</p> : null}
+      {loading ? (
+        <p className="muted-copy">Loading versions.</p>
+      ) : versions.length > 0 ? (
+        <div className="dataset-version-list">
+          {versions.slice(0, 8).map((version) => {
+            const isCurrent = version.version === currentVersion;
+            const author = [version.createdBy?.firstName, version.createdBy?.lastName].filter(Boolean).join(" ") || version.createdBy?.email;
+
+            return (
+              <article className="dataset-version-row" key={version.id}>
+                <div>
+                  <strong>
+                    v{version.version}
+                    {isCurrent ? " Current" : ""}
+                  </strong>
+                  <span>
+                    {formatDatasetVersionReason(version.summary.reason)}
+                    {version.summary.restoredFromVersion ? ` from v${version.summary.restoredFromVersion}` : ""}
+                  </span>
+                  <small>
+                    {version.summary.labelCount} labels / {version.summary.assetCount} assets / {version.summary.taskCount} tasks
+                  </small>
+                  <small>
+                    {formatDate(version.createdAt)}
+                    {author ? ` / ${author}` : ""}
+                  </small>
+                </div>
+                <button
+                  className="icon-button"
+                  disabled={isCurrent || rollingBackVersion === version.version}
+                  onClick={() => {
+                    void handleRollback(version);
+                  }}
+                  title={isCurrent ? "Current version" : `Rollback to v${version.version}`}
+                  type="button"
+                >
+                  <RotateCcw size={16} />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="compact-empty">
+          <strong>No snapshots yet</strong>
+          <span>Changes to templates, assets, and generated tasks will appear here.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatDatasetVersionReason(reason: string) {
+  const labels: Record<string, string> = {
+    asset_registered: "Asset added",
+    assets_deleted: "Assets deleted",
+    dataset_created: "Dataset created",
+    dataset_details_updated: "Details updated",
+    rollback: "Rollback",
+    tasks_generated: "Tasks generated",
+    template_config_updated: "Template updated"
+  };
+
+  return labels[reason] ?? formatEnum(reason);
 }
 
 function DatasetEditModal({
@@ -373,6 +729,9 @@ export function DatasetDetailPage() {
   const [largePreviewAccessUrl, setLargePreviewAccessUrl] = useState<string | null>(null);
   const [largePreviewError, setLargePreviewError] = useState<string | null>(null);
   const [largePreviewLoading, setLargePreviewLoading] = useState(false);
+  const [versions, setVersions] = useState<DatasetVersionSummary[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
   const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
   const {
     assets,
@@ -395,9 +754,32 @@ export function DatasetDetailPage() {
     await Promise.all([reloadTasks(), reloadTaskStats()]);
   }
 
+  async function reloadVersions() {
+    if (!session || !datasetId) {
+      setVersions([]);
+      return;
+    }
+
+    setVersionsLoading(true);
+    setVersionsError(null);
+
+    try {
+      const result = await listDatasetVersions(session, datasetId);
+      setVersions(result);
+    } catch (reason) {
+      setVersionsError(reason instanceof Error ? reason.message : "Unable to load dataset versions.");
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
   useEffect(() => {
     setTaskPage(1);
   }, [datasetId]);
+
+  useEffect(() => {
+    void reloadVersions();
+  }, [datasetId, session]);
 
   async function handleInspectAsset(asset: AssetSummary) {
     setPreviewAsset(asset);
@@ -535,7 +917,10 @@ export function DatasetDetailPage() {
                 canGenerateTasks={dataset.canGenerateTasks}
                 dataset={dataset}
                 loading={tasksLoading}
-                onGenerated={reloadTaskResources}
+                onGenerated={async () => {
+                  await reloadTaskResources();
+                  await reloadVersions();
+                }}
                 onPageChange={setTaskPage}
                 pageInfo={taskPageInfo}
                 session={session}
@@ -543,12 +928,21 @@ export function DatasetDetailPage() {
                 taskTotal={taskStats.total}
                 tasks={tasks}
               />
+              <DatasetExportsPanel
+                canExport={dataset.canGenerateTasks}
+                dataset={dataset}
+                session={session}
+                setPageError={setTasksError}
+              />
               <AssetsTable
                 assets={assets}
                 canManageAssets={dataset.canManageAssets}
                 datasetId={dataset.id}
                 loading={assetsLoading}
-                onChanged={reloadAssets}
+                onChanged={async () => {
+                  await reloadAssets();
+                  await reloadVersions();
+                }}
                 onDeleted={handleAssetsDeleted}
                 onInspectAsset={(asset) => {
                   void handleInspectAsset(asset);
@@ -571,11 +965,28 @@ export function DatasetDetailPage() {
                 />
               )}
               {dataset.canManageAssets ? (
+                <>
+                  <DatasetVersionsPanel
+                    currentVersion={dataset.version}
+                    datasetId={dataset.id}
+                    loading={versionsLoading}
+                    onRollback={async () => {
+                      await Promise.all([reloadDataset(), reloadAssets(), reloadTaskResources(), reloadVersions()]);
+                    }}
+                    session={session}
+                    setPageError={setTasksError}
+                    versions={versions}
+                    versionsError={versionsError}
+                  />
+                </>
+              ) : null}
+              {dataset.canManageAssets ? (
                 <AssetForm
                   dataset={dataset}
                   onCreated={async () => {
                     await reloadAssets();
                     await reloadTaskResources();
+                    await reloadVersions();
                   }}
                   session={session}
                   setPageError={setAssetsError}
@@ -591,7 +1002,10 @@ export function DatasetDetailPage() {
         <DatasetEditModal
           dataset={dataset}
           onClose={() => setShowEditModal(false)}
-          onChanged={reloadDataset}
+          onChanged={async () => {
+            await reloadDataset();
+            await reloadVersions();
+          }}
           onDeleted={() => navigate(`/projects/${dataset.projectId}`)}
           session={session}
           setPageError={setTasksError}
@@ -618,6 +1032,7 @@ async function uploadAndRegisterAsset(
   onProgress?: (progress: { loaded: number; percent: number; total: number }) => void,
   metadata?: Record<string, unknown>
 ) {
+  const imageDimensions = await readImageDimensions(file);
   const signedUpload = await createAssetUploadUrl(session, {
     datasetId,
     objectKey,
@@ -649,8 +1064,38 @@ async function uploadAndRegisterAsset(
 
   return createAsset(session, {
     ...signedUpload.asset,
+    height: imageDimensions ? String(imageDimensions.height) : undefined,
+    width: imageDimensions ? String(imageDimensions.width) : undefined,
     metadata
   });
+}
+
+async function readImageDimensions(file: File) {
+  if (!file.type.startsWith("image/")) {
+    return null;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+
+  try {
+    const image = new Image();
+    const loaded = new Promise<{ height: number; width: number } | null>((resolve) => {
+      image.onload = () => {
+        resolve({
+          height: image.naturalHeight,
+          width: image.naturalWidth
+        });
+      };
+      image.onerror = () => resolve(null);
+    });
+
+    image.src = objectUrl;
+    const dimensions = await loaded;
+
+    return dimensions && dimensions.width > 0 && dimensions.height > 0 ? dimensions : null;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function AssetForm({

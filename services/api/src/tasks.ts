@@ -7,13 +7,15 @@ import {
   Prisma,
   ProjectAccessMode,
   ProjectStatus,
+  ReviewStatus,
   TaskStatus,
   type Task
 } from "@goxai/database";
 import { Router, type Response } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
+import { recordDatasetVersionChange } from "./datasets.js";
 import { getRequestId } from "./logging.js";
-import { canGenerateTasks, canWorkTasks } from "./permissions.js";
+import { canGenerateTasks, canReviewTasks, canWorkTasks } from "./permissions.js";
 
 const router = Router();
 
@@ -162,6 +164,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
 
   const datasetId = normalizeId(request.query.datasetId);
   const projectId = normalizeId(request.query.projectId);
+  const queue = normalizeShortText(request.query.queue, 40);
   const page = normalizePositiveInteger(request.query.page);
   const requestedPageSize = normalizePositiveInteger(request.query.pageSize);
   const isPaginated = Boolean(page || requestedPageSize);
@@ -206,7 +209,9 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     }
   }
 
-  const where = buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const where = queue === "review"
+    ? buildReviewTaskWhere(scope, { datasetId, projectId })
+    : buildVisibleTaskWhere(scope, { datasetId, projectId });
   const [tasks, total] = await Promise.all([
     prisma.task.findMany({
       where,
@@ -358,6 +363,18 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
             skippedCount: existingAssetIds.size
           }
         }
+      });
+
+      await recordDatasetVersionChange(tx, {
+        datasetId: dataset.id,
+        reason: "tasks_generated",
+        summary: {
+          createdCount: assetsToCreate.length,
+          remainingCount,
+          requestedQuantity: quantity ?? "all",
+          skippedCount: existingAssetIds.size
+        },
+        userId: user.id
       });
     });
   }
@@ -513,21 +530,33 @@ router.get("/:taskId/next", async (request: AuthenticatedRequest, response) => {
 
   const datasetId = normalizeId(request.query.datasetId) ?? access.task.datasetId ?? undefined;
   const projectId = normalizeId(request.query.projectId) ?? access.task.projectId;
+  const queue = normalizeShortText(request.query.queue, 40);
   const prisma = getPrismaClient();
   const scope = await getTaskAccessScope(user.id);
-  const where = buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const where = queue === "review"
+    ? buildReviewTaskWhere(scope, { datasetId, projectId })
+    : buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const queueFilters: Prisma.TaskWhereInput = queue === "review"
+    ? {
+        status: {
+          in: [TaskStatus.SUBMITTED, TaskStatus.REVIEWING]
+        }
+      }
+    : {
+        assignedToId: user.id,
+        status: {
+          in: [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]
+        }
+      };
   const nextTask = await prisma.task.findFirst({
     where: {
       AND: [
         where,
         {
-          assignedToId: user.id,
           id: {
             not: access.task.id
           },
-          status: {
-            in: [TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS]
-          },
+          ...queueFilters,
           OR: getNextTaskCursorWhere(access.task)
         }
       ]
@@ -567,6 +596,9 @@ router.get("/:taskId", async (request: AuthenticatedRequest, response) => {
 
   response.status(200).json({
     annotation: serializeAnnotation(access.annotation),
+    annotationHistory: access.task.annotations.map(serializeAnnotation),
+    comments: access.task.comments.map(serializeComment),
+    reviews: access.task.reviews.map(serializeReview),
     task: serializeTask(access.task, access.membership)
   });
 });
@@ -579,6 +611,218 @@ router.post("/:taskId/annotation/submit", async (request: AuthenticatedRequest, 
   await saveTaskAnnotation(request, response, "submit");
 });
 
+router.post("/:taskId/comments", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const taskId = normalizeId(request.params.taskId);
+
+  if (!taskId) {
+    response.status(400).json({ error: "Task is required." });
+    return;
+  }
+
+  const body = normalizeShortText(request.body?.body, 4000);
+
+  if (!body) {
+    response.status(400).json({ error: "Comment is required." });
+    return;
+  }
+
+  const access = await getTaskAccess(user.id, taskId);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  if (!access.membership || !canWorkTasks(access.membership)) {
+    response.status(403).json({ error: "You do not have permission to comment on this task." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const annotationId = normalizeId(request.body?.annotationId) ?? access.annotation?.id ?? null;
+  const comment = await prisma.comment.create({
+    data: {
+      annotationId,
+      body,
+      taskId: access.task.id,
+      userId: user.id
+    },
+    include: commentIncludes
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      organizationId: access.task.project.organizationId,
+      projectId: access.task.projectId,
+      userId: user.id,
+      action: "task.comment.created",
+      entityType: "task",
+      entityId: access.task.id,
+      metadata: {
+        annotationId,
+        commentId: comment.id,
+        requestId: getRequestId(request)
+      }
+    }
+  });
+
+  response.status(201).json({
+    comment: serializeComment(comment)
+  });
+});
+
+router.post("/:taskId/review", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const taskId = normalizeId(request.params.taskId);
+
+  if (!taskId) {
+    response.status(400).json({ error: "Task is required." });
+    return;
+  }
+
+  const decision = normalizeShortText(request.body?.decision, 40);
+  const feedback = normalizeShortText(request.body?.feedback, 4000);
+
+  if (decision !== "approve" && decision !== "reject") {
+    response.status(400).json({ error: "Review decision must be approve or reject." });
+    return;
+  }
+
+  if (decision === "reject" && !feedback) {
+    response.status(400).json({ error: "Add feedback before rejecting a task." });
+    return;
+  }
+
+  const access = await getTaskAccess(user.id, taskId);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  if (!access.membership || !canReviewTasks(access.membership)) {
+    response.status(403).json({ error: "You do not have permission to review this task." });
+    return;
+  }
+
+  if (access.task.status !== TaskStatus.SUBMITTED && access.task.status !== TaskStatus.REVIEWING) {
+    response.status(409).json({ error: "Only submitted tasks can be reviewed." });
+    return;
+  }
+
+  const submittedAnnotation =
+    access.task.annotations.find((annotation) => annotation.status === AnnotationStatus.SUBMITTED) ??
+    access.task.annotations[0] ??
+    null;
+
+  if (!submittedAnnotation) {
+    response.status(400).json({ error: "This task has no submitted annotation to review." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const reviewStatus = decision === "approve" ? ReviewStatus.APPROVED : ReviewStatus.NEEDS_CHANGES;
+  const nextAnnotationStatus = decision === "approve" ? AnnotationStatus.ACCEPTED : AnnotationStatus.REJECTED;
+  const nextTaskStatus = decision === "approve" ? TaskStatus.APPROVED : TaskStatus.REJECTED;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const review = await tx.review.create({
+      data: {
+        annotationId: submittedAnnotation.id,
+        feedback,
+        reviewerId: user.id,
+        status: reviewStatus,
+        taskId: access.task.id
+      },
+      include: reviewIncludes
+    });
+
+    await tx.annotation.update({
+      where: {
+        id: submittedAnnotation.id
+      },
+      data: {
+        status: nextAnnotationStatus
+      }
+    });
+
+    const savedTask = await tx.task.update({
+      where: {
+        id: access.task.id
+      },
+      data: {
+        reviewerId: user.id,
+        status: nextTaskStatus
+      },
+      include: taskDetailIncludes
+    });
+
+    let comment = null;
+
+    if (feedback) {
+      comment = await tx.comment.create({
+        data: {
+          annotationId: submittedAnnotation.id,
+          body: feedback,
+          metadata: {
+            reviewId: review.id,
+            reviewStatus
+          },
+          taskId: access.task.id,
+          userId: user.id
+        },
+        include: commentIncludes
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: savedTask.project.organizationId,
+        projectId: savedTask.projectId,
+        userId: user.id,
+        action: decision === "approve" ? "task.review.approved" : "task.review.rejected",
+        entityType: "task",
+        entityId: savedTask.id,
+        metadata: {
+          annotationId: submittedAnnotation.id,
+          commentId: comment?.id ?? null,
+          previousStatus: access.task.status,
+          requestId: getRequestId(request),
+          reviewId: review.id
+        }
+      }
+    });
+
+    return {
+      comment,
+      review,
+      task: savedTask
+    };
+  });
+
+  response.status(200).json({
+    annotation: serializeAnnotation(
+      result.task.annotations.find((annotation) => annotation.id === submittedAnnotation.id) ?? result.task.annotations[0] ?? null
+    ),
+    comment: result.comment ? serializeComment(result.comment) : null,
+    review: serializeReview(result.review),
+    task: serializeTask(result.task, access.membership)
+  });
+});
+
 router.post("/:taskId/start", async (request: AuthenticatedRequest, response) => {
   await updateTaskForUser(request, response, "start");
 });
@@ -589,7 +833,7 @@ router.post("/:taskId/submit", async (request: AuthenticatedRequest, response) =
 
 export { router as tasksRouter };
 
-type TaskAction = "assign-self" | "start" | "submit";
+export type TaskAction = "assign-self" | "start" | "submit";
 type AnnotationAction = "draft" | "submit";
 
 async function getTaskAccess(userId: string, taskId: string):
@@ -923,7 +1167,7 @@ async function updateTaskForUser(
   });
 }
 
-function getTaskActionUpdate(task: Task, action: TaskAction, userId: string):
+export function getTaskActionUpdate(task: Pick<Task, "assignedToId" | "status">, action: TaskAction, userId: string):
   | {
       ok: true;
       data: {
@@ -951,8 +1195,8 @@ function getTaskActionUpdate(task: Task, action: TaskAction, userId: string):
   }
 
   if (action === "start") {
-    if (task.status !== TaskStatus.PENDING && task.status !== TaskStatus.ASSIGNED) {
-      return { ok: false, error: "Only pending or assigned tasks can be started." };
+    if (task.status !== TaskStatus.PENDING && task.status !== TaskStatus.ASSIGNED && task.status !== TaskStatus.REJECTED) {
+      return { ok: false, error: "Only pending, assigned, or rejected tasks can be started." };
     }
 
     return {
@@ -1015,7 +1259,9 @@ async function getTaskAccessScope(userId: string) {
     membershipByOrganizationId: new Map(memberships.map((membership) => [membership.organizationId, membership])),
     membershipByProjectId: new Map(projectMemberships.map((membership) => [membership.projectId, membership])),
     organizationIds,
-    projectIds
+    projectIds,
+    reviewOrganizationIds: memberships.filter(canReviewTasks).map((membership) => membership.organizationId),
+    reviewProjectIds: projectMemberships.filter(canReviewTasks).map((membership) => membership.projectId)
   };
 }
 
@@ -1082,6 +1328,44 @@ function buildVisibleTaskWhere(scope: TaskAccessScope, filters: { datasetId?: st
           not: TaskStatus.ARCHIVED
         }
       }
+    ]
+  };
+}
+
+function buildReviewTaskWhere(scope: TaskAccessScope, filters: { datasetId?: string; projectId?: string } = {}): Prisma.TaskWhereInput {
+  if (scope.reviewOrganizationIds.length === 0 && scope.reviewProjectIds.length === 0) {
+    return {
+      id: "__no_review_access__"
+    };
+  }
+
+  return {
+    ...(filters.datasetId ? { datasetId: filters.datasetId } : {}),
+    ...(filters.projectId ? { projectId: filters.projectId } : {}),
+    status: {
+      in: [TaskStatus.SUBMITTED, TaskStatus.REVIEWING]
+    },
+    OR: [
+      ...(scope.reviewOrganizationIds.length > 0
+        ? [
+            {
+              project: {
+                organizationId: {
+                  in: scope.reviewOrganizationIds
+                }
+              }
+            }
+          ]
+        : []),
+      ...(scope.reviewProjectIds.length > 0
+        ? [
+            {
+              projectId: {
+                in: scope.reviewProjectIds
+              }
+            }
+          ]
+        : [])
     ]
   };
 }
@@ -1402,6 +1686,35 @@ const annotationIncludes = {
   }
 } as const;
 
+const reviewIncludes = {
+  annotation: {
+    select: {
+      id: true,
+      status: true,
+      version: true
+    }
+  },
+  reviewer: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true
+    }
+  }
+} as const;
+
+const commentIncludes = {
+  user: {
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true
+    }
+  }
+} as const;
+
 const taskDetailIncludes = {
   ...taskIncludes,
   annotations: {
@@ -1409,6 +1722,18 @@ const taskDetailIncludes = {
       version: "desc"
     },
     include: annotationIncludes
+  },
+  comments: {
+    orderBy: {
+      createdAt: "asc"
+    },
+    include: commentIncludes
+  },
+  reviews: {
+    orderBy: {
+      createdAt: "desc"
+    },
+    include: reviewIncludes
   }
 } as const;
 
@@ -1503,6 +1828,8 @@ type TaskListWithRelations = Task & {
 
 type TaskWithDetailRelations = TaskWithRelations & {
   annotations: AnnotationWithRegions[];
+  comments: CommentWithRelations[];
+  reviews: ReviewWithRelations[];
 };
 
 type AnnotationWithRegions = {
@@ -1535,6 +1862,49 @@ type AnnotationWithRegions = {
   };
 };
 
+type ReviewWithRelations = {
+  id: string;
+  annotationId: string;
+  taskId: string;
+  reviewerId: string;
+  status: ReviewStatus;
+  score: number | null;
+  feedback: string | null;
+  metadata: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+  annotation: {
+    id: string;
+    status: AnnotationStatus;
+    version: number;
+  };
+  reviewer: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+};
+
+type CommentWithRelations = {
+  id: string;
+  taskId: string | null;
+  annotationId: string | null;
+  userId: string;
+  parentId: string | null;
+  body: string;
+  resolved: boolean;
+  metadata: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+  user: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+};
+
 function serializeTask(task: TaskWithRelations, membership?: { role: MembershipRole }) {
   return {
     id: task.id,
@@ -1557,6 +1927,7 @@ function serializeTask(task: TaskWithRelations, membership?: { role: MembershipR
       : null,
     assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,
     reviewer: task.reviewer ? serializeUserName(task.reviewer) : null,
+    canReview: membership ? canReviewTasks(membership) : false,
     canWork: membership ? canWorkTasks(membership) : false,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt
@@ -1593,6 +1964,7 @@ function serializeTaskListItem(task: TaskListWithRelations, membership?: { role:
       : null,
     assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,
     reviewer: task.reviewer ? serializeUserName(task.reviewer) : null,
+    canReview: membership ? canReviewTasks(membership) : false,
     canWork: membership ? canWorkTasks(membership) : false,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt
@@ -1627,6 +1999,39 @@ function serializeAnnotation(annotation: AnnotationWithRegions | null) {
     })),
     createdAt: annotation.createdAt,
     updatedAt: annotation.updatedAt
+  };
+}
+
+function serializeReview(review: ReviewWithRelations) {
+  return {
+    annotation: review.annotation,
+    annotationId: review.annotationId,
+    createdAt: review.createdAt,
+    feedback: review.feedback,
+    id: review.id,
+    metadata: review.metadata,
+    reviewer: serializeUserName(review.reviewer),
+    reviewerId: review.reviewerId,
+    score: review.score,
+    status: review.status,
+    taskId: review.taskId,
+    updatedAt: review.updatedAt
+  };
+}
+
+function serializeComment(comment: CommentWithRelations) {
+  return {
+    annotationId: comment.annotationId,
+    body: comment.body,
+    createdAt: comment.createdAt,
+    id: comment.id,
+    metadata: comment.metadata,
+    parentId: comment.parentId,
+    resolved: comment.resolved,
+    taskId: comment.taskId,
+    updatedAt: comment.updatedAt,
+    user: serializeUserName(comment.user),
+    userId: comment.userId
   };
 }
 

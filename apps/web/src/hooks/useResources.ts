@@ -351,7 +351,7 @@ export function useTasks(
 
 export function useTaskPage(
   session: ReturnType<typeof useAuth>["session"],
-  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string } = {}
+  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string; queue?: "review" | "work" } = {}
 ) {
   const sessionRef = useLatestSessionRef(session);
   const sessionKey = getSessionKey(session);
@@ -391,7 +391,7 @@ export function useTaskPage(
     } finally {
       setLoading(false);
     }
-  }, [input.datasetId, input.page, input.pageSize, input.projectId, sessionKey, sessionRef]);
+  }, [input.datasetId, input.page, input.pageSize, input.projectId, input.queue, sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();
@@ -519,6 +519,9 @@ export function useTask(session: ReturnType<typeof useAuth>["session"], taskId: 
   const sessionKey = getSessionKey(session);
   const [task, setTask] = useState<TaskSummary | null>(null);
   const [annotation, setAnnotation] = useState<Awaited<ReturnType<typeof getTask>>["annotation"]>(null);
+  const [annotationHistory, setAnnotationHistory] = useState<Awaited<ReturnType<typeof getTask>>["annotationHistory"]>([]);
+  const [comments, setComments] = useState<Awaited<ReturnType<typeof getTask>>["comments"]>([]);
+  const [reviews, setReviews] = useState<Awaited<ReturnType<typeof getTask>>["reviews"]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -527,6 +530,9 @@ export function useTask(session: ReturnType<typeof useAuth>["session"], taskId: 
 
     if (!activeSession || !taskId) {
       setAnnotation(null);
+      setAnnotationHistory([]);
+      setComments([]);
+      setReviews([]);
       setTask(null);
       return;
     }
@@ -537,6 +543,9 @@ export function useTask(session: ReturnType<typeof useAuth>["session"], taskId: 
     try {
       const result = await getTask(activeSession, taskId);
       setAnnotation(result.annotation);
+      setAnnotationHistory(result.annotationHistory);
+      setComments(result.comments);
+      setReviews(result.reviews);
       setTask(result.task);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load task.");
@@ -551,11 +560,17 @@ export function useTask(session: ReturnType<typeof useAuth>["session"], taskId: 
 
   return {
     annotation,
+    annotationHistory,
+    comments,
     error,
     loading,
     reload,
+    reviews,
     setAnnotation,
+    setAnnotationHistory,
+    setComments,
     setError,
+    setReviews,
     setTask,
     task
   };
