@@ -961,7 +961,7 @@ export function buildApprovedAnnotationsExportFile(input: {
 export function buildExportObjectKey(input: { datasetId?: string; exportJobId: string; format?: ExportFormat; includeSourceFiles?: boolean; projectId: string }) {
   const scope = input.datasetId ? `datasets/${input.datasetId}` : "project";
   const extension = getExportFileDefinition(input.format ?? "JSON", input.includeSourceFiles).extension;
-  return `exports/${input.projectId}/${scope}/${input.exportJobId}.${extension}`;
+  return `dataset/export/${input.projectId}/${scope}/${input.exportJobId}.${extension}`;
 }
 
 export function buildExportFileName(projectSlug: string, datasetName?: string, format: ExportFormat = "JSON", includeSourceFiles = false) {

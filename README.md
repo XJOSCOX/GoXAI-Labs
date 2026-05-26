@@ -14,7 +14,7 @@ This README tracks the current implementation against `Goxailab Master Platform 
 | --- | --- | --- |
 | Phase 0: Architecture and foundation | Mostly built | pnpm monorepo, React web app, Express API, Prisma database package, Supabase Auth/Postgres, Cloudflare R2, logging, and code-split frontend are in place. CI/CD, Redis, Dockerized dev/prod, and deployment automation are still pending. |
 | Phase 1: Authentication and organizations | Partially built | Email/password auth through Supabase, onboarding, organizations, members, roles, project access, join codes, and audit/client logs are implemented. Google/GitHub login, password reset UX, MFA, and deeper policy screens are still pending. |
-| Phase 2: Projects and datasets | Strongly in progress | Projects, datasets, templates, R2 assets, multi-file upload, structured CSV/JSON/JSONL imports, text task data, task generation, dataset version snapshots, and rollback are implemented. Resumable/chunk uploads and external storage connectors are still pending. |
+| Phase 2: Projects and datasets | Strongly in progress | Projects, datasets, templates, R2 assets, multi-file upload, resumable/chunked R2 uploads for large files, structured CSV/JSON/JSONL imports, text task data, task generation, dataset version snapshots, and rollback are implemented. External storage connectors are still pending. |
 | Phase 3: Annotation engine | In progress | Image bounding boxes and polygons, PDF page-region boxes with page metadata and lazy `pdf.js` rendering, text responses, template-aware task UI, autosave, zoom/pan, fullscreen work, keyboard shortcuts, region management, undo/redo edits, comments, review history, audio waveform range selection, video timestamp labels, PDF page markers, time-series drag selection, and first-pass audio/video/PDF/time-series source workspaces are started. Advanced media tools are still pending. |
 | Phase 4: Realtime collaboration | Not started | No WebSocket/Redis presence or live collaboration yet. |
 | Phase 5-6: Workflow and assignment | In progress | Task states, assign-self, start, draft, submit, project/dataset task folders, dataset queues, reviewer queues, approvals, rejections, comments, and rejected-task revision loops exist. SLA rules, automatic assignment, and consensus labeling are still pending. |
@@ -69,6 +69,8 @@ This README tracks the current implementation against `Goxailab Master Platform 
   - Each row/object becomes one task data asset.
   - `text.csv` with a `text` column becomes one task per row after task generation.
 - Asset quick preview and large image preview with signed R2 access URLs.
+- Files 64 MB and larger use R2 multipart upload with chunk retry and local resume state before asset registration.
+- Dataset uploads assign R2 folders automatically under `dataset/import/` from the dataset name, reuse each folder until 250 files, then continue with numbered sibling folders. Dataset exports write under `dataset/export/`.
 - Dataset version snapshots capture configuration, template, labels, tools, asset references, and task state summaries.
 - Dataset rollback restores an older snapshot into a new immutable version without deleting current history.
 
@@ -250,10 +252,9 @@ The project plan says not to start with Kubernetes, marketplace systems, advance
 
 1. Harden the annotation UX for image and text tasks.
 2. Expand advanced media-specific editors for video frame regions, OCR extraction review tools, and deeper waveform/time-series controls.
-3. Add resumable/chunk uploads for large files.
-4. Add external storage connectors.
-5. Add SLA/priority workflow rules for review queues.
-6. Add automated tests around tasks, templates, dataset imports, versions, and permissions.
+3. Add external storage connectors.
+4. Add SLA/priority workflow rules for review queues.
+5. Add automated tests around tasks, templates, dataset imports, versions, and permissions.
 
 ## Current Development Rule
 

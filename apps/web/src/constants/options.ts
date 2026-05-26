@@ -1,4 +1,4 @@
-export const maxBulkUploadFiles = 250;
+export const maxBulkUploadFiles = 1000;
 export const maxBulkUploadBytes = 1024 ** 3;
 export const folderInputAttributes = { directory: "", webkitdirectory: "" } as Record<string, string>;
 

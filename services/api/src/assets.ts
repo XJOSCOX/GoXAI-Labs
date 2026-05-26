@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { DeleteObjectsCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  UploadPartCommand
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   getPrismaClient,
@@ -15,6 +23,9 @@ import { canManageProjectScope } from "./permissions.js";
 import { createR2Client, getR2Config } from "./r2.js";
 
 const router = Router();
+const multipartPartSizeBytes = 16 * 1024 * 1024;
+const multipartUrlExpiresInSeconds = 60 * 10;
+const maxMultipartParts = 10_000;
 
 router.use(requireAuthenticatedUser);
 
@@ -269,6 +280,341 @@ router.post("/upload-url", async (request: AuthenticatedRequest, response) => {
       fileSize: parsed.value.fileSize.toString()
     }
   });
+});
+
+router.post("/multipart/start", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const parsed = parseCreateUploadUrlBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const config = getR2Config();
+
+  if (!config.ok) {
+    response.status(503).json({ error: config.error });
+    return;
+  }
+
+  const access = await getDatasetUploadAccess(parsed.value.datasetId, user.id);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  const objectKey =
+    parsed.value.objectKey ??
+    buildDatasetObjectKey(access.dataset.projectId, access.dataset.id, parsed.value.fileName);
+  const existingAsset = await getPrismaClient().storageAsset.findUnique({
+    where: {
+      provider_bucket_objectKey: {
+        provider: StorageProvider.R2,
+        bucket: config.value.bucket,
+        objectKey
+      }
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (existingAsset) {
+    response.status(409).json({ error: "An asset already exists for this R2 bucket and object key." });
+    return;
+  }
+
+  const fileSize = Number(parsed.value.fileSize);
+  const partSize = getMultipartPartSize(fileSize);
+  const partCount = Math.ceil(fileSize / partSize);
+
+  if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || partCount > maxMultipartParts) {
+    response.status(400).json({ error: "File is too large for multipart upload." });
+    return;
+  }
+
+  const client = createR2Client(config.value);
+  const multipart = await client.send(
+    new CreateMultipartUploadCommand({
+      Bucket: config.value.bucket,
+      Key: objectKey,
+      ContentType: parsed.value.mimeType
+    })
+  );
+
+  if (!multipart.UploadId) {
+    response.status(502).json({ error: "R2 did not create a multipart upload session." });
+    return;
+  }
+
+  const parts = await Promise.all(
+    Array.from({ length: partCount }, async (_, index) => {
+      const partNumber = index + 1;
+      const uploadUrl = await createMultipartPartUrl(client, {
+        bucket: config.value.bucket,
+        objectKey,
+        partNumber,
+        uploadId: multipart.UploadId!
+      });
+
+      return {
+        expiresInSeconds: multipartUrlExpiresInSeconds,
+        headers: {},
+        method: "PUT" as const,
+        partNumber,
+        uploadUrl
+      };
+    })
+  );
+
+  void saveAuditLog({
+    action: "asset.multipart_upload.started",
+    organizationId: access.dataset.organizationId,
+    projectId: access.dataset.projectId,
+    userId: user.id,
+    entityType: "dataset",
+    entityId: access.dataset.id,
+    metadata: {
+      requestId: getRequestId(request),
+      bucket: config.value.bucket,
+      objectKey,
+      uploadId: multipart.UploadId,
+      fileName: parsed.value.fileName,
+      mimeType: parsed.value.mimeType,
+      fileSize: parsed.value.fileSize.toString(),
+      partCount,
+      partSize
+    }
+  });
+
+  response.status(201).json({
+    upload: {
+      bucket: config.value.bucket,
+      objectKey,
+      uploadId: multipart.UploadId,
+      partSize,
+      partCount,
+      expiresInSeconds: multipartUrlExpiresInSeconds,
+      parts
+    },
+    asset: {
+      datasetId: access.dataset.id,
+      bucket: config.value.bucket,
+      objectKey,
+      fileName: parsed.value.fileName,
+      mimeType: parsed.value.mimeType,
+      fileSize: parsed.value.fileSize.toString()
+    }
+  });
+});
+
+router.post("/multipart/part-url", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const parsed = parseMultipartPartUrlBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const config = getR2Config();
+
+  if (!config.ok) {
+    response.status(503).json({ error: config.error });
+    return;
+  }
+
+  if (parsed.value.bucket !== config.value.bucket) {
+    response.status(400).json({ error: "Multipart upload bucket does not match the configured R2 bucket." });
+    return;
+  }
+
+  const access = await getDatasetUploadAccess(parsed.value.datasetId, user.id);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  const client = createR2Client(config.value);
+  const uploadUrl = await createMultipartPartUrl(client, {
+    bucket: parsed.value.bucket,
+    objectKey: parsed.value.objectKey,
+    partNumber: parsed.value.partNumber,
+    uploadId: parsed.value.uploadId
+  });
+
+  response.status(200).json({
+    expiresInSeconds: multipartUrlExpiresInSeconds,
+    headers: {},
+    method: "PUT",
+    partNumber: parsed.value.partNumber,
+    uploadUrl
+  });
+});
+
+router.post("/multipart/complete", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const parsed = parseMultipartCompleteBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const config = getR2Config();
+
+  if (!config.ok) {
+    response.status(503).json({ error: config.error });
+    return;
+  }
+
+  if (parsed.value.bucket !== config.value.bucket) {
+    response.status(400).json({ error: "Multipart upload bucket does not match the configured R2 bucket." });
+    return;
+  }
+
+  const access = await getDatasetUploadAccess(parsed.value.datasetId, user.id);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  const existingAsset = await getPrismaClient().storageAsset.findUnique({
+    where: {
+      provider_bucket_objectKey: {
+        provider: StorageProvider.R2,
+        bucket: parsed.value.bucket,
+        objectKey: parsed.value.objectKey
+      }
+    },
+    select: {
+      id: true
+    }
+  });
+
+  if (existingAsset) {
+    response.status(409).json({ error: "An asset already exists for this R2 bucket and object key." });
+    return;
+  }
+
+  const client = createR2Client(config.value);
+  await client.send(
+    new CompleteMultipartUploadCommand({
+      Bucket: parsed.value.bucket,
+      Key: parsed.value.objectKey,
+      UploadId: parsed.value.uploadId,
+      MultipartUpload: {
+        Parts: parsed.value.parts.map((part) => ({
+          ETag: part.etag,
+          PartNumber: part.partNumber
+        }))
+      }
+    })
+  );
+
+  void saveAuditLog({
+    action: "asset.multipart_upload.completed",
+    organizationId: access.dataset.organizationId,
+    projectId: access.dataset.projectId,
+    userId: user.id,
+    entityType: "dataset",
+    entityId: access.dataset.id,
+    metadata: {
+      requestId: getRequestId(request),
+      bucket: parsed.value.bucket,
+      objectKey: parsed.value.objectKey,
+      uploadId: parsed.value.uploadId,
+      partCount: parsed.value.parts.length
+    }
+  });
+
+  response.status(200).json({
+    bucket: parsed.value.bucket,
+    objectKey: parsed.value.objectKey
+  });
+});
+
+router.post("/multipart/abort", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const parsed = parseMultipartAbortBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const config = getR2Config();
+
+  if (!config.ok) {
+    response.status(503).json({ error: config.error });
+    return;
+  }
+
+  if (parsed.value.bucket !== config.value.bucket) {
+    response.status(400).json({ error: "Multipart upload bucket does not match the configured R2 bucket." });
+    return;
+  }
+
+  const access = await getDatasetUploadAccess(parsed.value.datasetId, user.id);
+
+  if (!access.ok) {
+    response.status(access.status).json({ error: access.error });
+    return;
+  }
+
+  const client = createR2Client(config.value);
+  await client.send(
+    new AbortMultipartUploadCommand({
+      Bucket: parsed.value.bucket,
+      Key: parsed.value.objectKey,
+      UploadId: parsed.value.uploadId
+    })
+  );
+
+  void saveAuditLog({
+    action: "asset.multipart_upload.aborted",
+    organizationId: access.dataset.organizationId,
+    projectId: access.dataset.projectId,
+    userId: user.id,
+    entityType: "dataset",
+    entityId: access.dataset.id,
+    metadata: {
+      requestId: getRequestId(request),
+      bucket: parsed.value.bucket,
+      objectKey: parsed.value.objectKey,
+      uploadId: parsed.value.uploadId
+    }
+  });
+
+  response.status(200).json({ ok: true });
 });
 
 router.post("/delete", async (request: AuthenticatedRequest, response) => {
@@ -718,6 +1064,35 @@ type CreateUploadUrlBody =
     }
   | undefined;
 
+type MultipartPartUrlBody =
+  | {
+      bucket?: unknown;
+      datasetId?: unknown;
+      objectKey?: unknown;
+      partNumber?: unknown;
+      uploadId?: unknown;
+    }
+  | undefined;
+
+type MultipartCompleteBody =
+  | {
+      bucket?: unknown;
+      datasetId?: unknown;
+      objectKey?: unknown;
+      parts?: unknown;
+      uploadId?: unknown;
+    }
+  | undefined;
+
+type MultipartAbortBody =
+  | {
+      bucket?: unknown;
+      datasetId?: unknown;
+      objectKey?: unknown;
+      uploadId?: unknown;
+    }
+  | undefined;
+
 type DeleteAssetsBody =
   | {
       assetIds?: unknown;
@@ -856,6 +1231,140 @@ function parseCreateUploadUrlBody(body: CreateUploadUrlBody):
   };
 }
 
+export function parseMultipartPartUrlBody(body: MultipartPartUrlBody):
+  | {
+      ok: true;
+      value: {
+        bucket: string;
+        datasetId: string;
+        objectKey: string;
+        partNumber: number;
+        uploadId: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const parsed = parseMultipartSessionBody(body);
+
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const partNumber = parsePositiveInteger(body?.partNumber);
+
+  if (!partNumber || partNumber > maxMultipartParts) {
+    return { ok: false, error: "Multipart part number is required." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...parsed.value,
+      partNumber
+    }
+  };
+}
+
+export function parseMultipartCompleteBody(body: MultipartCompleteBody):
+  | {
+      ok: true;
+      value: {
+        bucket: string;
+        datasetId: string;
+        objectKey: string;
+        parts: { etag: string; partNumber: number }[];
+        uploadId: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const parsed = parseMultipartSessionBody(body);
+
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  if (!Array.isArray(body?.parts) || body.parts.length === 0 || body.parts.length > maxMultipartParts) {
+    return { ok: false, error: "Completed multipart parts are required." };
+  }
+
+  const parts = body.parts.map((part) => {
+    if (!part || typeof part !== "object") {
+      return null;
+    }
+
+    const record = part as Record<string, unknown>;
+    const partNumber = parsePositiveInteger(record.partNumber);
+    const etag = normalizeText(record.etag);
+
+    return partNumber && etag ? { etag: normalizeEtag(etag), partNumber } : null;
+  });
+
+  if (parts.some((part) => part === null)) {
+    return { ok: false, error: "Each completed multipart part needs a part number and ETag." };
+  }
+
+  const sortedParts = (parts as { etag: string; partNumber: number }[]).sort((first, second) => first.partNumber - second.partNumber);
+  const uniquePartNumbers = new Set(sortedParts.map((part) => part.partNumber));
+
+  if (uniquePartNumbers.size !== sortedParts.length) {
+    return { ok: false, error: "Multipart part numbers must be unique." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...parsed.value,
+      parts: sortedParts
+    }
+  };
+}
+
+function parseMultipartAbortBody(body: MultipartAbortBody) {
+  return parseMultipartSessionBody(body);
+}
+
+function parseMultipartSessionBody(body: MultipartPartUrlBody | MultipartCompleteBody | MultipartAbortBody):
+  | {
+      ok: true;
+      value: {
+        bucket: string;
+        datasetId: string;
+        objectKey: string;
+        uploadId: string;
+      };
+    }
+  | { ok: false; error: string } {
+  const bucket = normalizeText(body?.bucket);
+  const datasetId = normalizeId(body?.datasetId);
+  const objectKey = normalizeText(body?.objectKey);
+  const uploadId = normalizeText(body?.uploadId);
+
+  if (!datasetId) {
+    return { ok: false, error: "Dataset is required." };
+  }
+
+  if (!bucket) {
+    return { ok: false, error: "R2 bucket is required." };
+  }
+
+  if (!objectKey || objectKey.length > 1024) {
+    return { ok: false, error: "R2 object key is required." };
+  }
+
+  if (!uploadId) {
+    return { ok: false, error: "Multipart upload id is required." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      bucket,
+      datasetId,
+      objectKey,
+      uploadId
+    }
+  };
+}
+
 function parseMetadata(value: unknown): Prisma.InputJsonObject | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
@@ -922,6 +1431,97 @@ function parseDeleteAssetsBody(body: DeleteAssetsBody):
   };
 }
 
+async function getDatasetUploadAccess(datasetId: string, userId: string): Promise<
+  | {
+      ok: true;
+      dataset: {
+        id: string;
+        organizationId: string;
+        projectId: string;
+        project: {
+          createdById: string;
+        };
+      };
+    }
+  | { ok: false; error: string; status: number }
+> {
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      organizationId: true,
+      projectId: true,
+      project: {
+        select: {
+          createdById: true
+        }
+      }
+    }
+  });
+
+  if (!dataset) {
+    return { ok: false, error: "Dataset was not found.", status: 404 };
+  }
+
+  const uploadMembership = await prisma.projectMembership.findFirst({
+    where: {
+      userId,
+      projectId: dataset.projectId,
+      status: "ACTIVE"
+    },
+    select: {
+      id: true,
+      role: true
+    }
+  });
+
+  if (dataset.project.createdById !== userId && (!uploadMembership || !canManageProjectScope(uploadMembership))) {
+    return {
+      ok: false,
+      error: "You need project owner or admin access to upload assets to this dataset.",
+      status: 403
+    };
+  }
+
+  return { ok: true, dataset };
+}
+
+async function createMultipartPartUrl(
+  client: ReturnType<typeof createR2Client>,
+  input: {
+    bucket: string;
+    objectKey: string;
+    partNumber: number;
+    uploadId: string;
+  }
+) {
+  return getSignedUrl(
+    client,
+    new UploadPartCommand({
+      Bucket: input.bucket,
+      Key: input.objectKey,
+      PartNumber: input.partNumber,
+      UploadId: input.uploadId
+    }),
+    { expiresIn: multipartUrlExpiresInSeconds }
+  );
+}
+
+export function getMultipartPartSize(fileSize: number) {
+  const minimumPartSize = Math.ceil(fileSize / maxMultipartParts);
+
+  return Math.max(multipartPartSizeBytes, minimumPartSize);
+}
+
+function normalizeEtag(value: string) {
+  const trimmed = value.trim();
+
+  return trimmed.startsWith("\"") ? trimmed : `"${trimmed.replace(/^"+|"+$/g, "")}"`;
+}
+
 async function getAccessibleOrganizationIds(userId: string) {
   const prisma = getPrismaClient();
   const memberships = await prisma.membership.findMany({
@@ -986,6 +1586,8 @@ function getDefaultR2Bucket() {
 
 function buildDatasetObjectKey(projectId: string, datasetId: string, fileName: string) {
   return [
+    "dataset",
+    "import",
     "projects",
     projectId,
     "datasets",

@@ -1070,6 +1070,77 @@ textarea:focus {
   line-height: 1;
 }
 
+.dashboard-stat-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.dashboard-list-panel {
+  align-content: start;
+}
+
+.dashboard-list {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboard-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 10px;
+  text-decoration: none;
+}
+
+.dashboard-list-row:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-soft));
+}
+
+.dashboard-list-row span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dashboard-list-row strong,
+.dashboard-list-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-list-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dashboard-list-row em {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dashboard-list-row em svg {
+  color: #7dd3fc;
+}
+
 .panel {
   display: grid;
   gap: 16px;
@@ -5450,8 +5521,9 @@ textarea:focus {
 
   .stat-grid,
   .detail-list,
-  .detail-layout,
-  .organization-layout,
+    .detail-layout,
+    .dashboard-grid,
+    .organization-layout,
   .management-grid,
   .setup-form,
   .project-form,
@@ -5523,8 +5595,9 @@ textarea:focus {
   .join-code-form,
   .signup-type-picker,
   .stat-grid,
-  .detail-list,
-  .org-card-stats,
+    .detail-list,
+    .dashboard-grid,
+    .org-card-stats,
   .org-card-meta,
   .setup-form,
   .project-form,

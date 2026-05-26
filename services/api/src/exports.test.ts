@@ -10,7 +10,7 @@ describe("buildExportObjectKey", () => {
         exportJobId: "export-1",
         projectId: "project-1"
       }),
-      "exports/project-1/datasets/dataset-1/export-1.json"
+      "dataset/export/project-1/datasets/dataset-1/export-1.json"
     );
   });
 
@@ -20,7 +20,7 @@ describe("buildExportObjectKey", () => {
         exportJobId: "export-2",
         projectId: "project-1"
       }),
-      "exports/project-1/project/export-2.json"
+      "dataset/export/project-1/project/export-2.json"
     );
   });
 
@@ -32,7 +32,7 @@ describe("buildExportObjectKey", () => {
         format: "TSV",
         projectId: "project-1"
       }),
-      "exports/project-1/datasets/dataset-1/export-3.tsv"
+      "dataset/export/project-1/datasets/dataset-1/export-3.tsv"
     );
   });
 
@@ -45,7 +45,7 @@ describe("buildExportObjectKey", () => {
         includeSourceFiles: true,
         projectId: "project-1"
       }),
-      "exports/project-1/datasets/dataset-1/export-4.zip"
+      "dataset/export/project-1/datasets/dataset-1/export-4.zip"
     );
   });
 });

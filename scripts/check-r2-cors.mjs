@@ -82,7 +82,9 @@ if (putResponse.ok) {
 const headers = {
   allowOrigin: response.headers.get("access-control-allow-origin") ?? "",
   allowMethods: response.headers.get("access-control-allow-methods") ?? "",
-  allowHeaders: response.headers.get("access-control-allow-headers") ?? ""
+  allowHeaders: response.headers.get("access-control-allow-headers") ?? "",
+  exposedHeaders: putResponse.headers.get("access-control-expose-headers") ?? "",
+  uploadedEtag: putResponse.headers.get("etag") ?? ""
 };
 
 console.log(
@@ -99,7 +101,8 @@ console.log(
         response.ok &&
         (headers.allowOrigin === origin || headers.allowOrigin === "*") &&
         headers.allowMethods.toUpperCase().includes("PUT") &&
-        headers.allowHeaders.toLowerCase().includes("content-type")
+        headers.allowHeaders.toLowerCase().includes("content-type") &&
+        Boolean(headers.uploadedEtag)
     },
     null,
     2

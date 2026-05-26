@@ -17,8 +17,11 @@ import {
   restoreDataset,
   rollbackDatasetVersion,
   updateDataset,
+  resumableUploadThresholdBytes,
   uploadFileToSignedUrl,
+  uploadFileWithResumableMultipart,
   type AssetSummary,
+  type CreateAssetInput,
   type DatasetSummary,
   type DatasetVersionSummary,
   type ExportFormat,
@@ -29,12 +32,14 @@ import { getFormValue, useAuth } from "../../auth";
 import { datasetStatuses, folderInputAttributes, maxBulkUploadBytes, maxBulkUploadFiles } from "../../constants/options";
 import { useAssets, useDataset, useFormDraft, useTaskPage, useTaskStats } from "../../hooks/useResources";
 import type { UploadProgress } from "../../types/upload";
-import { formatAssetKind, formatBytes, formatDate, formatEnum, getUrlHost } from "../../utils/format";
-import { buildUploadObjectKey, getFileKey, mergeFiles, toSafeObjectKeyPart } from "../../utils/upload";
+import { formatAssetKind, formatBytes, formatDate, formatEnum } from "../../utils/format";
+import { buildUploadObjectKey, createReadableCode, getFileKey, mergeFiles, toSafeObjectKeyPart } from "../../utils/upload";
 import { TasksTable } from "../tasks/TasksPage";
 
 const assetPageSize = 12;
 const datasetTaskPageSize = 8;
+const maxConcurrentAssetUploads = 3;
+const maxUploadFolderAssets = 250;
 const maxStructuredImportRows = 500;
 const structuredImportExtensions = new Set(["csv", "json", "jsonl", "ndjson"]);
 
@@ -982,6 +987,7 @@ export function DatasetDetailPage() {
               ) : null}
               {dataset.canManageAssets ? (
                 <AssetForm
+                  assets={assets}
                   dataset={dataset}
                   onCreated={async () => {
                     await reloadAssets();
@@ -1033,16 +1039,23 @@ async function uploadAndRegisterAsset(
   metadata?: Record<string, unknown>
 ) {
   const imageDimensions = await readImageDimensions(file);
-  const signedUpload = await createAssetUploadUrl(session, {
+  const uploadRequest = {
     datasetId,
     objectKey,
     fileName: file.name,
     mimeType: file.type || "application/octet-stream",
     fileSize: file.size.toString()
-  });
+  };
+  let assetInput: CreateAssetInput;
 
   try {
-    await uploadFileToSignedUrl(file, signedUpload.upload, onProgress);
+    if (file.size >= resumableUploadThresholdBytes) {
+      assetInput = await uploadFileWithResumableMultipart(session, file, uploadRequest, onProgress);
+    } else {
+      const signedUpload = await createAssetUploadUrl(session, uploadRequest);
+      await uploadFileToSignedUrl(file, signedUpload.upload, onProgress);
+      assetInput = signedUpload.asset;
+    }
   } catch (error) {
     await logClientEvent(session, {
       entityId: datasetId,
@@ -1054,8 +1067,8 @@ async function uploadAndRegisterAsset(
         fileName: file.name,
         fileSize: file.size,
         mimeType: file.type || "application/octet-stream",
-        objectKey: signedUpload.asset.objectKey,
-        uploadHost: getUrlHost(signedUpload.upload.uploadUrl)
+        objectKey,
+        uploadMode: file.size >= resumableUploadThresholdBytes ? "multipart" : "single"
       }
     }).catch(() => {});
 
@@ -1063,7 +1076,7 @@ async function uploadAndRegisterAsset(
   }
 
   return createAsset(session, {
-    ...signedUpload.asset,
+    ...assetInput,
     height: imageDimensions ? String(imageDimensions.height) : undefined,
     width: imageDimensions ? String(imageDimensions.width) : undefined,
     metadata
@@ -1098,12 +1111,118 @@ async function readImageDimensions(file: File) {
   }
 }
 
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift();
+
+      if (item !== undefined) {
+        await worker(item);
+      }
+    }
+  });
+
+  await Promise.all(workers);
+}
+
+function createUploadJobs({
+  assets,
+  dataset,
+  files,
+  rename,
+  renamePrefix
+}: {
+  assets: AssetSummary[];
+  dataset: DatasetSummary;
+  files: File[];
+  rename: boolean;
+  renamePrefix: string;
+}) {
+  const folderCounts = getDatasetUploadFolderCounts(dataset, assets);
+  const selectedAutoBase = getDatasetUploadFolderBase(dataset, folderCounts);
+  const counts = new Map(folderCounts);
+
+  return files.map((file) => {
+    const folder = getNextDatasetUploadFolder(selectedAutoBase, counts);
+    counts.set(folder, (counts.get(folder) ?? 0) + 1);
+
+    return {
+      file,
+      key: getFileKey(file),
+      objectKey: buildUploadObjectKey(file, {
+        folder,
+        prefix: renamePrefix,
+        rename
+      })
+    };
+  });
+}
+
+function getDatasetUploadFolderCounts(dataset: DatasetSummary, assets: AssetSummary[]) {
+  const base = getDatasetUploadPrefix(dataset);
+  const counts = new Map<string, number>();
+
+  assets.forEach((asset) => {
+    const folder = getAssignedUploadFolder(asset.objectKey);
+
+    if (!folder || !folder.startsWith(base)) {
+      return;
+    }
+
+    counts.set(folder, (counts.get(folder) ?? 0) + 1);
+  });
+
+  return counts;
+}
+
+function getDatasetUploadFolderBase(dataset: DatasetSummary, folderCounts: Map<string, number>) {
+  const prefix = getDatasetUploadPrefix(dataset);
+  const existingBase = Array.from(folderCounts.keys())
+    .map((folder) => folder.match(new RegExp(`^(${escapeRegExp(prefix)}-[a-z0-9]{6})(?:-\\d+)?$`))?.[1])
+    .find((folder): folder is string => Boolean(folder));
+
+  return existingBase ?? `${prefix}-${createReadableCode(6)}`;
+}
+
+function getNextDatasetUploadFolder(base: string, folderCounts: Map<string, number>) {
+  let index = 0;
+
+  while (true) {
+    const folder = index === 0 ? base : `${base}-${index}`;
+
+    if ((folderCounts.get(folder) ?? 0) < maxUploadFolderAssets) {
+      return folder;
+    }
+
+    index += 1;
+  }
+}
+
+function getDatasetUploadPrefix(dataset: DatasetSummary) {
+  return `dataset/import/${toSafeObjectKeyPart(dataset.name) || "dataset"}`;
+}
+
+function getAssignedUploadFolder(objectKey: string) {
+  const parts = objectKey.split("/").filter(Boolean);
+
+  return parts[0] === "dataset" && parts[1] === "import" && parts[2]
+    ? parts.slice(0, 3).join("/")
+    : "";
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function AssetForm({
+  assets,
   dataset,
   onCreated,
   session,
   setPageError
 }: {
+  assets: AssetSummary[];
   dataset: DatasetSummary;
   onCreated: () => Promise<void>;
   session: ReturnType<typeof useAuth>["session"];
@@ -1116,7 +1235,6 @@ function AssetForm({
   const [renameFiles, setRenameFiles] = useState(false);
   const [textEntry, setTextEntry] = useState("");
   const [textEntryTitle, setTextEntryTitle] = useState("");
-  const [uploadFolder, setUploadFolder] = useState(`datasets/v${dataset.version}`);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [renamePrefix, setRenamePrefix] = useState(toSafeObjectKeyPart(dataset.name) || "asset");
   const assetDraft = useFormDraft(`goxai-draft-asset-${dataset.id}`);
@@ -1156,7 +1274,7 @@ function AssetForm({
         const batchBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
 
         if (selectedFiles.length > maxBulkUploadFiles) {
-          throw new Error(`Upload up to ${maxBulkUploadFiles} files at once. For larger batches, split files into multiple folders and upload them separately.`);
+          throw new Error(`Upload up to ${maxBulkUploadFiles} files at once.`);
         }
 
         if (batchBytes > maxBulkUploadBytes) {
@@ -1187,69 +1305,60 @@ function AssetForm({
           return;
         }
 
-        setUploadProgress({
-          completed: 0,
-          currentFile: selectedFiles[0]?.name ?? "",
-          failed: 0,
-          currentFilePercent: 0,
-          currentLoadedBytes: 0,
-          currentTotalBytes: selectedFiles[0]?.size ?? 0,
-          status: "uploading",
-          total: selectedFiles.length
+        const uploadJobs = createUploadJobs({
+          assets,
+          dataset,
+          files: selectedFiles,
+          rename: renameFiles,
+          renamePrefix
         });
+        const loadedByFileKey = new Map(uploadJobs.map((job) => [job.key, 0]));
+        const activeFileNames = new Set<string>();
+        const updateParallelProgress = () => {
+          const loadedBytes = Array.from(loadedByFileKey.values()).reduce((total, loaded) => total + loaded, 0);
+          const activeLabel = activeFileNames.size > 1
+            ? `${activeFileNames.size} files uploading`
+            : activeFileNames.values().next().value ?? "";
 
-        for (const [index, file] of selectedFiles.entries()) {
           setUploadProgress({
             completed: uploaded.length,
-            currentFile: file.webkitRelativePath || file.name,
+            currentFile: activeLabel,
             failed: failed.length,
-            currentFilePercent: 0,
-            currentLoadedBytes: 0,
-            currentTotalBytes: file.size,
+            currentFilePercent: batchBytes > 0 ? Math.round((loadedBytes / batchBytes) * 100) : 0,
+            currentLoadedBytes: loadedBytes,
+            currentTotalBytes: batchBytes,
             status: "uploading",
             total: selectedFiles.length
           });
+        };
 
+        updateParallelProgress();
+
+        await runWithConcurrency(uploadJobs, maxConcurrentAssetUploads, async (job) => {
+          const displayName = job.file.webkitRelativePath || job.file.name;
+          activeFileNames.add(displayName);
+          updateParallelProgress();
           try {
             uploaded.push(
               await uploadAndRegisterAsset(
                 session,
                 dataset.id,
-                file,
-                buildUploadObjectKey(file, {
-                  folder: uploadFolder,
-                  prefix: renamePrefix,
-                  rename: renameFiles
-                }),
+                job.file,
+                job.objectKey,
                 (progress) => {
-                  setUploadProgress({
-                    completed: uploaded.length,
-                    currentFile: file.webkitRelativePath || file.name,
-                    currentFilePercent: progress.percent,
-                    currentLoadedBytes: progress.loaded,
-                    currentTotalBytes: progress.total,
-                    failed: failed.length,
-                    status: "uploading",
-                    total: selectedFiles.length
-                  });
+                  loadedByFileKey.set(job.key, progress.loaded);
+                  updateParallelProgress();
                 }
               )
             );
+            loadedByFileKey.set(job.key, job.file.size);
           } catch (reason) {
-            failed.push(`${file.name}: ${reason instanceof Error ? reason.message : "Upload failed."}`);
+            failed.push(`${job.file.name}: ${reason instanceof Error ? reason.message : "Upload failed."}`);
+          } finally {
+            activeFileNames.delete(displayName);
+            updateParallelProgress();
           }
-
-          setUploadProgress({
-            completed: uploaded.length,
-            currentFile: selectedFiles[index + 1]?.webkitRelativePath || selectedFiles[index + 1]?.name || file.name,
-            failed: failed.length,
-            currentFilePercent: 100,
-            currentLoadedBytes: file.size,
-            currentTotalBytes: file.size,
-            status: "uploading",
-            total: selectedFiles.length
-          });
-        }
+        });
 
         if (uploaded.length > 0) {
           setSelectedFiles([]);
@@ -1576,7 +1685,7 @@ function AssetForm({
 
     if (merged.length > maxBulkUploadFiles) {
       setPageError(
-        `Only ${maxBulkUploadFiles} files are allowed in one upload. Extra files were not added. For larger datasets, create multiple folders and upload one folder at a time.`
+        `Only ${maxBulkUploadFiles} files are allowed in one upload. Extra files were not added.`
       );
     } else if (totalBytes > maxBulkUploadBytes) {
       setPageError(`Upload up to ${formatBytes(String(maxBulkUploadBytes))} per batch. Remove some files before uploading.`);
@@ -1683,8 +1792,8 @@ function AssetForm({
       <div className="drop-zone wide">
         <CloudUpload size={22} />
         <strong>Drop images or files here</strong>
-        <span>Choose up to {maxBulkUploadFiles} files at once, or choose a folder to keep the folder paths in R2.</span>
-        <small>For more than {maxBulkUploadFiles} images, split them into multiple folders and upload each folder separately.</small>
+        <span>Choose up to {maxBulkUploadFiles} files at once, or choose a folder to preserve file paths inside the dataset upload folder.</span>
+        <small>GoXAi Lab assigns dataset folders automatically and opens a new folder after {maxUploadFolderAssets} files.</small>
         <div className="upload-picker-row">
           <label className="secondary-button file-picker-button">
             <CloudUpload size={16} />
@@ -1748,22 +1857,13 @@ function AssetForm({
       {uploadProgress && (
         <UploadProgressPanel progress={uploadProgress} />
       )}
-      <label className="wide">
-        R2 folder
-        <input
-          name="uploadFolder"
-          onChange={(event) => setUploadFolder(event.currentTarget.value)}
-          placeholder="datasets/v1"
-          value={uploadFolder}
-        />
-      </label>
       <label className="checkbox-row wide">
         <input
           checked={renameFiles}
           onChange={(event) => setRenameFiles(event.currentTarget.checked)}
           type="checkbox"
         />
-        Rename uploaded files with a prefix and random code
+        Rename uploaded files with a prefix and unique code
       </label>
       {renameFiles && (
         <label className="wide">
