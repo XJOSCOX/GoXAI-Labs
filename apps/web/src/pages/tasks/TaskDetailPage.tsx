@@ -52,6 +52,21 @@ type ResolvedTaskQueueFilters = Omit<TaskQueueFilters, "assignment" | "due" | "s
   status: string;
 };
 
+const reviewReasonOptions = [
+  { label: "Missing label", value: "missing_label" },
+  { label: "Bad boundary", value: "bad_boundary" },
+  { label: "Wrong class", value: "wrong_class" },
+  { label: "Incomplete", value: "incomplete" },
+  { label: "Other", value: "other" }
+];
+
+const reviewSeverityOptions = [
+  { label: "Low", value: "low" },
+  { label: "Medium", value: "medium" },
+  { label: "High", value: "high" },
+  { label: "Critical", value: "critical" }
+];
+
 interface PdfPageInfo {
   height: number;
   pageCount: number;
@@ -266,6 +281,9 @@ export function TaskDetailPage() {
   const [nextTaskError, setNextTaskError] = useState<string | null>(null);
   const [nextTaskLoading, setNextTaskLoading] = useState(false);
   const [reviewFeedback, setReviewFeedback] = useState("");
+  const [reviewReason, setReviewReason] = useState("");
+  const [reviewScore, setReviewScore] = useState("");
+  const [reviewSeverity, setReviewSeverity] = useState("medium");
   const [reviewSaving, setReviewSaving] = useState(false);
   const [choiceResponses, setChoiceResponses] = useState<Record<string, string[]>>({});
   const [dateTimeResponses, setDateTimeResponses] = useState<Record<string, string>>({});
@@ -355,6 +373,7 @@ export function TaskDetailPage() {
     () => reviews.find((review) => review.status === "NEEDS_CHANGES") ?? null,
     [reviews]
   );
+  const annotationVersionDiff = useMemo(() => buildAnnotationVersionDiff(annotationHistory), [annotationHistory]);
   const polygonInProgress = activeTool === "POLYGON" && polygonPoints.length > 0;
   const canStartPolygon = activeTool === "POLYGON" && (labelArmed || labelDrawLock);
 
@@ -1417,6 +1436,18 @@ export function TaskDetailPage() {
       return;
     }
 
+    if (decision === "reject" && !reviewReason) {
+      setError("Choose a rejection reason before sending the task back.");
+      return;
+    }
+
+    const normalizedScore = reviewScore.trim() ? Number(reviewScore) : null;
+
+    if (normalizedScore !== null && (!Number.isInteger(normalizedScore) || normalizedScore < 1 || normalizedScore > 5)) {
+      setError("Review score must be a whole number from 1 to 5.");
+      return;
+    }
+
     setReviewSaving(true);
     setSavedMessage(null);
     setError(null);
@@ -1424,7 +1455,10 @@ export function TaskDetailPage() {
     try {
       const result = await reviewTask(session, task.id, {
         decision,
-        feedback: reviewFeedback
+        feedback: reviewFeedback,
+        reason: decision === "reject" ? reviewReason : undefined,
+        score: normalizedScore,
+        severity: decision === "reject" ? reviewSeverity : undefined
       });
 
       setAnnotation(result.annotation);
@@ -1434,6 +1468,9 @@ export function TaskDetailPage() {
         setComments((current) => [...current, result.comment!]);
       }
       setReviewFeedback("");
+      setReviewReason("");
+      setReviewScore("");
+      setReviewSeverity("medium");
       setSavedMessage(decision === "approve" ? "Task approved." : "Task sent back with feedback.");
       await reload();
     } catch (reason) {
@@ -2100,13 +2137,70 @@ export function TaskDetailPage() {
                 <section className="panel task-revision-panel">
                   <p className="eyebrow">Needs revision</p>
                   <strong>{latestRejectedReview.reviewer.name}</strong>
+                  <small>{formatReviewMetadata(latestRejectedReview)}</small>
                   <span>{latestRejectedReview.feedback?.trim() || "Reviewer requested changes."}</span>
                   <small>{formatDateTime(latestRejectedReview.createdAt)}</small>
+                </section>
+              ) : null}
+              {annotationVersionDiff ? (
+                <section className="panel annotation-version-panel">
+                  <p className="eyebrow">Version compare</p>
+                  <strong>
+                    v{annotationVersionDiff.previousVersion} to v{annotationVersionDiff.currentVersion}
+                  </strong>
+                  <div className="version-diff-grid">
+                    <span>
+                      <small>Regions</small>
+                      <strong>{formatSignedCount(annotationVersionDiff.regionDelta)}</strong>
+                    </span>
+                    <span>
+                      <small>Responses</small>
+                      <strong>{formatSignedCount(annotationVersionDiff.responseDelta)}</strong>
+                    </span>
+                    <span>
+                      <small>Status</small>
+                      <strong>{formatEnum(annotationVersionDiff.currentStatus)}</strong>
+                    </span>
+                  </div>
                 </section>
               ) : null}
               {canReviewTask && (
                 <section className="panel task-review-panel">
                   <p className="eyebrow">Review decision</p>
+                  <div className="review-meta-grid">
+                    <label>
+                      Score
+                      <input
+                        max="5"
+                        min="1"
+                        onChange={(event) => setReviewScore(event.currentTarget.value)}
+                        placeholder="1-5"
+                        type="number"
+                        value={reviewScore}
+                      />
+                    </label>
+                    <label>
+                      Reason
+                      <select onChange={(event) => setReviewReason(event.currentTarget.value)} value={reviewReason}>
+                        <option value="">Choose reason</option>
+                        {reviewReasonOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Severity
+                      <select onChange={(event) => setReviewSeverity(event.currentTarget.value)} value={reviewSeverity}>
+                        {reviewSeverityOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                   <textarea
                     className="review-feedback-input"
                     onChange={(event) => setReviewFeedback(event.currentTarget.value)}
@@ -5059,6 +5153,46 @@ function buildTaskHistoryItems(annotationHistory: AnnotationSummary[], reviews: 
   return [...annotationItems, ...reviewItems].sort(
     (first, second) => new Date(second.timestamp).getTime() - new Date(first.timestamp).getTime()
   );
+}
+
+function formatReviewMetadata(review: ReviewSummary) {
+  const metadata = isRecord(review.metadata) ? review.metadata : {};
+  const details = [
+    review.score ? `Score ${review.score}/5` : null,
+    typeof metadata.reason === "string" ? formatEnum(metadata.reason) : null,
+    typeof metadata.severity === "string" ? formatEnum(metadata.severity) : null
+  ].filter(Boolean);
+
+  return details.length > 0 ? details.join(" - ") : "Review feedback";
+}
+
+function buildAnnotationVersionDiff(annotationHistory: AnnotationSummary[]) {
+  if (annotationHistory.length < 2) {
+    return null;
+  }
+
+  const [current, previous] = [...annotationHistory].sort((left, right) => right.version - left.version);
+
+  if (!current || !previous) {
+    return null;
+  }
+
+  return {
+    currentStatus: current.status,
+    currentVersion: current.version,
+    previousVersion: previous.version,
+    regionDelta: current.regions.length - previous.regions.length,
+    responseDelta: countAnnotationResponses(current) - countAnnotationResponses(previous)
+  };
+}
+
+function countAnnotationResponses(annotation: AnnotationSummary) {
+  const results = Array.isArray(annotation.resultJson.results) ? annotation.resultJson.results : [];
+  return results.length;
+}
+
+function formatSignedCount(value: number) {
+  return value > 0 ? `+${value}` : String(value);
 }
 
 function formatMediaTime(seconds: number) {

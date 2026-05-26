@@ -39,6 +39,13 @@ const priorityPresets = [
   { label: "Urgent", value: "10" }
 ];
 type DatasetTaskAssignmentMode = NonNullable<TaskWorkflowInput["assignmentMode"]>;
+type DatasetQualityDraft = {
+  autoSampleReview: boolean;
+  minAgreementRate: string;
+  minQualityScore: string;
+  requireConsensusBeforeApproval: boolean;
+  samplingTargetRate: string;
+};
 
 export function DatasetLabelConfigPage() {
   const { datasetId = "" } = useParams();
@@ -312,6 +319,7 @@ function DatasetControllerConfig({
   const [message, setMessage] = useState<string | null>(null);
   const [participants, setParticipants] = useState<TaskParticipantSummary[]>([]);
   const [workflow, setWorkflow] = useState(() => getDatasetWorkflowDraft(dataset));
+  const [quality, setQuality] = useState<DatasetQualityDraft>(() => getDatasetQualityDraft(dataset));
   const assignees = participants.filter((participant) => participant.canWork);
   const reviewers = participants.filter((participant) => participant.canReview);
   const selectedAssigneeNames = assignees
@@ -321,6 +329,7 @@ function DatasetControllerConfig({
 
   useEffect(() => {
     setWorkflow(getDatasetWorkflowDraft(dataset));
+    setQuality(getDatasetQualityDraft(dataset));
   }, [dataset.id]);
 
   useEffect(() => {
@@ -353,9 +362,27 @@ function DatasetControllerConfig({
 
   function getWorkflowInput(): TaskWorkflowInput | null {
     const priority = workflow.priority.trim() === "" ? 0 : Number(workflow.priority);
+    const samplingTargetRate = Number(quality.samplingTargetRate);
+    const minAgreementRate = Number(quality.minAgreementRate);
+    const minQualityScore = Number(quality.minQualityScore);
 
     if (!Number.isInteger(priority) || priority < 0 || priority > 10) {
       setPageError("Priority must be a whole number from 0 to 10.");
+      return null;
+    }
+
+    if (!Number.isFinite(samplingTargetRate) || samplingTargetRate < 0 || samplingTargetRate > 100) {
+      setPageError("Review sampling target must be a number from 0 to 100.");
+      return null;
+    }
+
+    if (!Number.isFinite(minAgreementRate) || minAgreementRate < 0 || minAgreementRate > 100) {
+      setPageError("Minimum agreement must be a number from 0 to 100.");
+      return null;
+    }
+
+    if (!Number.isInteger(minQualityScore) || minQualityScore < 0 || minQualityScore > 100) {
+      setPageError("Minimum quality score must be a whole number from 0 to 100.");
       return null;
     }
 
@@ -387,8 +414,13 @@ function DatasetControllerConfig({
       assigneeIds: workflow.assignmentMode === "round_robin" ? workflow.assigneeIds : [],
       assignmentMode: workflow.assignmentMode,
       dueAt,
+      autoSampleReview: quality.autoSampleReview,
+      minAgreementRate,
+      minQualityScore,
       priority,
+      requireConsensusBeforeApproval: quality.requireConsensusBeforeApproval,
       reviewerId: workflow.reviewerId || null,
+      samplingTargetRate,
       saveDefaults: true
     };
   }
@@ -431,7 +463,7 @@ function DatasetControllerConfig({
         <div>
           <p className="eyebrow">Controller</p>
           <h3>Task controller config</h3>
-          <p className="muted-copy">Set assignment, review, due date, and queue priority before generating tasks.</p>
+          <p className="muted-copy">Set assignment, review, priority, due date, and quality gates before generating tasks.</p>
         </div>
         <span className={`status-pill compact ${isDatasetControllerConfigured(dataset) ? "" : "warning"}`}>
           {isDatasetControllerConfigured(dataset) ? "Configured" : "Required"}
@@ -562,6 +594,56 @@ function DatasetControllerConfig({
             <span>Rotation: {selectedAssigneeNames.join(" -> ")}</span>
           ) : null}
         </div>
+        <div className="workflow-summary wide quality-policy-summary">
+          <strong>Quality control policy</strong>
+          <span>Sampling target decides how many submitted tasks should be checked by reviewers.</span>
+        </div>
+        <label>
+          Review sampling target
+          <input
+            max="100"
+            min="0"
+            onChange={(event) => setQuality((current) => ({ ...current, samplingTargetRate: event.currentTarget.value }))}
+            type="number"
+            value={quality.samplingTargetRate}
+          />
+        </label>
+        <label>
+          Minimum agreement
+          <input
+            max="100"
+            min="0"
+            onChange={(event) => setQuality((current) => ({ ...current, minAgreementRate: event.currentTarget.value }))}
+            type="number"
+            value={quality.minAgreementRate}
+          />
+        </label>
+        <label>
+          Minimum quality score
+          <input
+            max="100"
+            min="0"
+            onChange={(event) => setQuality((current) => ({ ...current, minQualityScore: event.currentTarget.value }))}
+            type="number"
+            value={quality.minQualityScore}
+          />
+        </label>
+        <label className="checkbox-row wide">
+          <input
+            checked={quality.autoSampleReview}
+            onChange={(event) => setQuality((current) => ({ ...current, autoSampleReview: event.currentTarget.checked }))}
+            type="checkbox"
+          />
+          Auto-mark sampled tasks for QA review
+        </label>
+        <label className="checkbox-row wide">
+          <input
+            checked={quality.requireConsensusBeforeApproval}
+            onChange={(event) => setQuality((current) => ({ ...current, requireConsensusBeforeApproval: event.currentTarget.checked }))}
+            type="checkbox"
+          />
+          Require consensus before approval when overlapping annotations exist
+        </label>
       </div>
       <button className="primary-button" disabled={saving} onClick={handleSaveController} type="button">
         <Save size={18} />
@@ -874,6 +956,18 @@ function getDatasetWorkflowDraft(dataset: DatasetSummary) {
   };
 }
 
+function getDatasetQualityDraft(dataset: DatasetSummary): DatasetQualityDraft {
+  const policy = isRecord(dataset.metadata) && isRecord(dataset.metadata.qualityPolicy) ? dataset.metadata.qualityPolicy : null;
+
+  return {
+    autoSampleReview: getOptionalBoolean(policy?.autoSampleReview, true),
+    minAgreementRate: getPercentDraftValue(policy?.minAgreementRate, 80),
+    minQualityScore: getQualityScoreDraftValue(policy?.minQualityScore, 75),
+    requireConsensusBeforeApproval: getOptionalBoolean(policy?.requireConsensusBeforeApproval, false),
+    samplingTargetRate: getPercentDraftValue(policy?.samplingTargetRate, 20)
+  };
+}
+
 function getDatasetAssignmentMode(value: unknown, assignedToId: string, assigneeIds: string[]): DatasetTaskAssignmentMode {
   if (value === "single" || value === "round_robin" || value === "unassigned") {
     return value;
@@ -888,6 +982,22 @@ function getDatasetAssignmentMode(value: unknown, assignedToId: string, assignee
 
 function getOptionalString(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function getOptionalBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function getPercentDraftValue(value: unknown, fallback: number) {
+  const percent = typeof value === "number" ? (value <= 1 ? value * 100 : value) : typeof value === "string" && value.trim() ? Number(value) : fallback;
+
+  return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? String(Math.round(percent)) : String(fallback);
+}
+
+function getQualityScoreDraftValue(value: unknown, fallback: number) {
+  const score = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
+
+  return Number.isInteger(score) && score >= 0 && score <= 100 ? String(score) : String(fallback);
 }
 
 function getPriorityDraftValue(value: unknown) {

@@ -309,6 +309,17 @@ enum NotificationType {
   SYSTEM
 }
 
+enum NotificationPreferenceEvent {
+  TASK_ASSIGNED
+  REVIEW_REQUESTED
+  TASK_APPROVED
+  TASK_REJECTED
+  EXPORT_COMPLETED
+  EXPORT_FAILED
+  COMMENT_ADDED
+  SYSTEM
+}
+
 enum ApiKeyStatus {
   ACTIVE
   REVOKED
@@ -370,6 +381,7 @@ model User {
   wallets             Wallet[]
   payouts             Payout[]
   notifications       Notification[]
+  notificationPreferences NotificationPreference[]
   auditLogs           AuditLog[]
   apiKeys             ApiKey[]
   invitedMemberships  Membership[]      @relation("MembershipInviter")
@@ -1221,6 +1233,24 @@ model Notification {
   @@index([readAt])
   @@index([type])
   @@map("notifications")
+}
+
+model NotificationPreference {
+  id      String                      @id @default(cuid())
+  userId  String                      @map("user_id")
+  event   NotificationPreferenceEvent
+  inApp   Boolean                     @default(true) @map("in_app")
+  email   Boolean                     @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, event])
+  @@index([userId])
+  @@index([event])
+  @@map("notification_preferences")
 }
 
 model AuditLog {

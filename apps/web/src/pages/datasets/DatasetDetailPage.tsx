@@ -11,6 +11,7 @@ import {
   generateTasksFromDataset,
   getAssetAccessUrl,
   getExportDownloadUrl,
+  getQualityStats,
   listDatasetVersions,
   listExportJobs,
   logClientEvent,
@@ -26,6 +27,7 @@ import {
   type DatasetVersionSummary,
   type ExportFormat,
   type ExportJobSummary,
+  type QualityStatsResult,
   type TaskSummary
 } from "../../api";
 import { getFormValue, useAuth } from "../../auth";
@@ -38,10 +40,13 @@ import { TasksTable } from "../tasks/TasksPage";
 
 const assetPageSize = 12;
 const datasetTaskPageSize = 8;
+const datasetVersionPageSize = 8;
 const maxConcurrentAssetUploads = 3;
 const maxUploadFolderAssets = 250;
 const maxStructuredImportRows = 500;
 const structuredImportExtensions = new Set(["csv", "json", "jsonl", "ndjson"]);
+type DatasetDetailView = "assets" | "delivery" | "history" | "tasks";
+
 function DatasetTasksPanel({
   activeTaskTotal,
   assetTotal,
@@ -225,8 +230,12 @@ function DatasetExportsPanel({
   const [includeSourceFiles, setIncludeSourceFiles] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [quality, setQuality] = useState<QualityStatsResult | null>(null);
+  const [qualityLoading, setQualityLoading] = useState(false);
   const exportFormats = getDatasetExportFormats(dataset);
   const canIncludeSourceFiles = isSourceFileExportFormat(exportFormat);
+  const qualityPolicy = getDatasetQualityPolicy(dataset);
+  const qualityWarnings = getDatasetExportQualityWarnings(quality, qualityPolicy);
 
   useEffect(() => {
     if (!exportFormats.some((format) => format.value === exportFormat)) {
@@ -239,6 +248,41 @@ function DatasetExportsPanel({
       setIncludeSourceFiles(false);
     }
   }, [canIncludeSourceFiles, includeSourceFiles]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadQuality() {
+      if (!session) {
+        setQuality(null);
+        return;
+      }
+
+      setQualityLoading(true);
+
+      try {
+        const result = await getQualityStats(session, { datasetId: dataset.id, projectId: dataset.projectId });
+
+        if (mounted) {
+          setQuality(result);
+        }
+      } catch {
+        if (mounted) {
+          setQuality(null);
+        }
+      } finally {
+        if (mounted) {
+          setQualityLoading(false);
+        }
+      }
+    }
+
+    void loadQuality();
+
+    return () => {
+      mounted = false;
+    };
+  }, [dataset.id, dataset.projectId, session?.access_token]);
 
   async function reloadExports() {
     if (!session) {
@@ -317,6 +361,15 @@ function DatasetExportsPanel({
           <p className="eyebrow">Delivery</p>
           <h2>Approved annotation exports</h2>
           <span>Approved tasks, accepted annotations, reviews, labels, and source asset references.</span>
+          {qualityLoading ? <span className="muted-copy">Checking dataset quality gates.</span> : null}
+          {qualityWarnings.length > 0 ? (
+            <div className="export-quality-warning">
+              <strong>Quality warning</strong>
+              {qualityWarnings.map((warning) => (
+                <span key={warning}>{warning}</span>
+              ))}
+            </div>
+          ) : null}
         </div>
         {canExport ? (
           <div className="export-actions">
@@ -363,7 +416,15 @@ function DatasetExportsPanel({
                   {formatEnum(exportJob.status)} - {formatDate(exportJob.createdAt)}
                   {exportJob.format ? ` - ${formatEnum(exportJob.format)}` : ""}
                   {exportJob.metadata && typeof exportJob.metadata.taskCount === "number" ? ` - ${exportJob.metadata.taskCount} tasks` : ""}
+                  {exportJob.metadata && typeof exportJob.metadata.annotationCount === "number" ? ` - ${exportJob.metadata.annotationCount} annotations` : ""}
                 </span>
+                {isRecord(exportJob.metadata?.manifest) ? (
+                  <small className="muted-copy">
+                    Manifest: {getStringArray(exportJob.metadata.manifest.taskStatuses).join(", ") || "APPROVED"} tasks,
+                    {" "}
+                    {getStringArray(exportJob.metadata.manifest.annotationStatuses).join(", ") || "ACCEPTED"} annotations
+                  </small>
+                ) : null}
                 {exportJob.errorMessage && <span className="danger-copy">{exportJob.errorMessage}</span>}
               </div>
               <div className="row-actions compact">
@@ -431,6 +492,20 @@ function isSourceFileExportFormat(format: ExportFormat) {
   return format === "COCO" || format === "YOLO" || format === "PASCAL_VOC";
 }
 
+function getDatasetDetailViews(dataset: DatasetSummary): { icon: typeof ClipboardList; label: string; value: DatasetDetailView }[] {
+  const views: { icon: typeof ClipboardList; label: string; value: DatasetDetailView }[] = [
+    { icon: ClipboardList, label: "Tasks", value: "tasks" },
+    { icon: Download, label: dataset.canManageAssets ? "Upload + export" : "Exports", value: "delivery" },
+    { icon: HardDrive, label: "Assets", value: "assets" }
+  ];
+
+  if (dataset.canManageAssets) {
+    views.push({ icon: History, label: "History", value: "history" });
+  }
+
+  return views;
+}
+
 function DatasetVersionsPanel({
   currentVersion,
   datasetId,
@@ -451,6 +526,19 @@ function DatasetVersionsPanel({
   versionsError: string | null;
 }) {
   const [rollingBackVersion, setRollingBackVersion] = useState<number | null>(null);
+  const [versionPage, setVersionPage] = useState(1);
+  const versionPageCount = Math.max(1, Math.ceil(versions.length / datasetVersionPageSize));
+  const versionStart = (versionPage - 1) * datasetVersionPageSize;
+  const visibleVersions = versions.slice(versionStart, versionStart + datasetVersionPageSize);
+  const versionEnd = Math.min(versions.length, versionStart + visibleVersions.length);
+
+  useEffect(() => {
+    setVersionPage(1);
+  }, [datasetId]);
+
+  useEffect(() => {
+    setVersionPage((current) => Math.min(current, versionPageCount));
+  }, [versionPageCount]);
 
   async function handleRollback(version: DatasetVersionSummary) {
     if (!session) {
@@ -492,45 +580,73 @@ function DatasetVersionsPanel({
       {loading ? (
         <p className="muted-copy">Loading versions.</p>
       ) : versions.length > 0 ? (
-        <div className="dataset-version-list">
-          {versions.slice(0, 8).map((version) => {
-            const isCurrent = version.version === currentVersion;
-            const author = [version.createdBy?.firstName, version.createdBy?.lastName].filter(Boolean).join(" ") || version.createdBy?.email;
+        <>
+          <div className="dataset-version-list">
+            {visibleVersions.map((version) => {
+              const isCurrent = version.version === currentVersion;
+              const author = [version.createdBy?.firstName, version.createdBy?.lastName].filter(Boolean).join(" ") || version.createdBy?.email;
 
-            return (
-              <article className="dataset-version-row" key={version.id}>
-                <div>
-                  <strong>
-                    v{version.version}
-                    {isCurrent ? " Current" : ""}
-                  </strong>
-                  <span>
-                    {formatDatasetVersionReason(version.summary.reason)}
-                    {version.summary.restoredFromVersion ? ` from v${version.summary.restoredFromVersion}` : ""}
-                  </span>
-                  <small>
-                    {version.summary.labelCount} labels / {version.summary.assetCount} assets / {version.summary.taskCount} tasks
-                  </small>
-                  <small>
-                    {formatDate(version.createdAt)}
-                    {author ? ` / ${author}` : ""}
-                  </small>
-                </div>
-                <button
-                  className="icon-button"
-                  disabled={isCurrent || rollingBackVersion === version.version}
-                  onClick={() => {
-                    void handleRollback(version);
-                  }}
-                  title={isCurrent ? "Current version" : `Rollback to v${version.version}`}
-                  type="button"
-                >
-                  <RotateCcw size={16} />
-                </button>
-              </article>
-            );
-          })}
-        </div>
+              return (
+                <article className="dataset-version-row" key={version.id}>
+                  <div>
+                    <strong>
+                      v{version.version}
+                      {isCurrent ? " Current" : ""}
+                    </strong>
+                    <span>
+                      {formatDatasetVersionReason(version.summary.reason)}
+                      {version.summary.restoredFromVersion ? ` from v${version.summary.restoredFromVersion}` : ""}
+                    </span>
+                    <small>
+                      {version.summary.labelCount} labels / {version.summary.assetCount} assets / {version.summary.taskCount} tasks
+                    </small>
+                    <small>
+                      {formatDate(version.createdAt)}
+                      {author ? ` / ${author}` : ""}
+                    </small>
+                  </div>
+                  <button
+                    className="icon-button"
+                    disabled={isCurrent || rollingBackVersion === version.version}
+                    onClick={() => {
+                      void handleRollback(version);
+                    }}
+                    title={isCurrent ? "Current version" : `Rollback to v${version.version}`}
+                    type="button"
+                  >
+                    <RotateCcw size={16} />
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+          <div className="pagination-bar">
+            <span>
+              Showing {versionStart + 1}-{versionEnd} of {versions.length}
+            </span>
+            <div>
+              <button
+                className="secondary-button compact-button"
+                disabled={versionPage <= 1}
+                onClick={() => setVersionPage((current) => Math.max(1, current - 1))}
+                type="button"
+              >
+                Previous
+              </button>
+              <span>
+                Page {versionPage} of {versionPageCount}
+              </span>
+              <button
+                className="secondary-button compact-button"
+                disabled={versionPage >= versionPageCount}
+                onClick={() => setVersionPage((current) => Math.min(versionPageCount, current + 1))}
+                type="button"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </>
       ) : (
         <div className="compact-empty">
           <strong>No snapshots yet</strong>
@@ -759,6 +875,7 @@ export function DatasetDetailPage() {
   const { datasetId = "" } = useParams();
   const navigate = useNavigate();
   const { session } = useAuth();
+  const [activeView, setActiveView] = useState<DatasetDetailView>("tasks");
   const [showEditModal, setShowEditModal] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<AssetSummary | null>(null);
   const [previewAccessUrl, setPreviewAccessUrl] = useState<string | null>(null);
@@ -773,6 +890,7 @@ export function DatasetDetailPage() {
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
   const { dataset, error: datasetError, loading: datasetLoading, reload: reloadDataset } = useDataset(session, datasetId);
+  const sessionAccessToken = session?.access_token;
   const {
     assets,
     error: assetsError,
@@ -815,11 +933,18 @@ export function DatasetDetailPage() {
 
   useEffect(() => {
     setTaskPage(1);
+    setActiveView("tasks");
   }, [datasetId]);
 
   useEffect(() => {
     void reloadVersions();
-  }, [datasetId, session]);
+  }, [datasetId, sessionAccessToken]);
+
+  useEffect(() => {
+    if (dataset && !getDatasetDetailViews(dataset).some((view) => view.value === activeView)) {
+      setActiveView("tasks");
+    }
+  }, [activeView, dataset]);
 
   async function handleInspectAsset(asset: AssetSummary) {
     setPreviewAsset(asset);
@@ -907,164 +1032,168 @@ export function DatasetDetailPage() {
         {datasetLoading ? (
           <p className="muted-copy">Loading dataset details.</p>
         ) : dataset ? (
-          <div className="dataset-detail-layout">
-            <section className="content-column">
-              <section className="panel">
+          <div className="dataset-detail-workspace">
+            <section className="dataset-command-center compact">
+              <article className="dataset-command-card dataset-command-card-primary">
                 <div className="dataset-summary-head">
                   <div>
                     <p className="eyebrow">Dataset</p>
                     <h2>{dataset.name}</h2>
                   </div>
                   {dataset.canManage ? (
-                    <div className="row-actions compact">
-                      <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
-                        <Edit3 size={16} />
-                        Edit dataset
-                      </button>
-                    </div>
+                    <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
+                      <Edit3 size={16} />
+                      Edit dataset
+                    </button>
                   ) : null}
                 </div>
-                <dl className="detail-list">
+                <dl className="dataset-command-meta">
                   <div>
                     <dt>Project</dt>
                     <dd>{dataset.project.name}</dd>
-                  </div>
-                  <div>
-                    <dt>Version</dt>
-                    <dd>v{dataset.version}</dd>
                   </div>
                   <div>
                     <dt>Status</dt>
                     <dd>{formatEnum(dataset.status)}</dd>
                   </div>
                   <div>
-                    <dt>Tasks</dt>
-                    <dd>
-                      {taskStats.total} / {assets.length}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Template</dt>
-                    <dd>{dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) ? "Applied" : "Required"}</dd>
+                    <dt>Version</dt>
+                    <dd>v{dataset.version}</dd>
                   </div>
                 </dl>
-                <div className="dataset-progress-panel">
-                  <div className="dataset-progress-head">
-                    <span>
-                      <strong>{getCompletionPercent(taskStats.approved, taskStats.total)}%</strong>
-                      <small>approved</small>
-                    </span>
-                    <div className="dataset-progress-track" aria-label="Approved task progress">
-                      <span style={{ width: `${getCompletionPercent(taskStats.approved, taskStats.total)}%` }} />
-                    </div>
-                  </div>
-                  <div className="dataset-progress-stats">
-                    <span>
-                      <strong>{taskStats.pending}</strong>
-                      <small>Pending</small>
-                    </span>
-                    <span>
-                      <strong>{taskStats.active}</strong>
-                      <small>Active</small>
-                    </span>
-                    <span>
-                      <strong>{taskStats.review}</strong>
-                      <small>Review</small>
-                    </span>
-                    <span>
-                      <strong>{taskStats.approved}</strong>
-                      <small>Approved</small>
-                    </span>
-                    <span>
-                      <strong>{taskStats.rejected}</strong>
-                      <small>Rejected</small>
-                    </span>
+              </article>
+              <article className="dataset-command-card">
+                <div className="dataset-progress-head compact">
+                  <span>
+                    <strong>{getCompletionPercent(taskStats.approved, taskStats.total)}%</strong>
+                    <small>approved</small>
+                  </span>
+                  <div className="dataset-progress-track" aria-label="Approved task progress">
+                    <span style={{ width: `${getCompletionPercent(taskStats.approved, taskStats.total)}%` }} />
                   </div>
                 </div>
-              </section>
-              <DatasetTasksPanel
-                activeTaskTotal={taskStats.active}
-                assetTotal={assets.length}
-                canGenerateTasks={dataset.canGenerateTasks}
-                dataset={dataset}
-                loading={tasksLoading}
-                onGenerated={async () => {
-                  await reloadTaskResources();
-                  await reloadVersions();
-                }}
-                onPageChange={setTaskPage}
-                pageInfo={taskPageInfo}
-                session={session}
-                setPageError={setTasksError}
-                taskTotal={taskStats.total}
-                tasks={tasks}
-              />
-              <DatasetExportsPanel
-                canExport={dataset.canGenerateTasks}
-                dataset={dataset}
-                session={session}
-                setPageError={setTasksError}
-              />
-              <AssetsTable
-                assets={assets}
-                canManageAssets={dataset.canManageAssets}
-                datasetId={dataset.id}
-                loading={assetsLoading}
-                onChanged={async () => {
-                  await reloadAssets();
-                  await reloadVersions();
-                }}
-                onDeleted={handleAssetsDeleted}
-                onInspectAsset={(asset) => {
-                  void handleInspectAsset(asset);
-                }}
-                onPreviewAsset={(asset) => {
-                  void handleLargePreviewAsset(asset);
-                }}
-                session={session}
-                setPageError={setAssetsError}
-              />
+                <div className="dataset-progress-stats compact">
+                  <span>
+                    <strong>{taskStats.pending}</strong>
+                    <small>Pending</small>
+                  </span>
+                  <span>
+                    <strong>{taskStats.active}</strong>
+                    <small>Active</small>
+                  </span>
+                  <span>
+                    <strong>{taskStats.review}</strong>
+                    <small>Review</small>
+                  </span>
+                  <span>
+                    <strong>{taskStats.approved}</strong>
+                    <small>Approved</small>
+                  </span>
+                  <span>
+                    <strong>{taskStats.rejected}</strong>
+                    <small>Rejected</small>
+                  </span>
+                </div>
+              </article>
             </section>
-            <aside className="side-column">
-              {previewAsset && (
-                <AssetPreview
-                  accessError={previewError}
-                  accessLoading={previewLoading}
-                  accessUrl={previewAccessUrl}
-                  asset={previewAsset}
-                  onClose={clearAssetPreview}
-                />
-              )}
-              {dataset.canManageAssets ? (
-                <>
-                  <DatasetVersionsPanel
-                    currentVersion={dataset.version}
-                    datasetId={dataset.id}
-                    loading={versionsLoading}
-                    onRollback={async () => {
-                      await Promise.all([reloadDataset(), reloadAssets(), reloadTaskResources(), reloadVersions()]);
-                    }}
-                    session={session}
-                    setPageError={setTasksError}
-                    versions={versions}
-                    versionsError={versionsError}
-                  />
-                </>
-              ) : null}
-              {dataset.canManageAssets ? (
-                <AssetForm
-                  assets={assets}
+            <nav className="dataset-detail-tabs" aria-label="Dataset detail sections">
+              {getDatasetDetailViews(dataset).map(({ icon: Icon, label, value }) => (
+                <button className={activeView === value ? "active" : ""} key={value} onClick={() => setActiveView(value)} type="button">
+                  <Icon size={16} />
+                  {label}
+                </button>
+              ))}
+            </nav>
+            <section className="dataset-tab-panel">
+              {activeView === "tasks" ? (
+                <DatasetTasksPanel
+                  activeTaskTotal={taskStats.active}
+                  assetTotal={assets.length}
+                  canGenerateTasks={dataset.canGenerateTasks}
                   dataset={dataset}
-                  onCreated={async () => {
-                    await reloadAssets();
+                  loading={tasksLoading}
+                  onGenerated={async () => {
                     await reloadTaskResources();
                     await reloadVersions();
                   }}
+                  onPageChange={setTaskPage}
+                  pageInfo={taskPageInfo}
                   session={session}
-                  setPageError={setAssetsError}
+                  setPageError={setTasksError}
+                  taskTotal={taskStats.total}
+                  tasks={tasks}
                 />
               ) : null}
-            </aside>
+              {activeView === "delivery" ? (
+                <div className={dataset.canManageAssets ? "dataset-delivery-view" : "dataset-delivery-view single"}>
+                  {dataset.canManageAssets ? (
+                    <AssetForm
+                      assets={assets}
+                      dataset={dataset}
+                      onCreated={async () => {
+                        await reloadAssets();
+                        await reloadTaskResources();
+                        await reloadVersions();
+                      }}
+                      session={session}
+                      setPageError={setAssetsError}
+                    />
+                  ) : null}
+                  <DatasetExportsPanel
+                    canExport={dataset.canGenerateTasks}
+                    dataset={dataset}
+                    session={session}
+                    setPageError={setTasksError}
+                  />
+                </div>
+              ) : null}
+              {activeView === "assets" ? (
+                <div className={previewAsset ? "dataset-assets-view" : "dataset-assets-view single"}>
+                  <AssetsTable
+                    assets={assets}
+                    canManageAssets={dataset.canManageAssets}
+                    datasetId={dataset.id}
+                    loading={assetsLoading}
+                    onChanged={async () => {
+                      await reloadAssets();
+                      await reloadVersions();
+                    }}
+                    onDeleted={handleAssetsDeleted}
+                    onInspectAsset={(asset) => {
+                      void handleInspectAsset(asset);
+                    }}
+                    onPreviewAsset={(asset) => {
+                      void handleLargePreviewAsset(asset);
+                    }}
+                    session={session}
+                    setPageError={setAssetsError}
+                  />
+                  {previewAsset ? (
+                    <AssetPreview
+                      accessError={previewError}
+                      accessLoading={previewLoading}
+                      accessUrl={previewAccessUrl}
+                      asset={previewAsset}
+                      onClose={clearAssetPreview}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+              {activeView === "history" && dataset.canManageAssets ? (
+                <DatasetVersionsPanel
+                  currentVersion={dataset.version}
+                  datasetId={dataset.id}
+                  loading={versionsLoading}
+                  onRollback={async () => {
+                    await Promise.all([reloadDataset(), reloadAssets(), reloadTaskResources(), reloadVersions()]);
+                  }}
+                  session={session}
+                  setPageError={setTasksError}
+                  versions={versions}
+                  versionsError={versionsError}
+                />
+              ) : null}
+            </section>
           </div>
         ) : !datasetError ? (
           <p className="muted-copy">Dataset was not found.</p>
@@ -1929,7 +2058,10 @@ function AssetForm({
           onChange={(event) => setRenameFiles(event.currentTarget.checked)}
           type="checkbox"
         />
-        Rename uploaded files with a prefix and unique code
+        <span>
+          Rename uploaded files with a prefix and unique code
+          <small>Recommended for long or unclean file names.</small>
+        </span>
       </label>
       {renameFiles && (
         <label className="wide">
@@ -2624,12 +2756,68 @@ function getDatasetAssignmentLabel(dataset: DatasetSummary) {
   return "Unassigned";
 }
 
+function getDatasetQualityPolicy(dataset: DatasetSummary) {
+  const policy = isRecord(dataset.metadata) && isRecord(dataset.metadata.qualityPolicy) ? dataset.metadata.qualityPolicy : {};
+
+  return {
+    minAgreementRate: getPercentPolicyValue(policy.minAgreementRate, 0.8),
+    minQualityScore: getNumberPolicyValue(policy.minQualityScore, 75),
+    samplingTargetRate: getPercentPolicyValue(policy.samplingTargetRate, 0.2)
+  };
+}
+
+function getDatasetExportQualityWarnings(
+  quality: QualityStatsResult | null,
+  policy: { minAgreementRate: number; minQualityScore: number; samplingTargetRate: number }
+) {
+  if (!quality) {
+    return [];
+  }
+
+  const warnings = [];
+
+  if (quality.summary.datasetQualityScore < policy.minQualityScore) {
+    warnings.push(`Quality score ${quality.summary.datasetQualityScore}/100 is below ${policy.minQualityScore}/100.`);
+  }
+
+  if (quality.sampling.sampleRate < policy.samplingTargetRate) {
+    warnings.push(`Sampling coverage ${formatPercent(quality.sampling.sampleRate)} is below ${formatPercent(policy.samplingTargetRate)}.`);
+  }
+
+  if (quality.consensus.agreementRate !== null && quality.consensus.agreementRate < policy.minAgreementRate) {
+    warnings.push(`Agreement ${formatPercent(quality.consensus.agreementRate)} is below ${formatPercent(policy.minAgreementRate)}.`);
+  }
+
+  return warnings;
+}
+
+function getPercentPolicyValue(value: unknown, fallback: number) {
+  const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
+  const normalized = numeric > 1 ? numeric / 100 : numeric;
+
+  return Number.isFinite(normalized) && normalized >= 0 && normalized <= 1 ? normalized : fallback;
+}
+
+function getNumberPolicyValue(value: unknown, fallback: number) {
+  const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
+
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
 function getCompletionPercent(approved: number, total: number) {
   if (total <= 0) {
     return 0;
   }
 
   return Math.round((approved / total) * 100);
+}
+
+function getStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

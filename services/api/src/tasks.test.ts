@@ -1,4 +1,4 @@
-import { TaskStatus } from "@goxai/database";
+import { AnnotationRegionType, AnnotationStatus, ReviewStatus, TaskStatus } from "@goxai/database";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -9,6 +9,7 @@ import {
   parseAnnotationBody,
   parseDatasetTaskWorkflowBody,
   parseTaskWorkflowBody,
+  summarizeReviewQuality,
   summarizeTaskStatsForGroups
 } from "./tasks.js";
 
@@ -135,6 +136,175 @@ describe("getDatasetGenerationConfigIssue", () => {
       }),
       "Apply a template config before generating tasks."
     );
+  });
+});
+
+describe("summarizeReviewQuality", () => {
+  const project = {
+    id: "project-1",
+    name: "Computer vision"
+  };
+  const dataset = {
+    id: "dataset-1",
+    name: "Training V1"
+  };
+  const annotatorOne = {
+    email: "one@example.com",
+    firstName: "One",
+    id: "annotator-1",
+    lastName: "Annotator"
+  };
+  const annotatorTwo = {
+    email: "two@example.com",
+    firstName: "Two",
+    id: "annotator-2",
+    lastName: "Annotator"
+  };
+  const reviewer = {
+    email: "reviewer@example.com",
+    firstName: "Quality",
+    id: "reviewer-1",
+    lastName: "Reviewer"
+  };
+
+  it("builds sampling, consensus, rejection, annotator, and dataset quality metrics", () => {
+    const createdAt = new Date("2026-05-26T12:00:00.000Z");
+    const reviews = [
+      {
+        annotation: {
+          leadTimeSeconds: 40,
+          user: annotatorOne
+        },
+        createdAt,
+        metadata: {
+          reason: "bad_boundary",
+          severity: "high"
+        },
+        reviewer,
+        score: 2,
+        status: ReviewStatus.NEEDS_CHANGES,
+        task: {
+          dataset,
+          project
+        }
+      },
+      {
+        annotation: {
+          leadTimeSeconds: 25,
+          user: annotatorTwo
+        },
+        createdAt,
+        metadata: {},
+        reviewer,
+        score: 5,
+        status: ReviewStatus.APPROVED,
+        task: {
+          dataset,
+          project
+        }
+      }
+    ];
+    const tasks = [
+      {
+        annotations: [
+          {
+            createdAt,
+            leadTimeSeconds: 40,
+            regions: [
+              {
+                geometryJson: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+                label: "Car",
+                type: AnnotationRegionType.BBOX
+              }
+            ],
+            resultJson: { results: [] },
+            status: AnnotationStatus.SUBMITTED,
+            submittedAt: createdAt,
+            user: annotatorOne,
+            userId: annotatorOne.id,
+            version: 1
+          },
+          {
+            createdAt,
+            leadTimeSeconds: 25,
+            regions: [
+              {
+                geometryJson: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+                label: "Truck",
+                type: AnnotationRegionType.BBOX
+              }
+            ],
+            resultJson: { results: [] },
+            status: AnnotationStatus.SUBMITTED,
+            submittedAt: createdAt,
+            user: annotatorTwo,
+            userId: annotatorTwo.id,
+            version: 1
+          }
+        ],
+        asset: {
+          fileName: "asset-1.png"
+        },
+        createdAt,
+        dataset,
+        dueAt: null,
+        id: "task-1",
+        priority: 7,
+        project,
+        reviews: [
+          {
+            id: "review-1",
+            status: ReviewStatus.NEEDS_CHANGES
+          }
+        ],
+        status: TaskStatus.REJECTED
+      },
+      {
+        annotations: [
+          {
+            createdAt,
+            leadTimeSeconds: 30,
+            regions: [
+              {
+                geometryJson: { x: 0.2, y: 0.2, width: 0.2, height: 0.2 },
+                label: "Car",
+                type: AnnotationRegionType.BBOX
+              }
+            ],
+            resultJson: { results: [] },
+            status: AnnotationStatus.SUBMITTED,
+            submittedAt: createdAt,
+            user: annotatorTwo,
+            userId: annotatorTwo.id,
+            version: 1
+          }
+        ],
+        asset: {
+          fileName: "asset-2.png"
+        },
+        createdAt,
+        dataset,
+        dueAt: null,
+        id: "task-2",
+        priority: 2,
+        project,
+        reviews: [],
+        status: TaskStatus.SUBMITTED
+      }
+    ];
+
+    const quality = summarizeReviewQuality(reviews, tasks);
+
+    assert.equal(quality.summary.reviewed, 2);
+    assert.equal(quality.sampling.reviewableTasks, 2);
+    assert.equal(quality.sampling.reviewedTasks, 1);
+    assert.equal(quality.sampling.pendingReview, 1);
+    assert.equal(quality.consensus.overlapTasks, 1);
+    assert.equal(quality.consensus.agreementRate, 0.5);
+    assert.equal(quality.rejectionReasons[0]?.label, "bad_boundary");
+    assert.equal(quality.datasets[0]?.name, "Training V1");
+    assert.equal(quality.samplingCandidates[0]?.taskId, "task-2");
+    assert.equal(quality.annotators.length, 2);
   });
 });
 

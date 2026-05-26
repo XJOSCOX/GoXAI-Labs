@@ -38,9 +38,18 @@ const dueFilterOptions: { label: string; value: TaskDueFilter }[] = [
   { label: "Due in 24h", value: "soon" },
   { label: "No due date", value: "none" }
 ];
+const qualityFilterOptions = [
+  { label: "Any quality flag", value: "" },
+  { label: "Needs review", value: "missing_review" },
+  { label: "Sampled for QA", value: "sampled" },
+  { label: "Disagreement", value: "disagreement" },
+  { label: "Rejected / fixes", value: "needs_fixes" },
+  { label: "Overdue", value: "overdue" }
+] as const;
 type ResolvedTaskQueueFilters = Omit<TaskQueueFilters, "assignment" | "due" | "search" | "status"> & {
   assignment: TaskAssignmentFilter;
   due: TaskDueFilter;
+  quality: NonNullable<TaskQueueFilters["quality"]>;
   search: string;
   status: string;
 };
@@ -53,8 +62,8 @@ export function TasksPage() {
   const queueMode = searchParams.get("queue") === "review" ? "review" : "work";
   const page = getPositivePage(searchParams.get("page"));
   const queueFilters = getQueueFilters(searchParams);
-  const projectFolders = useTaskFolders(!projectId && !datasetId ? session : null);
-  const datasetFolders = useTaskFolders(projectId && !datasetId ? session : null, { projectId });
+  const projectFolders = useTaskFolders(!projectId && !datasetId ? session : null, { queue: queueMode });
+  const datasetFolders = useTaskFolders(projectId && !datasetId ? session : null, { projectId, queue: queueMode });
   const taskPage = useTaskPage(datasetId ? session : null, {
     ...queueFilters,
     datasetId,
@@ -115,7 +124,7 @@ export function TasksPage() {
   function clearFilters() {
     const nextParams = new URLSearchParams(searchParams);
 
-    for (const key of ["assignment", "due", "minPriority", "search", "status"]) {
+    for (const key of ["assignment", "due", "minPriority", "quality", "search", "status"]) {
       nextParams.delete(key);
     }
 
@@ -207,6 +216,7 @@ export function TasksPage() {
               </div>
             </div>
             {assignmentMessage && <p className="form-success">{assignmentMessage}</p>}
+            {queueMode === "review" ? <ReviewWorkbenchLinks filters={queueFilters} onChange={handleFilterChange} /> : null}
             <TaskQueueFiltersBar filters={queueFilters} onChange={handleFilterChange} onClear={clearFilters} />
             <TasksTable
               detailQuery={getTaskDetailQuery}
@@ -221,9 +231,15 @@ export function TasksPage() {
             />
           </>
         ) : projectId ? (
-          <TaskDatasetFolders folders={datasetFolders.datasets} loading={datasetFolders.loading} project={datasetFolders.project} />
+          <TaskDatasetFolders
+            folders={datasetFolders.datasets}
+            loading={datasetFolders.loading}
+            mode={queueMode}
+            onModeChange={handleQueueModeChange}
+            project={datasetFolders.project}
+          />
         ) : (
-          <TaskProjectFolders folders={projectFolders.projects} loading={projectFolders.loading} />
+          <TaskProjectFolders folders={projectFolders.projects} loading={projectFolders.loading} mode={queueMode} onModeChange={handleQueueModeChange} />
         )}
       </section>
     </section>
@@ -240,7 +256,12 @@ function TaskQueueFiltersBar({
   onClear: () => void;
 }) {
   const hasFilters =
-    filters.assignment !== "all" || filters.due !== "any" || filters.minPriority !== undefined || filters.search !== "" || filters.status !== "";
+    filters.assignment !== "all" ||
+    filters.due !== "any" ||
+    filters.minPriority !== undefined ||
+    filters.quality !== "" ||
+    filters.search !== "" ||
+    filters.status !== "";
 
   return (
     <div className="task-queue-filters">
@@ -279,6 +300,13 @@ function TaskQueueFiltersBar({
           </option>
         ))}
       </select>
+      <select aria-label="Filter by quality flag" onChange={(event) => onChange("quality", event.currentTarget.value)} value={filters.quality}>
+        {qualityFilterOptions.map((option) => (
+          <option key={option.value || "all"} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
       <label className="compact-number-field">
         <span>Priority</span>
         <input
@@ -301,15 +329,70 @@ function TaskQueueFiltersBar({
   );
 }
 
-function TaskProjectFolders({ folders, loading }: { folders: TaskProjectFolderSummary[]; loading: boolean }) {
+function ReviewWorkbenchLinks({
+  filters,
+  onChange
+}: {
+  filters: ResolvedTaskQueueFilters;
+  onChange: (name: keyof TaskQueueFilters, value: string) => void;
+}) {
+  return (
+    <div className="review-workbench-links">
+      {qualityFilterOptions.slice(1).map((option) => (
+        <button
+          className={filters.quality === option.value ? "active" : ""}
+          key={option.value}
+          onClick={() => onChange("quality", filters.quality === option.value ? "" : option.value)}
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function QueueModeToggle({
+  mode,
+  onChange
+}: {
+  mode: "review" | "work";
+  onChange: (mode: "review" | "work") => void;
+}) {
+  return (
+    <div className="segmented-control compact-segmented">
+      <button className={mode === "work" ? "active" : ""} onClick={() => onChange("work")} type="button">
+        Work
+      </button>
+      <button className={mode === "review" ? "active" : ""} onClick={() => onChange("review")} type="button">
+        Review
+      </button>
+    </div>
+  );
+}
+
+function TaskProjectFolders({
+  folders,
+  loading,
+  mode,
+  onModeChange
+}: {
+  folders: TaskProjectFolderSummary[];
+  loading: boolean;
+  mode: "review" | "work";
+  onModeChange: (mode: "review" | "work") => void;
+}) {
   return (
     <section className="task-folder-panel">
       <div className="section-actions">
         <div>
-          <p className="eyebrow">Task folders</p>
-          <h2>Projects with tasks</h2>
+          <p className="eyebrow">{mode === "review" ? "Reviewer folders" : "Task folders"}</p>
+          <h2>{mode === "review" ? "Projects awaiting review" : "Projects with tasks"}</h2>
         </div>
-        <span className="muted-copy">Open a project folder to choose a dataset queue.</span>
+        <div className="task-folder-toolbar">
+          <span className="muted-copy">Open a project folder to choose a dataset queue.</span>
+          <QueueModeToggle mode={mode} onChange={onModeChange} />
+        </div>
       </div>
       {loading ? (
         <div className="empty-state">
@@ -320,7 +403,7 @@ function TaskProjectFolders({ folders, loading }: { folders: TaskProjectFolderSu
       ) : folders.length > 0 ? (
         <div className="task-folder-grid">
           {folders.map((folder) => (
-            <Link className="task-folder-card" key={folder.projectId} to={`/tasks?projectId=${folder.projectId}`}>
+            <Link className="task-folder-card" key={folder.projectId} to={buildTaskFolderLink({ mode, projectId: folder.projectId })}>
               <div className="task-folder-head">
                 <span className="task-folder-icon">
                   <FolderKanban size={22} />
@@ -374,27 +457,48 @@ function TaskProjectFolders({ folders, loading }: { folders: TaskProjectFolderSu
   );
 }
 
+function buildTaskFolderLink(input: { datasetId?: string; mode: "review" | "work"; projectId: string }) {
+  const params = new URLSearchParams({ projectId: input.projectId });
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.mode === "review") {
+    params.set("queue", "review");
+  }
+
+  return `/tasks?${params.toString()}`;
+}
+
 function TaskDatasetFolders({
   folders,
   loading,
+  mode,
+  onModeChange,
   project
 }: {
   folders: TaskDatasetFolderSummary[];
   loading: boolean;
+  mode: "review" | "work";
+  onModeChange: (mode: "review" | "work") => void;
   project: { id: string; name: string; slug: string; status: string } | null;
 }) {
   return (
     <section className="task-folder-panel">
-      <Link className="secondary-button compact-button task-back-button" to="/tasks">
+      <Link className="secondary-button compact-button task-back-button" to={mode === "review" ? "/tasks?queue=review" : "/tasks"}>
         <ArrowLeft size={16} />
         Back to project folders
       </Link>
       <div className="section-actions">
         <div>
-          <p className="eyebrow">Dataset folders</p>
+          <p className="eyebrow">{mode === "review" ? "Reviewer queue" : "Dataset folders"}</p>
           <h2>{project?.name ?? "Project"}</h2>
         </div>
-        <span className="muted-copy">Choose the dataset queue you want to work on.</span>
+        <div className="task-folder-toolbar">
+          <span className="muted-copy">Choose the dataset queue you want to work on.</span>
+          <QueueModeToggle mode={mode} onChange={onModeChange} />
+        </div>
       </div>
       {loading ? (
         <div className="empty-state">
@@ -408,7 +512,7 @@ function TaskDatasetFolders({
             <Link
               className="task-folder-card"
               key={folder.datasetId}
-              to={`/tasks?projectId=${project?.id ?? folder.projectId}&datasetId=${folder.datasetId}`}
+              to={buildTaskFolderLink({ datasetId: folder.datasetId, mode, projectId: project?.id ?? folder.projectId })}
             >
               <div className="task-folder-head">
                 <span className="task-folder-icon">
@@ -633,6 +737,13 @@ function TaskRow({
           {task.asset?.fileName ?? "No asset"}
         </Link>
         <small>{task.dataset?.name ?? task.project.name}</small>
+        {task.qualityFlags && task.qualityFlags.length > 0 ? (
+          <div className="task-quality-flags">
+            {task.qualityFlags.slice(0, 3).map((flag) => (
+              <span key={flag}>{formatEnum(flag)}</span>
+            ))}
+          </div>
+        ) : null}
       </span>
       <span>
         <span className="status-pill compact">{formatEnum(task.status)}</span>
@@ -685,11 +796,13 @@ function getQueueFilters(params: URLSearchParams): ResolvedTaskQueueFilters {
   const assignment = params.get("assignment");
   const due = params.get("due");
   const minPriority = Number(params.get("minPriority"));
+  const quality = params.get("quality");
 
   return {
     assignment: assignment === "mine" || assignment === "unassigned" ? assignment : "all",
     due: due === "overdue" || due === "soon" || due === "none" ? due : "any",
     minPriority: Number.isInteger(minPriority) && minPriority >= 0 && minPriority <= 10 ? minPriority : undefined,
+    quality: isQualityFilterValue(quality) ? quality : "",
     search: params.get("search") ?? "",
     status: params.get("status") ?? ""
   };
@@ -708,6 +821,10 @@ function appendQueueFiltersToParams(params: URLSearchParams, filters: ResolvedTa
     params.set("minPriority", String(filters.minPriority));
   }
 
+  if (filters.quality) {
+    params.set("quality", filters.quality);
+  }
+
   if (filters.search) {
     params.set("search", filters.search);
   }
@@ -715,6 +832,10 @@ function appendQueueFiltersToParams(params: URLSearchParams, filters: ResolvedTa
   if (filters.status) {
     params.set("status", filters.status);
   }
+}
+
+function isQualityFilterValue(value: string | null): value is NonNullable<TaskQueueFilters["quality"]> {
+  return value === "disagreement" || value === "missing_review" || value === "needs_fixes" || value === "overdue" || value === "sampled";
 }
 
 function formatTaskDueDate(value: string) {

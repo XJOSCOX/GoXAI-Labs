@@ -22,34 +22,8 @@ interface RequestWithLogContext extends AuthenticatedRequest {
 
 export function apiRequestLogger(request: RequestWithLogContext, response: Response, next: NextFunction) {
   const requestId = randomUUID();
-  const startedAt = performance.now();
   request.requestId = requestId;
   response.setHeader("X-Request-Id", requestId);
-
-  response.on("finish", () => {
-    const durationMs = Math.round(performance.now() - startedAt);
-
-    void saveAuditLog({
-      action: "api.request",
-      userId: request.currentUser?.id,
-      ipAddress: getClientIp(request),
-      userAgent: request.header("user-agent"),
-      metadata: {
-        requestId,
-        method: request.method,
-        path: request.path,
-        statusCode: response.statusCode,
-        durationMs,
-        ok: response.statusCode < 400,
-        contentLength: response.getHeader("content-length") ?? null,
-        origin: request.header("origin") ?? null,
-        referer: request.header("referer") ?? null,
-        query: sanitizeValue(request.query),
-        params: sanitizeValue(request.params),
-        body: sanitizeValue(request.body)
-      }
-    });
-  });
 
   next();
 }

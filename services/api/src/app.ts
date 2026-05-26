@@ -10,6 +10,7 @@ import { datasetsRouter } from "./datasets.js";
 import { exportsRouter } from "./exports.js";
 import { apiRequestLogger, logApiException } from "./logging.js";
 import { logsRouter } from "./logs.js";
+import { notificationsRouter } from "./notifications.js";
 import { organizationsRouter } from "./organizations.js";
 import { projectsRouter } from "./projects.js";
 import { tasksRouter } from "./tasks.js";
@@ -190,6 +191,7 @@ app.use("/api/applications", applicationsRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/annotation-templates", annotationTemplatesRouter);
 app.use("/api/logs", logsRouter);
+app.use("/api/notifications", notificationsRouter);
 
 app.use(
   (

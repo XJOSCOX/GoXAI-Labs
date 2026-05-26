@@ -4,14 +4,18 @@ import {
   AnnotationStatus,
   ExportStatus,
   getPrismaClient,
+  NotificationPreferenceEvent,
+  NotificationType,
   Prisma,
   ProjectStatus,
+  ReviewStatus,
   StorageProvider,
   TaskStatus
 } from "@goxai/database";
 import { Router } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import { getRequestId, saveAuditLog } from "./logging.js";
+import { createNotification } from "./notifications.js";
 import { canGenerateTasks } from "./permissions.js";
 import { createR2Client, getR2Config } from "./r2.js";
 
@@ -172,6 +176,9 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
 
     const client = createR2Client(config.value);
     const tasks = await loadApprovedExportTasks(access.project.id, access.dataset?.id);
+    const qualityGate = access.dataset
+      ? await buildDatasetExportQualityGate(access.dataset.id, access.dataset.metadata)
+      : null;
     await hydrateMissingImageDimensions(tasks, client, config.value.bucket);
     const exportPayload = buildApprovedAnnotationsExportPayload({
       dataset: access.dataset,
@@ -229,6 +236,8 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
             format: parsed.value.format,
             includeSourceFiles: parsed.value.includeSourceFiles,
             include: "approved_annotations",
+            manifest: exportPayload.manifest,
+            qualityGate,
             schemaVersion: exportPayload.schemaVersion,
             taskCount: exportPayload.taskCount,
             annotationCount: exportPayload.annotationCount
@@ -246,6 +255,8 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
             include: "approved_annotations",
             format: parsed.value.format,
             includeSourceFiles: parsed.value.includeSourceFiles,
+            manifest: exportPayload.manifest,
+            qualityGate,
             requestId: getRequestId(request),
             taskCount: exportPayload.taskCount,
             annotationCount: exportPayload.annotationCount,
@@ -270,9 +281,26 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         datasetId: access.dataset?.id,
         format: parsed.value.format,
         includeSourceFiles: parsed.value.includeSourceFiles,
+        manifest: exportPayload.manifest,
         outputAssetId: completed.outputAssetId,
         taskCount: exportPayload.taskCount,
         annotationCount: exportPayload.annotationCount
+      }
+    });
+
+    void createNotification({
+      event: NotificationPreferenceEvent.EXPORT_COMPLETED,
+      userId: user.id,
+      type: NotificationType.SUCCESS,
+      title: "Export ready",
+      message: `${formatExportScopeName(access)} ${parsed.value.format} export is ready to download.`,
+      metadata: {
+        actionUrl: access.dataset ? `/datasets/${access.dataset.id}` : `/projects/${access.project.id}`,
+        datasetId: access.dataset?.id ?? null,
+        exportId: completed.id,
+        format: parsed.value.format,
+        outputAssetId: completed.outputAssetId,
+        projectId: access.project.id
       }
     });
 
@@ -303,6 +331,20 @@ router.post("/", async (request: AuthenticatedRequest, response) => {
         requestId: getRequestId(request),
         datasetId: access.dataset?.id,
         error: failed.errorMessage
+      }
+    });
+
+    void createNotification({
+      event: NotificationPreferenceEvent.EXPORT_FAILED,
+      userId: user.id,
+      type: NotificationType.ERROR,
+      title: "Export failed",
+      message: failed.errorMessage ?? "Unable to create export.",
+      metadata: {
+        actionUrl: access.dataset ? `/datasets/${access.dataset.id}` : `/projects/${access.project.id}`,
+        datasetId: access.dataset?.id ?? null,
+        exportId: failed.id,
+        projectId: access.project.id
       }
     });
 
@@ -556,7 +598,7 @@ type ApprovedExportTask = {
     width: number | null;
   } | null;
   id: string;
-  metadata: unknown;
+  metadata?: unknown;
   reviews: {
     feedback: string | null;
     id: string;
@@ -585,6 +627,7 @@ type ExportScopeDataset = {
   id: string;
   name: string;
   version: number;
+  metadata?: unknown;
   labelingConfig: unknown;
   labels: {
     color: string;
@@ -651,6 +694,10 @@ function parseExportFormat(value: unknown): ExportFormat | null {
   return normalized in exportFormats ? (normalized as ExportFormat) : null;
 }
 
+function formatExportScopeName(input: { dataset: { name: string } | null; project: { name: string } }) {
+  return input.dataset?.name ?? input.project.name;
+}
+
 async function getExportScopeAccess(
   userId: string,
   input: { datasetId?: string; projectId?: string }
@@ -675,6 +722,7 @@ async function getExportScopeAccess(
         id: true,
         name: true,
         version: true,
+        metadata: true,
         labelingConfig: true,
         labels: {
           orderBy: {
@@ -728,6 +776,7 @@ async function getExportScopeAccess(
         id: dataset.id,
         labelingConfig: dataset.labelingConfig,
         labels: dataset.labels,
+        metadata: dataset.metadata,
         name: dataset.name,
         tools: dataset.tools.map((tool) => ({
           ...tool,
@@ -829,6 +878,94 @@ async function loadApprovedExportTasks(projectId: string, datasetId?: string) {
   });
 }
 
+async function buildDatasetExportQualityGate(datasetId: string, metadata: unknown) {
+  const policy = readDatasetExportQualityPolicy(metadata);
+  const prisma = getPrismaClient();
+  const [taskCounts, reviews] = await Promise.all([
+    prisma.task.groupBy({
+      by: ["status"],
+      where: {
+        datasetId
+      },
+      _count: {
+        _all: true
+      }
+    }),
+    prisma.review.findMany({
+      where: {
+        task: {
+          datasetId
+        }
+      },
+      select: {
+        score: true,
+        status: true
+      },
+      take: 1000
+    })
+  ]);
+  const approved = reviews.filter((review) => review.status === ReviewStatus.APPROVED).length;
+  const rejected = reviews.filter((review) => review.status === ReviewStatus.NEEDS_CHANGES || review.status === ReviewStatus.REJECTED).length;
+  const scored = reviews.filter((review) => typeof review.score === "number");
+  const reviewableTasks = taskCounts
+    .filter((group) => group.status === TaskStatus.SUBMITTED || group.status === TaskStatus.APPROVED || group.status === TaskStatus.REJECTED)
+    .reduce((total, group) => total + group._count._all, 0);
+  const reviewedTasks = taskCounts
+    .filter((group) => group.status === TaskStatus.APPROVED || group.status === TaskStatus.REJECTED)
+    .reduce((total, group) => total + group._count._all, 0);
+  const acceptanceRate = reviews.length > 0 ? approved / reviews.length : 0;
+  const samplingRate = reviewableTasks > 0 ? reviewedTasks / reviewableTasks : 0;
+  const averageScore = scored.length > 0
+    ? scored.reduce((total, review) => total + (review.score ?? 0), 0) / scored.length
+    : null;
+  const qualityScore = Math.round(
+    Math.max(0, Math.min(1, acceptanceRate * 0.55 + (averageScore !== null ? averageScore / 5 : acceptanceRate) * 0.25 + samplingRate * 0.2)) * 100
+  );
+  const warnings = [];
+
+  if (qualityScore < policy.minQualityScore) {
+    warnings.push(`Quality score ${qualityScore}/100 is below ${policy.minQualityScore}/100.`);
+  }
+
+  if (samplingRate < policy.samplingTargetRate) {
+    warnings.push(`Sampling coverage ${Math.round(samplingRate * 100)}% is below ${Math.round(policy.samplingTargetRate * 100)}%.`);
+  }
+
+  return {
+    acceptanceRate,
+    approvedReviews: approved,
+    averageScore,
+    minQualityScore: policy.minQualityScore,
+    qualityScore,
+    rejectedReviews: rejected,
+    samplingRate,
+    samplingTargetRate: policy.samplingTargetRate,
+    warnings
+  };
+}
+
+function readDatasetExportQualityPolicy(metadata: unknown) {
+  const policy = isPlainObject(metadata) && isPlainObject(metadata.qualityPolicy) ? metadata.qualityPolicy : {};
+
+  return {
+    minQualityScore: getQualityScorePolicyNumber(policy.minQualityScore, 75),
+    samplingTargetRate: getQualityPolicyPercent(policy.samplingTargetRate, 0.2)
+  };
+}
+
+function getQualityPolicyPercent(value: unknown, fallback: number) {
+  const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
+  const normalized = numeric > 1 ? numeric / 100 : numeric;
+
+  return Number.isFinite(normalized) && normalized >= 0 && normalized <= 1 ? normalized : fallback;
+}
+
+function getQualityScorePolicyNumber(value: unknown, fallback: number) {
+  const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : fallback;
+
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 100 ? numeric : fallback;
+}
+
 async function hydrateMissingImageDimensions(tasks: ApprovedExportTask[], client: ReturnType<typeof createR2Client>, fallbackBucket: string) {
   const missingImageTasks = tasks.filter((task) => task.asset?.mimeType.startsWith("image/") && (!task.asset.width || !task.asset.height));
 
@@ -905,9 +1042,19 @@ export function buildApprovedAnnotationsExportPayload(input: {
     })),
     status: task.status
   }));
+  const annotationCount = tasks.reduce((total, task) => total + task.annotations.length, 0);
+  const exportedAt = input.exportedAt.toISOString();
+  const manifest = buildApprovedExportManifest({
+    annotationCount,
+    dataset: input.dataset,
+    exportedAt,
+    exportJobId: input.exportJobId,
+    project: input.project,
+    taskCount: tasks.length
+  });
 
   return {
-    annotationCount: tasks.reduce((total, task) => total + task.annotations.length, 0),
+    annotationCount,
     dataset: input.dataset
       ? {
           id: input.dataset.id,
@@ -919,9 +1066,10 @@ export function buildApprovedAnnotationsExportPayload(input: {
         }
       : null,
     exportJobId: input.exportJobId,
-    exportedAt: input.exportedAt.toISOString(),
+    exportedAt,
     format: "JSON",
     include: "approved_annotations",
+    manifest,
     project: {
       id: input.project.id,
       name: input.project.name,
@@ -1390,8 +1538,41 @@ function readTextOffset(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
+function buildApprovedExportManifest(input: {
+  annotationCount: number;
+  dataset: ExportScopeDataset;
+  exportedAt: string;
+  exportJobId: string;
+  project: ExportScopeProject;
+  taskCount: number;
+}) {
+  return {
+    annotationCount: input.annotationCount,
+    annotationStatuses: ["ACCEPTED"],
+    dataset: input.dataset
+      ? {
+          id: input.dataset.id,
+          name: input.dataset.name,
+          version: input.dataset.version
+        }
+      : null,
+    exportJobId: input.exportJobId,
+    exportedAt: input.exportedAt,
+    include: "approved_annotations",
+    project: {
+      id: input.project.id,
+      name: input.project.name,
+      slug: input.project.slug
+    },
+    schemaVersion: 1,
+    taskCount: input.taskCount,
+    taskStatuses: ["APPROVED"]
+  };
+}
+
 function buildImageExportManifest(payload: ApprovedAnnotationsExportPayload, tasks: ImageExportTask[], format: string, imageFileNameByTaskId = buildImageFileNameMap(tasks)) {
   return {
+    ...payload.manifest,
     dataset: payload.dataset
       ? {
           id: payload.dataset.id,

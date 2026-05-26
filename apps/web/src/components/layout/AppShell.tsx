@@ -1,4 +1,4 @@
-import { BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, ListChecks, LogOut, ShieldCheck, UserRound } from "lucide-react";
+import { Activity, BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, ListChecks, LogOut, ShieldCheck, Star, UserRound } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import goxaiLogo from "../../assets/goxailab-logo.png";
@@ -6,6 +6,7 @@ import verifiedBadge from "../../assets/verified.png";
 import { useOrganizations } from "../../hooks/useResources";
 import { formatEnum, getInitials } from "../../utils/format";
 import { LoadingScreen } from "./LoadingScreen";
+import { NotificationCenter } from "./NotificationCenter";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function AppShell() {
@@ -85,6 +86,18 @@ export function AppShell() {
             <ClipboardList size={18} />
             Tasks
           </NavLink>
+          {canUseDatasetWorkspace && (
+            <NavLink to="/quality">
+              <Star size={18} />
+              Quality
+            </NavLink>
+          )}
+          {canUseDatasetWorkspace && (
+            <NavLink to="/audit">
+              <Activity size={18} />
+              Audit
+            </NavLink>
+          )}
           {dbUser?.globalRole === "SUPER_ADMIN" && (
             <NavLink to="/admin">
               <ShieldCheck size={18} />
@@ -110,6 +123,7 @@ export function AppShell() {
             <h1>{topbarTitle.title}</h1>
           </div>
           <div className="topbar-actions">
+            <NotificationCenter />
             <ThemeToggle />
             <span className="status-pill">
               <CheckCircle2 size={16} />
@@ -180,6 +194,14 @@ function getTopbarTitle(pathname: string) {
 
   if (normalizedPathname.startsWith("/tasks/")) {
     return { eyebrow: "Tasks", title: "Task workspace" };
+  }
+
+  if (normalizedPathname === "/quality") {
+    return { eyebrow: "Quality", title: "Quality dashboard" };
+  }
+
+  if (normalizedPathname === "/audit") {
+    return { eyebrow: "Audit", title: "Activity log" };
   }
 
   if (normalizedPathname === "/account") {

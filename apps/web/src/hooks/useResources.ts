@@ -423,7 +423,7 @@ export function useTaskPage(
 
 export function useTaskFolders(
   session: ReturnType<typeof useAuth>["session"],
-  input: { projectId?: string } = {}
+  input: { projectId?: string; queue?: "review" | "work" } = {}
 ) {
   const sessionRef = useLatestSessionRef(session);
   const sessionKey = getSessionKey(session);
@@ -456,7 +456,7 @@ export function useTaskFolders(
     } finally {
       setLoading(false);
     }
-  }, [input.projectId, sessionKey, sessionRef]);
+  }, [input.projectId, input.queue, sessionKey, sessionRef]);
 
   useEffect(() => {
     void reload();

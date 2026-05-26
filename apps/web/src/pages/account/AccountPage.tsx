@@ -1,9 +1,12 @@
-import { CheckCircle2, KeyRound, Send, Save, ShieldCheck, UserRound } from "lucide-react";
+import { Bell, CheckCircle2, KeyRound, Send, Save, ShieldCheck, UserRound } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import {
+  getNotificationPreferences,
   getMyApplications,
   submitCreatorApplication,
   submitVerificationApplication,
+  updateNotificationPreferences,
+  type NotificationPreferenceSummary,
   type UserApplicationSummary
 } from "../../api";
 import { useAuth } from "../../auth";
@@ -14,6 +17,8 @@ export function AccountPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applicationsLoading, setApplicationsLoading] = useState(false);
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferenceSummary[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [verificationApplication, setVerificationApplication] = useState<UserApplicationSummary | null>(null);
   const [creatorApplication, setCreatorApplication] = useState<UserApplicationSummary | null>(null);
 
@@ -46,6 +51,40 @@ export function AccountPage() {
     }
 
     void loadApplications();
+
+    return () => {
+      mounted = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadNotificationPreferences() {
+      if (!session) {
+        return;
+      }
+
+      setNotificationsLoading(true);
+
+      try {
+        const preferences = await getNotificationPreferences(session);
+
+        if (mounted) {
+          setNotificationPreferences(preferences);
+        }
+      } catch (reason) {
+        if (mounted) {
+          setError(reason instanceof Error ? reason.message : "Unable to load notification preferences.");
+        }
+      } finally {
+        if (mounted) {
+          setNotificationsLoading(false);
+        }
+      }
+    }
+
+    void loadNotificationPreferences();
 
     return () => {
       mounted = false;
@@ -125,6 +164,32 @@ export function AccountPage() {
     }
   }
 
+  async function handleNotificationPreferenceChange(event: string, field: "email" | "inApp", checked: boolean) {
+    if (!session) {
+      setError("Authentication required.");
+      return;
+    }
+
+    const nextPreferences = notificationPreferences.map((preference) =>
+      preference.event === event ? { ...preference, [field]: checked } : preference
+    );
+
+    setNotificationPreferences(nextPreferences);
+    setMessage(null);
+    setError(null);
+    setNotificationsLoading(true);
+
+    try {
+      const saved = await updateNotificationPreferences(session, nextPreferences);
+      setNotificationPreferences(saved);
+      setMessage("Notification preferences updated.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to update notification preferences.");
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }
+
   if (!dbUser) {
     return (
       <div className="page-stack account-page">
@@ -176,6 +241,48 @@ export function AccountPage() {
         </form>
 
         <aside className="content-column">
+          <section className="panel notification-preferences-panel">
+            <div className="account-code-head">
+              <Bell size={18} />
+              <div>
+                <p className="eyebrow">Notifications</p>
+                <h2>Notification preferences</h2>
+              </div>
+            </div>
+            <p className="muted-copy">Choose which workflow events should appear in the app. Email is saved for future delivery support.</p>
+            <div className="notification-preference-list">
+              {notificationPreferences.map((preference) => (
+                <article className="notification-preference-row" key={preference.event}>
+                  <div>
+                    <strong>{preference.label}</strong>
+                    <small>{preference.description}</small>
+                  </div>
+                  <label className="toggle-row compact-toggle">
+                    <input
+                      checked={preference.inApp}
+                      disabled={notificationsLoading}
+                      onChange={(event) => void handleNotificationPreferenceChange(preference.event, "inApp", event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    In app
+                  </label>
+                  <label className="toggle-row compact-toggle">
+                    <input
+                      checked={preference.email}
+                      disabled={notificationsLoading}
+                      onChange={(event) => void handleNotificationPreferenceChange(preference.event, "email", event.currentTarget.checked)}
+                      type="checkbox"
+                    />
+                    Email
+                  </label>
+                </article>
+              ))}
+              {notificationPreferences.length === 0 && (
+                <p className="empty-state compact-empty">No notification preferences are available yet.</p>
+              )}
+            </div>
+          </section>
+
           <section className="panel">
             <div className="account-status">
               <span className="account-status-icon">

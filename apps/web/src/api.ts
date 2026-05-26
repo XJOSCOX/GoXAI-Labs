@@ -28,6 +28,34 @@ export interface BackendConfig {
   };
 }
 
+export interface NotificationSummary {
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  message: string | null;
+  readAt: string | null;
+  metadata: Record<string, unknown> | null;
+  actionUrl: string | null;
+  actionLabel: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NotificationsResult {
+  notifications: NotificationSummary[];
+  unreadCount: number;
+}
+
+export interface NotificationPreferenceSummary {
+  description: string;
+  email: boolean;
+  event: string;
+  inApp: boolean;
+  label: string;
+  updatedAt: string | null;
+}
+
 export interface UserApplicationSummary {
   id: string;
   userId: string;
@@ -587,6 +615,7 @@ export interface TaskSummary {
   priority: number;
   assignedToId: string | null;
   reviewerId: string | null;
+  qualityFlags?: string[];
   metadata: Record<string, unknown> | null;
   dueAt: string | null;
   project: {
@@ -722,6 +751,35 @@ export interface ReviewTaskResult {
   task: TaskSummary;
 }
 
+export interface AuditLogSummary {
+  action: string;
+  createdAt: string;
+  entityId: string | null;
+  entityType: string | null;
+  id: string;
+  metadata: Record<string, unknown> | null;
+  project: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  projectId: string | null;
+  user: {
+    id: string;
+    email: string;
+    name: string;
+  } | null;
+  userId: string | null;
+}
+
+export interface AuditLogsResult {
+  logs: AuditLogSummary[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface SaveAnnotationInput {
   leadTimeSeconds?: number;
   results?: {
@@ -786,9 +844,14 @@ export interface TaskWorkflowInput {
   assignmentMode?: "round_robin" | "single" | "unassigned";
   assignedToId?: string | null;
   assigneeIds?: string[];
+  autoSampleReview?: boolean;
   dueAt?: string | null;
+  minAgreementRate?: number;
+  minQualityScore?: number;
   priority?: number;
+  requireConsensusBeforeApproval?: boolean;
   reviewerId?: string | null;
+  samplingTargetRate?: number;
   saveDefaults?: boolean;
 }
 
@@ -807,6 +870,7 @@ export interface TaskQueueFilters {
   assignment?: TaskAssignmentFilter;
   due?: TaskDueFilter;
   minPriority?: number;
+  quality?: "disagreement" | "missing_review" | "needs_fixes" | "overdue" | "sampled" | "";
   search?: string;
   status?: string;
 }
@@ -865,6 +929,102 @@ export interface TaskStatsSummary {
   review: number;
   total: number;
   unassigned: number;
+}
+
+export interface QualityStatsResult {
+  annotators: QualityPersonStats[];
+  consensus: {
+    agreementRate: number | null;
+    comparedPairs: number;
+    labelAgreementRate: number | null;
+    overlapTasks: number;
+  };
+  datasets: QualityDatasetScore[];
+  disagreements: QualityDisagreementSummary[];
+  rejectionReasons: QualityReasonStats[];
+  reasons: QualityCount[];
+  reviewers: QualityPersonStats[];
+  sampling: {
+    pendingReview: number;
+    reviewableTasks: number;
+    reviewedTasks: number;
+    sampleRate: number;
+    targetRate: number;
+  };
+  samplingCandidates: QualitySamplingCandidate[];
+  severity: QualityCount[];
+  summary: {
+    acceptanceRate: number;
+    approved: number;
+    averageScore: number | null;
+    datasetQualityScore: number;
+    rejected: number;
+    reviewed: number;
+  };
+  trend: Array<{
+    approved: number;
+    date: string;
+    rejected: number;
+    total: number;
+  }>;
+}
+
+export interface QualityPersonStats {
+  acceptanceRate: number;
+  approved: number;
+  averageLeadTimeSeconds: number | null;
+  averageScore: number | null;
+  id: string;
+  name: string;
+  qualityScore: number;
+  rejected: number;
+  rejectionRate: number;
+  reviewed: number;
+  submitted: number;
+  total: number;
+}
+
+export interface QualityCount {
+  count: number;
+  label: string;
+}
+
+export interface QualityReasonStats extends QualityCount {
+  share: number;
+}
+
+export interface QualityDatasetScore {
+  acceptanceRate: number | null;
+  agreementRate: number | null;
+  approved: number;
+  averageScore: number | null;
+  id: string | null;
+  name: string;
+  qualityScore: number;
+  rejected: number;
+  reviewed: number;
+  samplingRate: number | null;
+  totalTasks: number;
+}
+
+export interface QualitySamplingCandidate {
+  assetName: string;
+  datasetId: string | null;
+  datasetName: string;
+  dueAt: string | null;
+  priority: number;
+  status: string;
+  taskId: string;
+}
+
+export interface QualityDisagreementSummary {
+  agreementRate: number;
+  annotators: string[];
+  assetName: string;
+  datasetId: string | null;
+  datasetName: string;
+  labelAgreementRate: number;
+  taskId: string;
 }
 
 export interface ClientLogInput {
@@ -1781,11 +1941,15 @@ export async function listTaskPage(
   return (await response.json()) as TaskPageResult;
 }
 
-export async function listTaskFolders(session: Session, input: { projectId?: string } = {}) {
+export async function listTaskFolders(session: Session, input: { projectId?: string; queue?: "review" | "work" } = {}) {
   const params = new URLSearchParams();
 
   if (input.projectId) {
     params.set("projectId", input.projectId);
+  }
+
+  if (input.queue === "review") {
+    params.set("queue", "review");
   }
 
   const query = params.toString();
@@ -1819,6 +1983,27 @@ export async function getTaskStats(session: Session, input: { datasetId?: string
   return ((await response.json()) as { stats: TaskStatsSummary }).stats;
 }
 
+export async function getQualityStats(session: Session, input: { datasetId?: string; projectId?: string } = {}) {
+  const params = new URLSearchParams();
+
+  if (input.datasetId) {
+    params.set("datasetId", input.datasetId);
+  }
+
+  if (input.projectId) {
+    params.set("projectId", input.projectId);
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/tasks/quality${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load quality stats."));
+  }
+
+  return ((await response.json()) as { quality: QualityStatsResult }).quality;
+}
+
 export async function getTask(session: Session, taskId: string) {
   const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}`);
 
@@ -1845,7 +2030,7 @@ export async function addTaskComment(session: Session, taskId: string, input: { 
 export async function reviewTask(
   session: Session,
   taskId: string,
-  input: { decision: "approve" | "reject"; feedback?: string }
+  input: { decision: "approve" | "reject"; feedback?: string; reason?: string; score?: number | null; severity?: string }
 ) {
   const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/review`, {
     method: "POST",
@@ -1857,6 +2042,37 @@ export async function reviewTask(
   }
 
   return (await response.json()) as ReviewTaskResult;
+}
+
+export async function listAuditLogs(
+  session: Session,
+  input: {
+    action?: string;
+    datasetId?: string;
+    entityId?: string;
+    entityType?: string;
+    page?: number;
+    pageSize?: number;
+    projectId?: string;
+    taskId?: string;
+    userId?: string;
+  } = {}
+) {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      params.set(key, String(value));
+    }
+  }
+
+  const response = await authenticatedFetch(session, `/api/logs/audit${params.toString() ? `?${params.toString()}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load audit activity."));
+  }
+
+  return (await response.json()) as AuditLogsResult;
 }
 
 export async function getNextTask(
@@ -2278,6 +2494,80 @@ export async function logClientEvent(session: Session, input: ClientLogInput) {
   }
 }
 
+export async function listNotifications(
+  session: Session,
+  input: { pageSize?: number; unreadOnly?: boolean } = {}
+) {
+  const params = new URLSearchParams();
+
+  if (input.pageSize) {
+    params.set("pageSize", String(input.pageSize));
+  }
+
+  if (input.unreadOnly) {
+    params.set("unreadOnly", "true");
+  }
+
+  const query = params.toString();
+  const response = await authenticatedFetch(session, `/api/notifications${query ? `?${query}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load notifications."));
+  }
+
+  return (await response.json()) as NotificationsResult;
+}
+
+export async function markNotificationRead(session: Session, notificationId: string) {
+  const response = await authenticatedFetch(session, `/api/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: "PATCH"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update notification."));
+  }
+
+  return ((await response.json()) as { notification: NotificationSummary }).notification;
+}
+
+export async function markAllNotificationsRead(session: Session) {
+  const response = await authenticatedFetch(session, "/api/notifications/mark-all-read", {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update notifications."));
+  }
+
+  return (await response.json()) as { updatedCount: number };
+}
+
+export async function getNotificationPreferences(session: Session) {
+  const response = await authenticatedFetch(session, "/api/notifications/preferences");
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load notification preferences."));
+  }
+
+  return ((await response.json()) as { preferences: NotificationPreferenceSummary[] }).preferences;
+}
+
+export async function updateNotificationPreferences(
+  session: Session,
+  preferences: Array<{ email: boolean; event: string; inApp: boolean }>
+) {
+  const response = await authenticatedFetch(session, "/api/notifications/preferences", {
+    method: "PATCH",
+    body: JSON.stringify({ preferences })
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update notification preferences."));
+  }
+
+  return ((await response.json()) as { preferences: NotificationPreferenceSummary[] }).preferences;
+}
+
 function authenticatedFetch(session: Session, path: string, init: RequestInit = {}) {
   return fetch(`${apiUrl}${path}`, {
     ...init,
@@ -2300,6 +2590,10 @@ function appendTaskQueueFilters(params: URLSearchParams, input: TaskQueueFilters
 
   if (typeof input.minPriority === "number" && Number.isFinite(input.minPriority)) {
     params.set("minPriority", String(input.minPriority));
+  }
+
+  if (input.quality?.trim()) {
+    params.set("quality", input.quality.trim());
   }
 
   if (input.search?.trim()) {

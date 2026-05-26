@@ -4,6 +4,8 @@ import {
   AnnotationStatus,
   getPrismaClient,
   MembershipRole,
+  NotificationPreferenceEvent,
+  NotificationType,
   Prisma,
   ProjectAccessMode,
   ProjectStatus,
@@ -15,6 +17,7 @@ import { Router, type Response } from "express";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "./auth.js";
 import { recordDatasetVersionChange } from "./datasets.js";
 import { getRequestId } from "./logging.js";
+import { createNotification, createNotifications, type NotificationInput } from "./notifications.js";
 import { canGenerateTasks, canReviewTasks, canWorkTasks } from "./permissions.js";
 
 const router = Router();
@@ -47,6 +50,156 @@ router.get("/stats", async (request: AuthenticatedRequest, response) => {
   });
 });
 
+router.get("/quality", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.query.datasetId);
+  const projectId = normalizeId(request.query.projectId);
+  const prisma = getPrismaClient();
+  const scope = await getTaskAccessScope(user.id);
+  const where = {
+    task: buildVisibleTaskWhere(scope, { datasetId, projectId })
+  };
+  const [reviews, tasks] = await Promise.all([
+    prisma.review.findMany({
+      where,
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: 1000,
+      include: {
+        annotation: {
+          select: {
+            id: true,
+            leadTimeSeconds: true,
+            status: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true
+              }
+            },
+            version: true
+          }
+        },
+        reviewer: {
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true
+          }
+        },
+        task: {
+          select: {
+            id: true,
+            dataset: {
+              select: {
+                id: true,
+                name: true
+              }
+            },
+            project: {
+              select: {
+                id: true,
+                name: true
+              }
+            }
+          }
+        }
+      }
+    }),
+    prisma.task.findMany({
+      where: buildVisibleTaskWhere(scope, { datasetId, projectId }),
+      orderBy: [
+        {
+          priority: "desc"
+        },
+        {
+          createdAt: "asc"
+        }
+      ],
+      take: 1500,
+      select: {
+        id: true,
+        createdAt: true,
+        dueAt: true,
+        priority: true,
+        status: true,
+        asset: {
+          select: {
+            fileName: true
+          }
+        },
+        dataset: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
+        project: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
+        annotations: {
+          where: {
+            status: {
+              in: [AnnotationStatus.SUBMITTED, AnnotationStatus.ACCEPTED, AnnotationStatus.REJECTED]
+            }
+          },
+          orderBy: {
+            createdAt: "desc"
+          },
+          select: {
+            id: true,
+            createdAt: true,
+            leadTimeSeconds: true,
+            resultJson: true,
+            status: true,
+            submittedAt: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true
+              }
+            },
+            userId: true,
+            version: true,
+            regions: {
+              select: {
+                geometryJson: true,
+                label: true,
+                type: true
+              }
+            }
+          }
+        },
+        reviews: {
+          select: {
+            id: true,
+            status: true
+          }
+        }
+      }
+    })
+  ]);
+
+  response.status(200).json({
+    quality: summarizeReviewQuality(reviews, tasks)
+  });
+});
+
 router.get("/folders", async (request: AuthenticatedRequest, response) => {
   const user = request.currentUser;
 
@@ -56,6 +209,7 @@ router.get("/folders", async (request: AuthenticatedRequest, response) => {
   }
 
   const projectId = normalizeId(request.query.projectId);
+  const queue = normalizeShortText(request.query.queue, 40);
   const prisma = getPrismaClient();
   const scope = await getTaskAccessScope(user.id);
 
@@ -78,7 +232,9 @@ router.get("/folders", async (request: AuthenticatedRequest, response) => {
       return;
     }
 
-    const where = buildVisibleTaskWhere(scope, { projectId });
+    const where = queue === "review"
+      ? buildReviewTaskWhere(scope, { projectId })
+      : buildVisibleTaskWhere(scope, { projectId });
     const [statusGroups, datasets] = await Promise.all([
       prisma.task.groupBy({
         by: ["datasetId", "status", "assignedToId"],
@@ -112,7 +268,7 @@ router.get("/folders", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
-  const where = buildVisibleTaskWhere(scope);
+  const where = queue === "review" ? buildReviewTaskWhere(scope) : buildVisibleTaskWhere(scope);
   const [statusGroups, datasetGroups] = await Promise.all([
     prisma.task.groupBy({
       by: ["projectId", "status", "assignedToId"],
@@ -315,6 +471,13 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
     return;
   }
 
+  const qualityPolicy = parseDatasetQualityPolicyBody(request.body, readDatasetQualityPolicy(dataset.metadata));
+
+  if (!qualityPolicy.ok) {
+    response.status(400).json({ error: qualityPolicy.error });
+    return;
+  }
+
   const membership = await getEffectiveProjectMembership(user.id, dataset.projectId, dataset.organizationId);
 
   if (!membership || !canGenerateTasks(membership)) {
@@ -384,7 +547,8 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
             dueAt: workflowDefaults.value.dueAt,
             metadata: {
               source: "dataset-generation",
-              fileName: asset.fileName
+              fileName: asset.fileName,
+              ...getGeneratedTaskQualityMetadata(qualityPolicy.value, index)
             }
           };
         })
@@ -396,7 +560,10 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
             id: dataset.id
           },
           data: {
-            metadata: mergeDatasetTaskWorkflowDefaults(dataset.metadata, workflowDefaults.value)
+            metadata: mergeDatasetQualityPolicyDefaults(
+              mergeDatasetTaskWorkflowDefaults(dataset.metadata, workflowDefaults.value),
+              qualityPolicy.value
+            )
           }
         });
       }
@@ -415,6 +582,7 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
             createdCount: assetsToCreate.length,
             remainingCount,
             requestedQuantity: quantity ?? "all",
+            qualityPolicy: serializeDatasetQualityPolicy(qualityPolicy.value),
             skippedCount: existingAssetIds.size,
             workflow: serializeDatasetTaskWorkflowDefaults(workflowDefaults.value)
           }
@@ -430,11 +598,21 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
           requestedQuantity: quantity ?? "all",
           skippedCount: existingAssetIds.size,
           savedWorkflowDefaults: workflowDefaults.saveDefaults,
+          qualityPolicy: serializeDatasetQualityPolicy(qualityPolicy.value),
           workflow: serializeDatasetTaskWorkflowDefaults(workflowDefaults.value)
         },
         userId: user.id
       });
     });
+
+    void createNotifications(
+      buildTaskAssignmentNotifications({
+        assignmentCounts: countDatasetWorkflowAssignees(workflowDefaults.value, assetsToCreate.length),
+        dataset,
+        projectId: dataset.projectId,
+        title: "Dataset tasks assigned"
+      })
+    );
   }
 
   if (assetsToCreate.length === 0 && workflowDefaults.saveDefaults) {
@@ -443,7 +621,10 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
         id: dataset.id
       },
       data: {
-        metadata: mergeDatasetTaskWorkflowDefaults(dataset.metadata, workflowDefaults.value)
+        metadata: mergeDatasetQualityPolicyDefaults(
+          mergeDatasetTaskWorkflowDefaults(dataset.metadata, workflowDefaults.value),
+          qualityPolicy.value
+        )
       }
     });
   }
@@ -522,6 +703,13 @@ router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response
     return;
   }
 
+  const qualityPolicy = parseDatasetQualityPolicyBody(request.body, readDatasetQualityPolicy(dataset.metadata));
+
+  if (!qualityPolicy.ok) {
+    response.status(400).json({ error: qualityPolicy.error });
+    return;
+  }
+
   const activeStatuses = [TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS, TaskStatus.REJECTED];
   const result = await prisma.$transaction(async (tx) => {
     const activeTasks = await tx.task.findMany({
@@ -537,6 +725,7 @@ router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response
         status: true
       }
     });
+    const assignmentCounts = countDatasetWorkflowAssignees(parsed.value, activeTasks.length);
 
     if (parsed.value.assignmentMode === "round_robin") {
       await Promise.all(
@@ -600,7 +789,10 @@ router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response
           id: dataset.id
         },
         data: {
-          metadata: mergeDatasetTaskWorkflowDefaults(dataset.metadata, parsed.value)
+          metadata: mergeDatasetQualityPolicyDefaults(
+            mergeDatasetTaskWorkflowDefaults(dataset.metadata, parsed.value),
+            qualityPolicy.value
+          )
         }
       });
     }
@@ -618,6 +810,7 @@ router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response
             requestId: getRequestId(request),
             changes: serializeDatasetTaskWorkflowDefaults(parsed.value),
             datasetName: dataset.name,
+            qualityPolicy: serializeDatasetQualityPolicy(qualityPolicy.value),
             savedWorkflowDefaults: parsed.saveDefaults,
             updatedCount: activeTasks.length
           }
@@ -629,6 +822,7 @@ router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response
         reason: "task_workflow_updated",
         summary: {
           savedWorkflowDefaults: parsed.saveDefaults,
+          qualityPolicy: serializeDatasetQualityPolicy(qualityPolicy.value),
           updatedCount: activeTasks.length
         },
         userId: user.id
@@ -636,9 +830,21 @@ router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response
     }
 
     return {
+      assignmentCounts,
       count: activeTasks.length
     };
   });
+
+  if (result.count > 0) {
+    void createNotifications(
+      buildTaskAssignmentNotifications({
+        assignmentCounts: result.assignmentCounts,
+        dataset,
+        projectId: dataset.projectId,
+        title: "Dataset task config applied"
+      })
+    );
+  }
 
   const tasks = await prisma.task.findMany({
     where: {
@@ -987,6 +1193,28 @@ router.patch("/:taskId/workflow", async (request: AuthenticatedRequest, response
     return saved;
   });
 
+  if (parsed.value.assignedToId && parsed.value.assignedToId !== task.assignedToId && parsed.value.assignedToId !== user.id) {
+    void createNotification({
+      event: NotificationPreferenceEvent.TASK_ASSIGNED,
+      userId: parsed.value.assignedToId,
+      type: NotificationType.TASK_ASSIGNED,
+      title: "Task assigned",
+      message: `${getTaskAssetName(updatedTask)} is ready for labeling.`,
+      metadata: buildTaskNotificationMetadata(updatedTask)
+    });
+  }
+
+  if (parsed.value.reviewerId && parsed.value.reviewerId !== task.reviewerId && parsed.value.reviewerId !== user.id) {
+    void createNotification({
+      event: NotificationPreferenceEvent.REVIEW_REQUESTED,
+      userId: parsed.value.reviewerId,
+      type: NotificationType.REVIEW_REQUESTED,
+      title: "Review queue updated",
+      message: `${getTaskAssetName(updatedTask)} may need your review.`,
+      metadata: buildTaskNotificationMetadata(updatedTask, "review")
+    });
+  }
+
   response.status(200).json({
     task: serializeTask(updatedTask, manager ?? { role: MembershipRole.OWNER })
   });
@@ -1169,6 +1397,20 @@ router.post("/:taskId/comments", async (request: AuthenticatedRequest, response)
     }
   });
 
+  void createNotifications(
+    getTaskCommentNotificationRecipients(access.task, user.id).map((userId) => ({
+      event: NotificationPreferenceEvent.COMMENT_ADDED,
+      userId,
+      type: NotificationType.INFO,
+      title: "New task comment",
+      message: `${getTaskAssetName(access.task)} has a new comment.`,
+      metadata: {
+        ...buildTaskNotificationMetadata(access.task),
+        commentId: comment.id
+      }
+    }))
+  );
+
   response.status(201).json({
     comment: serializeComment(comment)
   });
@@ -1191,6 +1433,7 @@ router.post("/:taskId/review", async (request: AuthenticatedRequest, response) =
 
   const decision = normalizeShortText(request.body?.decision, 40);
   const feedback = normalizeShortText(request.body?.feedback, 4000);
+  const reviewMetadata = parseReviewMetadata(request.body);
 
   if (decision !== "approve" && decision !== "reject") {
     response.status(400).json({ error: "Review decision must be approve or reject." });
@@ -1199,6 +1442,16 @@ router.post("/:taskId/review", async (request: AuthenticatedRequest, response) =
 
   if (decision === "reject" && !feedback) {
     response.status(400).json({ error: "Add feedback before rejecting a task." });
+    return;
+  }
+
+  if (!reviewMetadata.ok) {
+    response.status(400).json({ error: reviewMetadata.error });
+    return;
+  }
+
+  if (decision === "reject" && !reviewMetadata.value.reason) {
+    response.status(400).json({ error: "Choose a rejection reason before sending the task back." });
     return;
   }
 
@@ -1239,7 +1492,9 @@ router.post("/:taskId/review", async (request: AuthenticatedRequest, response) =
       data: {
         annotationId: submittedAnnotation.id,
         feedback,
+        metadata: reviewMetadata.value.metadata,
         reviewerId: user.id,
+        score: reviewMetadata.value.score,
         status: reviewStatus,
         taskId: access.task.id
       },
@@ -1274,6 +1529,7 @@ router.post("/:taskId/review", async (request: AuthenticatedRequest, response) =
           annotationId: submittedAnnotation.id,
           body: feedback,
           metadata: {
+            ...reviewMetadata.value.metadata,
             reviewId: review.id,
             reviewStatus
           },
@@ -1296,6 +1552,7 @@ router.post("/:taskId/review", async (request: AuthenticatedRequest, response) =
           annotationId: submittedAnnotation.id,
           commentId: comment?.id ?? null,
           previousStatus: access.task.status,
+          reason: reviewMetadata.value.reason,
           requestId: getRequestId(request),
           reviewId: review.id
         }
@@ -1308,6 +1565,17 @@ router.post("/:taskId/review", async (request: AuthenticatedRequest, response) =
       task: savedTask
     };
   });
+
+  if (submittedAnnotation.userId !== user.id) {
+    void createNotification({
+      event: decision === "approve" ? NotificationPreferenceEvent.TASK_APPROVED : NotificationPreferenceEvent.TASK_REJECTED,
+      userId: submittedAnnotation.userId,
+      type: decision === "approve" ? NotificationType.SUCCESS : NotificationType.WARNING,
+      title: decision === "approve" ? "Task approved" : "Task needs changes",
+      message: feedback || `${getTaskAssetName(result.task)} was ${decision === "approve" ? "approved" : "sent back"}.`,
+      metadata: buildTaskNotificationMetadata(result.task)
+    });
+  }
 
   response.status(200).json({
     annotation: serializeAnnotation(
@@ -1540,6 +1808,17 @@ async function saveTaskAnnotation(request: AuthenticatedRequest, response: Respo
     include: taskDetailIncludes
   });
 
+  if (action === "submit" && savedTask.reviewerId && savedTask.reviewerId !== user.id) {
+    void createNotification({
+      event: NotificationPreferenceEvent.REVIEW_REQUESTED,
+      userId: savedTask.reviewerId,
+      type: NotificationType.REVIEW_REQUESTED,
+      title: "Task ready for review",
+      message: `${getTaskAssetName(savedTask)} was submitted.`,
+      metadata: buildTaskNotificationMetadata(savedTask, "review")
+    });
+  }
+
   response.status(action === "submit" ? 200 : 201).json({
     annotation: serializeAnnotation(savedAnnotation),
     task: serializeTask(savedTask, access.membership)
@@ -1657,6 +1936,17 @@ async function updateTaskForUser(
 
     return savedTask;
   });
+
+  if (action === "submit" && updatedTask.reviewerId && updatedTask.reviewerId !== user.id) {
+    void createNotification({
+      event: NotificationPreferenceEvent.REVIEW_REQUESTED,
+      userId: updatedTask.reviewerId,
+      type: NotificationType.REVIEW_REQUESTED,
+      title: "Task ready for review",
+      message: `${getTaskAssetName(updatedTask)} was submitted.`,
+      metadata: buildTaskNotificationMetadata(updatedTask, "review")
+    });
+  }
 
   response.status(200).json({
     task: serializeTask(updatedTask, effectiveMembership)
@@ -1908,6 +2198,7 @@ type TaskQueueFilters = {
   assignment?: "mine" | "unassigned";
   due?: "overdue" | "soon" | "none";
   minPriority?: number;
+  quality?: "disagreement" | "missing_review" | "needs_fixes" | "overdue" | "sampled";
   search?: string;
   status?: TaskStatus;
 };
@@ -1918,8 +2209,13 @@ type TaskWorkflowBody =
       assignedToId?: unknown;
       assigneeIds?: unknown;
       dueAt?: unknown;
+      autoSampleReview?: unknown;
+      minAgreementRate?: unknown;
+      minQualityScore?: unknown;
       priority?: unknown;
+      requireConsensusBeforeApproval?: unknown;
       reviewerId?: unknown;
+      samplingTargetRate?: unknown;
       saveDefaults?: unknown;
     }
   | undefined;
@@ -1935,10 +2231,19 @@ type DatasetTaskWorkflowValue = {
   reviewerId: string | null;
 };
 
+type DatasetQualityPolicyValue = {
+  autoSampleReview: boolean;
+  minAgreementRate: number;
+  minQualityScore: number;
+  requireConsensusBeforeApproval: boolean;
+  samplingTargetRate: number;
+};
+
 function parseTaskQueueFilters(query: Record<string, unknown>): TaskQueueFilters {
   const assignment = query.assignment === "mine" || query.assignment === "unassigned" ? query.assignment : undefined;
   const due = query.due === "overdue" || query.due === "soon" || query.due === "none" ? query.due : undefined;
   const minPriority = normalizeInteger(query.minPriority);
+  const quality = parseTaskQualityFilter(query.quality);
   const search = normalizeShortText(query.search, 160) ?? undefined;
   const status = parseTaskStatusQuery(query.status);
 
@@ -1946,6 +2251,7 @@ function parseTaskQueueFilters(query: Record<string, unknown>): TaskQueueFilters
     ...(assignment ? { assignment } : {}),
     ...(due ? { due } : {}),
     ...(minPriority !== undefined && minPriority >= 0 && minPriority <= 10 ? { minPriority } : {}),
+    ...(quality ? { quality } : {}),
     ...(search ? { search } : {}),
     ...(status ? { status } : {})
   };
@@ -1987,6 +2293,33 @@ export function buildTaskQueueFilterWhere(
     where.dueAt = null;
   }
 
+  if (filters.quality === "missing_review") {
+    where.status = TaskStatus.SUBMITTED;
+    where.reviews = {
+      none: {
+        status: {
+          not: ReviewStatus.PENDING
+        }
+      }
+    };
+  } else if (filters.quality === "needs_fixes") {
+    where.status = TaskStatus.REJECTED;
+  } else if (filters.quality === "sampled") {
+    where.metadata = {
+      path: ["qualitySampled"],
+      equals: true
+    };
+  } else if (filters.quality === "disagreement") {
+    where.metadata = {
+      path: ["qualityLowAgreement"],
+      equals: true
+    };
+  } else if (filters.quality === "overdue") {
+    where.dueAt = {
+      lt: input.now
+    };
+  }
+
   if (filters.search) {
     where.OR = [
       {
@@ -2017,6 +2350,16 @@ export function buildTaskQueueFilterWhere(
   }
 
   return where;
+}
+
+function parseTaskQualityFilter(value: unknown) {
+  return value === "disagreement" ||
+    value === "missing_review" ||
+    value === "needs_fixes" ||
+    value === "overdue" ||
+    value === "sampled"
+    ? value
+    : undefined;
 }
 
 export function parseTaskWorkflowBody(body: TaskWorkflowBody):
@@ -2172,9 +2515,20 @@ function hasDatasetTaskWorkflowFields(body: TaskWorkflowBody) {
   return Boolean(
     body &&
       typeof body === "object" &&
-      ["assignedToId", "assignmentMode", "assigneeIds", "dueAt", "priority", "reviewerId", "saveDefaults"].some((field) =>
-        Object.prototype.hasOwnProperty.call(body, field)
-      )
+      [
+        "assignedToId",
+        "assignmentMode",
+        "assigneeIds",
+        "autoSampleReview",
+        "dueAt",
+        "minAgreementRate",
+        "minQualityScore",
+        "priority",
+        "requireConsensusBeforeApproval",
+        "reviewerId",
+        "samplingTargetRate",
+        "saveDefaults"
+      ].some((field) => Object.prototype.hasOwnProperty.call(body, field))
   );
 }
 
@@ -2258,6 +2612,132 @@ function mergeDatasetTaskWorkflowDefaults(metadata: unknown, value: DatasetTaskW
   } as Prisma.InputJsonObject;
 }
 
+function getDefaultDatasetQualityPolicy(): DatasetQualityPolicyValue {
+  return {
+    autoSampleReview: true,
+    minAgreementRate: 0.8,
+    minQualityScore: 75,
+    requireConsensusBeforeApproval: false,
+    samplingTargetRate: 0.2
+  };
+}
+
+function readDatasetQualityPolicy(metadata: unknown): DatasetQualityPolicyValue {
+  if (!isPlainJsonObject(metadata) || !isPlainJsonObject(metadata.qualityPolicy)) {
+    return getDefaultDatasetQualityPolicy();
+  }
+
+  const parsed = parseDatasetQualityPolicyBody(metadata.qualityPolicy as TaskWorkflowBody, getDefaultDatasetQualityPolicy());
+
+  return parsed.ok ? parsed.value : getDefaultDatasetQualityPolicy();
+}
+
+function parseDatasetQualityPolicyBody(
+  body: TaskWorkflowBody,
+  fallback: DatasetQualityPolicyValue = getDefaultDatasetQualityPolicy()
+):
+  | { ok: true; value: DatasetQualityPolicyValue }
+  | { ok: false; error: string } {
+  const record = body && typeof body === "object" ? body : {};
+  const samplingTargetRate = parsePercentInput(record.samplingTargetRate, fallback.samplingTargetRate);
+  const minAgreementRate = parsePercentInput(record.minAgreementRate, fallback.minAgreementRate);
+  const minQualityScore = parseQualityScoreInput(record.minQualityScore, fallback.minQualityScore);
+
+  if (samplingTargetRate === false) {
+    return { ok: false, error: "Review sampling target must be a number from 0 to 100." };
+  }
+
+  if (minAgreementRate === false) {
+    return { ok: false, error: "Minimum agreement must be a number from 0 to 100." };
+  }
+
+  if (minQualityScore === false) {
+    return { ok: false, error: "Minimum quality score must be a whole number from 0 to 100." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      autoSampleReview: parseBooleanInput(record.autoSampleReview, fallback.autoSampleReview),
+      minAgreementRate,
+      minQualityScore,
+      requireConsensusBeforeApproval: parseBooleanInput(record.requireConsensusBeforeApproval, fallback.requireConsensusBeforeApproval),
+      samplingTargetRate
+    }
+  };
+}
+
+function serializeDatasetQualityPolicy(value: DatasetQualityPolicyValue) {
+  return {
+    autoSampleReview: value.autoSampleReview,
+    minAgreementRate: value.minAgreementRate,
+    minQualityScore: value.minQualityScore,
+    requireConsensusBeforeApproval: value.requireConsensusBeforeApproval,
+    samplingTargetRate: value.samplingTargetRate
+  };
+}
+
+function mergeDatasetQualityPolicyDefaults(metadata: unknown, value: DatasetQualityPolicyValue) {
+  const base = isPlainJsonObject(metadata) ? metadata : {};
+
+  return {
+    ...base,
+    qualityPolicy: serializeDatasetQualityPolicy(value)
+  } as Prisma.InputJsonObject;
+}
+
+function parsePercentInput(value: unknown, fallback: number) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  const normalized = numberValue > 1 ? numberValue / 100 : numberValue;
+
+  return Number.isFinite(normalized) && normalized >= 0 && normalized <= 1 ? normalized : false;
+}
+
+function parseQualityScoreInput(value: unknown, fallback: number) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+
+  return Number.isInteger(numberValue) && numberValue >= 0 && numberValue <= 100 ? numberValue : false;
+}
+
+function parseBooleanInput(value: unknown, fallback: boolean) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value === "true" || value === "1" || value === "on";
+  }
+
+  return fallback;
+}
+
+function getGeneratedTaskQualityMetadata(policy: DatasetQualityPolicyValue, index: number) {
+  if (!policy.autoSampleReview || policy.samplingTargetRate <= 0) {
+    return {};
+  }
+
+  const interval = Math.max(1, Math.round(1 / policy.samplingTargetRate));
+
+  return index % interval === 0
+    ? {
+        qualitySampled: true,
+        qualitySampleReason: "dataset_sampling_policy"
+      }
+    : {};
+}
+
 function getDatasetWorkflowAssignee(value: DatasetTaskWorkflowValue, index: number) {
   if (value.assignmentMode === "single") {
     return value.assignedToId;
@@ -2268,6 +2748,44 @@ function getDatasetWorkflowAssignee(value: DatasetTaskWorkflowValue, index: numb
   }
 
   return null;
+}
+
+function countDatasetWorkflowAssignees(value: DatasetTaskWorkflowValue, taskCount: number) {
+  const counts = new Map<string, number>();
+
+  for (let index = 0; index < taskCount; index += 1) {
+    const assignedToId = getDatasetWorkflowAssignee(value, index);
+
+    if (assignedToId) {
+      counts.set(assignedToId, (counts.get(assignedToId) ?? 0) + 1);
+    }
+  }
+
+  return [...counts.entries()].map(([userId, count]) => ({
+    count,
+    userId
+  }));
+}
+
+function buildTaskAssignmentNotifications(input: {
+  assignmentCounts: Array<{ count: number; userId: string }>;
+  dataset: { id: string; name: string };
+  projectId: string;
+  title: string;
+}): NotificationInput[] {
+  return input.assignmentCounts.map((assignment) => ({
+    userId: assignment.userId,
+    event: NotificationPreferenceEvent.TASK_ASSIGNED,
+    type: NotificationType.TASK_ASSIGNED,
+    title: input.title,
+    message: `${assignment.count} task${assignment.count === 1 ? "" : "s"} assigned in ${input.dataset.name}.`,
+    metadata: {
+      actionUrl: `/tasks?projectId=${encodeURIComponent(input.projectId)}&datasetId=${encodeURIComponent(input.dataset.id)}`,
+      datasetId: input.dataset.id,
+      projectId: input.projectId,
+      taskCount: assignment.count
+    }
+  }));
 }
 
 function buildDatasetTaskWorkflowUpdateData(value: DatasetTaskWorkflowValue, assignedToId: string | null): Prisma.TaskUncheckedUpdateManyInput {
@@ -2297,6 +2815,789 @@ async function validateDatasetTaskWorkflowMembers(value: DatasetTaskWorkflowValu
   }
 
   return null;
+}
+
+function buildTaskNotificationMetadata(
+  task: {
+    id: string;
+    projectId: string;
+    datasetId: string | null;
+    assetId: string | null;
+  },
+  queue?: "review"
+): Prisma.InputJsonObject {
+  const query = new URLSearchParams();
+  query.set("projectId", task.projectId);
+
+  if (task.datasetId) {
+    query.set("datasetId", task.datasetId);
+  }
+
+  if (queue) {
+    query.set("queue", queue);
+  }
+
+  return {
+    actionUrl: `/tasks/${encodeURIComponent(task.id)}?${query.toString()}`,
+    assetId: task.assetId,
+    datasetId: task.datasetId,
+    projectId: task.projectId,
+    taskId: task.id
+  };
+}
+
+function getTaskAssetName(task: { asset?: { fileName: string } | null; dataset?: { name: string } | null }) {
+  return task.asset?.fileName ?? task.dataset?.name ?? "Task";
+}
+
+function getTaskCommentNotificationRecipients(
+  task: {
+    annotations?: Array<{ userId: string }>;
+    assignedToId?: string | null;
+    reviewerId?: string | null;
+  },
+  actorUserId: string
+) {
+  return [
+    task.assignedToId,
+    task.reviewerId,
+    ...(task.annotations?.map((annotation) => annotation.userId) ?? [])
+  ].filter((userId, index, allUserIds): userId is string =>
+    Boolean(userId) && userId !== actorUserId && allUserIds.indexOf(userId) === index
+  );
+}
+
+export function summarizeReviewQuality(
+  reviews: QualityReviewInput[],
+  tasks: QualityTaskInput[] = []
+) {
+  const approved = reviews.filter((review) => review.status === ReviewStatus.APPROVED).length;
+  const rejected = reviews.filter((review) => review.status === ReviewStatus.NEEDS_CHANGES).length;
+  const scoredReviews = reviews.filter((review) => typeof review.score === "number");
+  const reviewerStats = new Map<string, QualityPersonStats>();
+  const annotatorStats = new Map<string, QualityPersonStats>();
+  const reasonCounts = new Map<string, number>();
+  const severityCounts = new Map<string, number>();
+  const trendCounts = new Map<string, { approved: number; rejected: number; total: number }>();
+
+  for (const review of reviews) {
+    const reviewer = getOrCreateQualityPersonStats(reviewerStats, review.reviewer);
+    const annotator = getOrCreateQualityPersonStats(annotatorStats, review.annotation.user);
+
+    addReviewToQualityPersonStats(reviewer, review);
+    addReviewToQualityPersonStats(annotator, review);
+    addAnnotationSpeedToQualityPersonStats(annotator, review.annotation.leadTimeSeconds);
+
+    const metadata = isPlainJsonObject(review.metadata) ? review.metadata : {};
+    const reason = typeof metadata.reason === "string" ? metadata.reason : null;
+    const severity = typeof metadata.severity === "string" ? metadata.severity : null;
+
+    if (reason) {
+      reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+    }
+
+    if (severity) {
+      severityCounts.set(severity, (severityCounts.get(severity) ?? 0) + 1);
+    }
+
+    const day = review.createdAt.toISOString().slice(0, 10);
+    const trend = trendCounts.get(day) ?? { approved: 0, rejected: 0, total: 0 };
+    trend.total += 1;
+
+    if (review.status === ReviewStatus.APPROVED) {
+      trend.approved += 1;
+    } else if (review.status === ReviewStatus.NEEDS_CHANGES) {
+      trend.rejected += 1;
+    }
+
+    trendCounts.set(day, trend);
+  }
+
+  for (const task of tasks) {
+    for (const annotation of getLatestSubmittedAnnotationsByUser(task.annotations)) {
+      const annotator = getOrCreateQualityPersonStats(annotatorStats, annotation.user);
+      addSubmittedAnnotationToQualityPersonStats(annotator, annotation.leadTimeSeconds);
+    }
+  }
+
+  const sampling = summarizeReviewSampling(tasks);
+  const consensus = summarizeAnnotationConsensus(tasks);
+  const datasets = summarizeDatasetQuality(tasks, reviews, sampling.byDataset, consensus.byDataset);
+  const datasetQualityScore = datasets.length > 0
+    ? Math.round(datasets.reduce((total, dataset) => total + dataset.qualityScore, 0) / datasets.length)
+    : calculateQualityScore({
+        acceptanceRate: reviews.length > 0 ? approved / reviews.length : null,
+        agreementRate: consensus.summary.agreementRate,
+        averageScore: scoredReviews.length > 0
+          ? scoredReviews.reduce((total, review) => total + (review.score ?? 0), 0) / scoredReviews.length
+          : null,
+        samplingRate: sampling.summary.sampleRate
+      });
+
+  return {
+    annotators: serializeQualityPeople(annotatorStats),
+    consensus: consensus.summary,
+    datasets,
+    disagreements: consensus.disagreements,
+    rejectionReasons: serializeRejectionReasons(reasonCounts, rejected),
+    reasons: serializeQualityCounts(reasonCounts),
+    reviewers: serializeQualityPeople(reviewerStats),
+    sampling: sampling.summary,
+    samplingCandidates: sampling.candidates,
+    severity: serializeQualityCounts(severityCounts),
+    summary: {
+      acceptanceRate: reviews.length > 0 ? approved / reviews.length : 0,
+      approved,
+      averageScore: scoredReviews.length > 0
+        ? scoredReviews.reduce((total, review) => total + (review.score ?? 0), 0) / scoredReviews.length
+        : null,
+      datasetQualityScore,
+      rejected,
+      reviewed: reviews.length
+    },
+    trend: [...trendCounts.entries()]
+      .map(([date, counts]) => ({ date, ...counts }))
+      .sort((left, right) => left.date.localeCompare(right.date))
+      .slice(-14)
+  };
+}
+
+type QualityPersonStats = {
+  approved: number;
+  averageLeadTimeSeconds: number | null;
+  averageScore: number | null;
+  id: string;
+  leadTimeSamples: number;
+  leadTimeTotal: number;
+  name: string;
+  qualityScore: number;
+  rejected: number;
+  scoreTotal: number;
+  scored: number;
+  submitted: number;
+  total: number;
+};
+
+type QualityReviewInput = {
+  annotation: {
+    leadTimeSeconds: number | null;
+    user: {
+      id: string;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+    };
+  };
+  createdAt: Date;
+  metadata: unknown;
+  reviewer: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  score: number | null;
+  status: ReviewStatus;
+  task: {
+    dataset: {
+      id: string;
+      name: string;
+    } | null;
+    project: {
+      id: string;
+      name: string;
+    };
+  };
+};
+
+type QualityAnnotationInput = {
+  createdAt: Date;
+  leadTimeSeconds: number | null;
+  regions: {
+    geometryJson: unknown;
+    label: string | null;
+    type: AnnotationRegionType;
+  }[];
+  resultJson: unknown;
+  status: AnnotationStatus;
+  submittedAt: Date | null;
+  user: {
+    id: string;
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+  };
+  userId: string;
+  version: number;
+};
+
+type QualityTaskInput = {
+  annotations: QualityAnnotationInput[];
+  asset: {
+    fileName: string;
+  } | null;
+  createdAt: Date;
+  dataset: {
+    id: string;
+    name: string;
+  } | null;
+  dueAt: Date | null;
+  id: string;
+  priority: number;
+  project: {
+    id: string;
+    name: string;
+  };
+  reviews: {
+    id: string;
+    status: ReviewStatus;
+  }[];
+  status: TaskStatus;
+};
+
+type QualitySamplingDatasetStats = {
+  id: string | null;
+  key: string;
+  name: string;
+  pendingReview: number;
+  reviewableTasks: number;
+  reviewedTasks: number;
+  totalTasks: number;
+};
+
+type QualityConsensusDatasetStats = {
+  exactAgreementTotal: number;
+  id: string | null;
+  key: string;
+  labelAgreementTotal: number;
+  name: string;
+  overlapTasks: number;
+};
+
+type QualityDatasetStats = {
+  approved: number;
+  id: string | null;
+  key: string;
+  name: string;
+  rejected: number;
+  reviewableTasks: number;
+  reviewed: number;
+  scored: number;
+  scoreTotal: number;
+  totalTasks: number;
+};
+
+type QualitySamplingCandidate = {
+  assetName: string;
+  datasetId: string | null;
+  datasetName: string;
+  dueAt: Date | null;
+  priority: number;
+  status: TaskStatus;
+  taskId: string;
+};
+
+type QualityDisagreementSummary = {
+  agreementRate: number;
+  annotators: string[];
+  assetName: string;
+  datasetId: string | null;
+  datasetName: string;
+  labelAgreementRate: number;
+  taskId: string;
+};
+
+function getOrCreateQualityPersonStats(
+  statsByUserId: Map<string, QualityPersonStats>,
+  user: { id: string; email: string; firstName: string | null; lastName: string | null }
+) {
+  const existing = statsByUserId.get(user.id);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created = {
+    approved: 0,
+    averageScore: null,
+    averageLeadTimeSeconds: null,
+    id: user.id,
+    leadTimeSamples: 0,
+    leadTimeTotal: 0,
+    name: serializeUserName(user).name,
+    qualityScore: 0,
+    rejected: 0,
+    scoreTotal: 0,
+    scored: 0,
+    submitted: 0,
+    total: 0
+  };
+  statsByUserId.set(user.id, created);
+  return created;
+}
+
+function addReviewToQualityPersonStats(stats: QualityPersonStats, review: { score: number | null; status: ReviewStatus }) {
+  stats.total += 1;
+
+  if (review.status === ReviewStatus.APPROVED) {
+    stats.approved += 1;
+  } else if (review.status === ReviewStatus.NEEDS_CHANGES) {
+    stats.rejected += 1;
+  }
+
+  if (typeof review.score === "number") {
+    stats.scoreTotal += review.score;
+    stats.scored += 1;
+    stats.averageScore = stats.scoreTotal / stats.scored;
+  }
+}
+
+function addSubmittedAnnotationToQualityPersonStats(stats: QualityPersonStats, leadTimeSeconds: number | null) {
+  stats.submitted += 1;
+  addAnnotationSpeedToQualityPersonStats(stats, leadTimeSeconds);
+}
+
+function addAnnotationSpeedToQualityPersonStats(stats: QualityPersonStats, leadTimeSeconds: number | null) {
+  if (typeof leadTimeSeconds !== "number" || !Number.isFinite(leadTimeSeconds) || leadTimeSeconds < 0) {
+    return;
+  }
+
+  stats.leadTimeTotal += leadTimeSeconds;
+  stats.leadTimeSamples += 1;
+  stats.averageLeadTimeSeconds = stats.leadTimeTotal / stats.leadTimeSamples;
+}
+
+function serializeQualityPeople(statsByUserId: Map<string, QualityPersonStats>) {
+  return [...statsByUserId.values()]
+    .map((stats) => {
+      const acceptanceRate = stats.total > 0 ? stats.approved / stats.total : 0;
+      const rejectionRate = stats.total > 0 ? stats.rejected / stats.total : 0;
+      const qualityScore = calculateQualityScore({
+        acceptanceRate: stats.total > 0 ? acceptanceRate : null,
+        agreementRate: null,
+        averageScore: stats.averageScore,
+        samplingRate: stats.submitted > 0 ? stats.total / stats.submitted : null
+      });
+
+      return {
+        acceptanceRate,
+        approved: stats.approved,
+        averageLeadTimeSeconds: stats.averageLeadTimeSeconds,
+        averageScore: stats.averageScore,
+        id: stats.id,
+        name: stats.name,
+        qualityScore,
+        rejected: stats.rejected,
+        rejectionRate,
+        reviewed: stats.total,
+        submitted: stats.submitted,
+        total: stats.total
+      };
+    })
+    .sort((left, right) => right.total - left.total || left.name.localeCompare(right.name))
+    .slice(0, 10);
+}
+
+function serializeQualityCounts(counts: Map<string, number>) {
+  return [...counts.entries()]
+    .map(([label, count]) => ({ count, label }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+    .slice(0, 10);
+}
+
+function serializeRejectionReasons(counts: Map<string, number>, rejected: number) {
+  return [...counts.entries()]
+    .map(([label, count]) => ({
+      count,
+      label,
+      share: rejected > 0 ? count / rejected : 0
+    }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+    .slice(0, 10);
+}
+
+function summarizeReviewSampling(tasks: QualityTaskInput[]) {
+  const byDataset = new Map<string, QualitySamplingDatasetStats>();
+  const candidates: QualitySamplingCandidate[] = [];
+  let reviewableTasks = 0;
+  let reviewedTasks = 0;
+  let pendingReview = 0;
+
+  for (const task of tasks) {
+    const reviewable = isReviewableTask(task);
+    const hasReview = task.reviews.some((review) => review.status !== ReviewStatus.PENDING);
+    const dataset = getQualityDatasetKey(task.dataset);
+    const datasetStats = getOrCreateSamplingDatasetStats(byDataset, dataset);
+
+    datasetStats.totalTasks += 1;
+
+    if (!reviewable) {
+      continue;
+    }
+
+    reviewableTasks += 1;
+    datasetStats.reviewableTasks += 1;
+
+    if (hasReview) {
+      reviewedTasks += 1;
+      datasetStats.reviewedTasks += 1;
+      continue;
+    }
+
+    pendingReview += 1;
+    datasetStats.pendingReview += 1;
+    candidates.push({
+      assetName: getTaskAssetName(task),
+      datasetId: task.dataset?.id ?? null,
+      datasetName: task.dataset?.name ?? "No dataset",
+      dueAt: task.dueAt,
+      priority: task.priority,
+      status: task.status,
+      taskId: task.id
+    });
+  }
+
+  return {
+    byDataset,
+    candidates: candidates
+      .sort((left, right) => right.priority - left.priority || String(left.dueAt ?? "").localeCompare(String(right.dueAt ?? "")))
+      .slice(0, 8),
+    summary: {
+      pendingReview,
+      reviewableTasks,
+      reviewedTasks,
+      sampleRate: reviewableTasks > 0 ? reviewedTasks / reviewableTasks : 0,
+      targetRate: 0.2
+    }
+  };
+}
+
+function summarizeAnnotationConsensus(tasks: QualityTaskInput[]) {
+  const byDataset = new Map<string, QualityConsensusDatasetStats>();
+  const disagreements: QualityDisagreementSummary[] = [];
+  let overlapTasks = 0;
+  let totalExactAgreement = 0;
+  let totalLabelAgreement = 0;
+  let comparedPairs = 0;
+
+  for (const task of tasks) {
+    const annotations = getLatestSubmittedAnnotationsByUser(task.annotations);
+
+    if (annotations.length < 2) {
+      continue;
+    }
+
+    const dataset = getQualityDatasetKey(task.dataset);
+    const datasetStats = getOrCreateConsensusDatasetStats(byDataset, dataset);
+    const signatures = annotations.map(buildAnnotationSignature);
+    const exactAgreement = calculateExactAgreement(signatures);
+    const pairAgreement = calculatePairwiseLabelAgreement(signatures);
+
+    overlapTasks += 1;
+    totalExactAgreement += exactAgreement;
+    totalLabelAgreement += pairAgreement.average;
+    comparedPairs += pairAgreement.pairs;
+    datasetStats.overlapTasks += 1;
+    datasetStats.exactAgreementTotal += exactAgreement;
+    datasetStats.labelAgreementTotal += pairAgreement.average;
+
+    if (exactAgreement < 0.8 || pairAgreement.average < 0.8) {
+      disagreements.push({
+        agreementRate: exactAgreement,
+        annotators: annotations.map((annotation) => serializeUserName(annotation.user).name),
+        assetName: getTaskAssetName(task),
+        datasetId: task.dataset?.id ?? null,
+        datasetName: task.dataset?.name ?? "No dataset",
+        labelAgreementRate: pairAgreement.average,
+        taskId: task.id
+      });
+    }
+  }
+
+  return {
+    byDataset,
+    disagreements: disagreements
+      .sort((left, right) => left.agreementRate - right.agreementRate || left.labelAgreementRate - right.labelAgreementRate)
+      .slice(0, 8),
+    summary: {
+      agreementRate: overlapTasks > 0 ? totalExactAgreement / overlapTasks : null,
+      comparedPairs,
+      labelAgreementRate: overlapTasks > 0 ? totalLabelAgreement / overlapTasks : null,
+      overlapTasks
+    }
+  };
+}
+
+function summarizeDatasetQuality(
+  tasks: QualityTaskInput[],
+  reviews: QualityReviewInput[],
+  samplingByDataset: Map<string, QualitySamplingDatasetStats>,
+  consensusByDataset: Map<string, QualityConsensusDatasetStats>
+) {
+  const datasets = new Map<string, QualityDatasetStats>();
+
+  for (const task of tasks) {
+    const dataset = getQualityDatasetKey(task.dataset);
+    const stats = getOrCreateDatasetStats(datasets, dataset);
+
+    stats.totalTasks += 1;
+
+    if (isReviewableTask(task)) {
+      stats.reviewableTasks += 1;
+    }
+  }
+
+  for (const review of reviews) {
+    const dataset = getQualityDatasetKey(review.task.dataset);
+    const stats = getOrCreateDatasetStats(datasets, dataset);
+
+    stats.reviewed += 1;
+
+    if (review.status === ReviewStatus.APPROVED) {
+      stats.approved += 1;
+    } else if (review.status === ReviewStatus.NEEDS_CHANGES) {
+      stats.rejected += 1;
+    }
+
+    if (typeof review.score === "number") {
+      stats.scoreTotal += review.score;
+      stats.scored += 1;
+    }
+  }
+
+  return [...datasets.values()]
+    .map((stats) => {
+      const sampling = samplingByDataset.get(stats.key);
+      const consensus = consensusByDataset.get(stats.key);
+      const acceptanceRate = stats.reviewed > 0 ? stats.approved / stats.reviewed : null;
+      const averageScore = stats.scored > 0 ? stats.scoreTotal / stats.scored : null;
+      const samplingRate = sampling && sampling.reviewableTasks > 0 ? sampling.reviewedTasks / sampling.reviewableTasks : null;
+      const agreementRate = consensus && consensus.overlapTasks > 0
+        ? consensus.exactAgreementTotal / consensus.overlapTasks
+        : null;
+
+      return {
+        acceptanceRate,
+        agreementRate,
+        approved: stats.approved,
+        averageScore,
+        id: stats.id,
+        name: stats.name,
+        qualityScore: calculateQualityScore({
+          acceptanceRate,
+          agreementRate,
+          averageScore,
+          samplingRate
+        }),
+        rejected: stats.rejected,
+        reviewed: stats.reviewed,
+        samplingRate,
+        totalTasks: stats.totalTasks
+      };
+    })
+    .sort((left, right) => right.qualityScore - left.qualityScore || left.name.localeCompare(right.name))
+    .slice(0, 12);
+}
+
+function getLatestSubmittedAnnotationsByUser(annotations: QualityAnnotationInput[]) {
+  const byUserId = new Map<string, QualityAnnotationInput>();
+
+  for (const annotation of annotations) {
+    const existing = byUserId.get(annotation.userId);
+
+    if (!existing || annotation.version > existing.version || annotation.createdAt > existing.createdAt) {
+      byUserId.set(annotation.userId, annotation);
+    }
+  }
+
+  return [...byUserId.values()];
+}
+
+function buildAnnotationSignature(annotation: QualityAnnotationInput) {
+  const labels = new Map<string, number>();
+
+  for (const region of annotation.regions) {
+    if (region.label) {
+      labels.set(region.label, (labels.get(region.label) ?? 0) + 1);
+    }
+  }
+
+  const results = Array.isArray((annotation.resultJson as { results?: unknown[] } | null)?.results)
+    ? ((annotation.resultJson as { results: unknown[] }).results)
+    : [];
+
+  for (const result of results) {
+    if (!isPlainJsonObject(result) || !isPlainJsonObject(result.value)) {
+      continue;
+    }
+
+    for (const value of Object.values(result.value)) {
+      addResultValueLabels(labels, value);
+    }
+  }
+
+  const labelEntries = [...labels.entries()].sort(([left], [right]) => left.localeCompare(right));
+
+  return {
+    labels: new Set(labelEntries.map(([label]) => label)),
+    signature: labelEntries.map(([label, count]) => `${label}:${count}`).join("|") || "empty"
+  };
+}
+
+function addResultValueLabels(labels: Map<string, number>, value: unknown) {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      addResultValueLabels(labels, item);
+    }
+    return;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const label = value.trim().slice(0, 160);
+    labels.set(label, (labels.get(label) ?? 0) + 1);
+  }
+}
+
+function calculateExactAgreement(signatures: { signature: string }[]) {
+  const counts = new Map<string, number>();
+
+  for (const signature of signatures) {
+    counts.set(signature.signature, (counts.get(signature.signature) ?? 0) + 1);
+  }
+
+  return signatures.length > 0 ? Math.max(...counts.values()) / signatures.length : 0;
+}
+
+function calculatePairwiseLabelAgreement(signatures: { labels: Set<string> }[]) {
+  let total = 0;
+  let pairs = 0;
+
+  for (let leftIndex = 0; leftIndex < signatures.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < signatures.length; rightIndex += 1) {
+      total += calculateJaccard(signatures[leftIndex]?.labels ?? new Set(), signatures[rightIndex]?.labels ?? new Set());
+      pairs += 1;
+    }
+  }
+
+  return {
+    average: pairs > 0 ? total / pairs : 0,
+    pairs
+  };
+}
+
+function calculateJaccard(left: Set<string>, right: Set<string>) {
+  const union = new Set([...left, ...right]);
+
+  if (union.size === 0) {
+    return 1;
+  }
+
+  let intersection = 0;
+
+  for (const value of left) {
+    if (right.has(value)) {
+      intersection += 1;
+    }
+  }
+
+  return intersection / union.size;
+}
+
+function calculateQualityScore(input: {
+  acceptanceRate: number | null;
+  agreementRate: number | null;
+  averageScore: number | null;
+  samplingRate: number | null;
+}) {
+  const acceptance = input.acceptanceRate ?? 0;
+  const score = input.averageScore !== null ? input.averageScore / 5 : acceptance;
+  const sampling = input.samplingRate ?? 0;
+  const agreement = input.agreementRate ?? acceptance;
+
+  return Math.round(Math.max(0, Math.min(1, acceptance * 0.4 + score * 0.25 + sampling * 0.2 + agreement * 0.15)) * 100);
+}
+
+function isReviewableTask(task: Pick<QualityTaskInput, "status">) {
+  return task.status === TaskStatus.SUBMITTED || task.status === TaskStatus.APPROVED || task.status === TaskStatus.REJECTED;
+}
+
+function getQualityDatasetKey(dataset: { id: string; name: string } | null) {
+  return {
+    id: dataset?.id ?? null,
+    key: dataset?.id ?? "__no_dataset__",
+    name: dataset?.name ?? "No dataset"
+  };
+}
+
+function getOrCreateSamplingDatasetStats(
+  statsByDataset: Map<string, QualitySamplingDatasetStats>,
+  dataset: { id: string | null; key: string; name: string }
+) {
+  const existing = statsByDataset.get(dataset.key);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created = {
+    id: dataset.id,
+    key: dataset.key,
+    name: dataset.name,
+    pendingReview: 0,
+    reviewableTasks: 0,
+    reviewedTasks: 0,
+    totalTasks: 0
+  };
+  statsByDataset.set(dataset.key, created);
+  return created;
+}
+
+function getOrCreateConsensusDatasetStats(
+  statsByDataset: Map<string, QualityConsensusDatasetStats>,
+  dataset: { id: string | null; key: string; name: string }
+) {
+  const existing = statsByDataset.get(dataset.key);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created = {
+    exactAgreementTotal: 0,
+    id: dataset.id,
+    key: dataset.key,
+    labelAgreementTotal: 0,
+    name: dataset.name,
+    overlapTasks: 0
+  };
+  statsByDataset.set(dataset.key, created);
+  return created;
+}
+
+function getOrCreateDatasetStats(
+  statsByDataset: Map<string, QualityDatasetStats>,
+  dataset: { id: string | null; key: string; name: string }
+) {
+  const existing = statsByDataset.get(dataset.key);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created = {
+    approved: 0,
+    id: dataset.id,
+    key: dataset.key,
+    name: dataset.name,
+    rejected: 0,
+    reviewableTasks: 0,
+    reviewed: 0,
+    scored: 0,
+    scoreTotal: 0,
+    totalTasks: 0
+  };
+  statsByDataset.set(dataset.key, created);
+  return created;
 }
 
 export function getDatasetGenerationConfigIssue(dataset: {
@@ -2556,6 +3857,12 @@ const taskIncludes = {
       firstName: true,
       lastName: true
     }
+  },
+  reviews: {
+    select: {
+      id: true,
+      status: true
+    }
   }
 } as const;
 
@@ -2747,6 +4054,10 @@ type TaskWithRelations = Task & {
     firstName: string | null;
     lastName: string | null;
   } | null;
+  reviews: {
+    id: string;
+    status: ReviewStatus;
+  }[];
 };
 
 type TaskListWithRelations = Task & {
@@ -2875,6 +4186,7 @@ function serializeTask(task: TaskWithRelations, membership?: { role: MembershipR
     priority: task.priority,
     assignedToId: task.assignedToId,
     reviewerId: task.reviewerId,
+    qualityFlags: buildTaskQualityFlags(task),
     metadata: task.metadata,
     dueAt: task.dueAt,
     project: task.project,
@@ -2905,6 +4217,7 @@ function serializeTaskListItem(task: TaskListWithRelations, membership?: { role:
     priority: task.priority,
     assignedToId: task.assignedToId,
     reviewerId: task.reviewerId,
+    qualityFlags: buildTaskQualityFlags(task),
     metadata: task.metadata,
     dueAt: task.dueAt,
     project: task.project,
@@ -2931,6 +4244,44 @@ function serializeTaskListItem(task: TaskListWithRelations, membership?: { role:
     createdAt: task.createdAt,
     updatedAt: task.updatedAt
   };
+}
+
+function buildTaskQualityFlags(task: {
+  dueAt: Date | null;
+  metadata: unknown;
+  reviews?: { status: ReviewStatus }[];
+  status: TaskStatus;
+}) {
+  const flags = new Set<string>();
+  const metadata = isPlainJsonObject(task.metadata) ? task.metadata : {};
+  const completedReviews = task.reviews?.filter((review) => review.status !== ReviewStatus.PENDING) ?? [];
+  const rejectedReviews = completedReviews.filter((review) => review.status === ReviewStatus.NEEDS_CHANGES || review.status === ReviewStatus.REJECTED);
+
+  if (task.dueAt && task.dueAt.getTime() < Date.now() && task.status !== TaskStatus.APPROVED && task.status !== TaskStatus.ARCHIVED) {
+    flags.add("OVERDUE");
+  }
+
+  if ((task.status === TaskStatus.SUBMITTED || task.status === TaskStatus.REVIEWING) && completedReviews.length === 0) {
+    flags.add("MISSING_REVIEW");
+  }
+
+  if (task.status === TaskStatus.REJECTED) {
+    flags.add("NEEDS_FIXES");
+  }
+
+  if (rejectedReviews.length >= 2) {
+    flags.add("REJECTED_MULTIPLE");
+  }
+
+  if (metadata.qualitySampled === true) {
+    flags.add("SAMPLED_QA");
+  }
+
+  if (metadata.qualityLowAgreement === true || (typeof metadata.qualityAgreementRate === "number" && metadata.qualityAgreementRate < 0.8)) {
+    flags.add("LOW_AGREEMENT");
+  }
+
+  return [...flags];
 }
 
 function serializeAnnotation(annotation: AnnotationWithRegions | null) {
@@ -3038,6 +4389,75 @@ function parseTaskStatusQuery(value: unknown) {
 
   const normalized = value.trim().toUpperCase().replaceAll("-", "_");
   return parseEnumValue(TaskStatus, normalized);
+}
+
+const reviewReasonValues = new Set([
+  "bad_boundary",
+  "incomplete",
+  "missing_label",
+  "other",
+  "wrong_class"
+]);
+
+const reviewSeverityValues = new Set(["low", "medium", "high", "critical"]);
+
+function parseReviewMetadata(body: unknown):
+  | {
+      ok: true;
+      value: {
+        metadata: Prisma.InputJsonObject;
+        reason: string | null;
+        score: number | null;
+      };
+    }
+  | { ok: false; error: string } {
+  const record = isPlainJsonObject(body) ? body : {};
+  const score = parseReviewScore(record.score);
+  const reason = parseReviewToken(record.reason, reviewReasonValues);
+  const severity = parseReviewToken(record.severity, reviewSeverityValues);
+
+  if (score === false) {
+    return { ok: false, error: "Review score must be a whole number from 1 to 5." };
+  }
+
+  if (record.reason && !reason) {
+    return { ok: false, error: "Choose a valid review reason." };
+  }
+
+  if (record.severity && !severity) {
+    return { ok: false, error: "Choose a valid review severity." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      metadata: {
+        ...(reason ? { reason } : {}),
+        ...(severity ? { severity } : {})
+      },
+      reason,
+      score
+    }
+  };
+}
+
+function parseReviewScore(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const score = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+
+  return Number.isInteger(score) && score >= 1 && score <= 5 ? score : false;
+}
+
+function parseReviewToken(value: unknown, allowedValues: Set<string>) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  return allowedValues.has(normalized) ? normalized : null;
 }
 
 export function parseAnnotationBody(body: unknown):
