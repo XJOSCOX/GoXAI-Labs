@@ -707,15 +707,23 @@ export interface SaveAnnotationInput {
     geometry:
       | {
           height: number;
+          ocrBlockId?: string;
+          page?: number;
+          sourceName?: string;
+          text?: string;
           width: number;
           x: number;
           y: number;
         }
       | {
+          ocrBlockId?: string;
+          page?: number;
           points: {
             x: number;
             y: number;
           }[];
+          sourceName?: string;
+          text?: string;
         };
     label?: string | null;
     type?: string;

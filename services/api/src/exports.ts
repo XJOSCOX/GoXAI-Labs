@@ -1652,7 +1652,7 @@ function buildTabularExport(payload: ApprovedAnnotationsExportPayload, delimiter
       asset_object_key: task.asset?.objectKey ?? "",
       dataset_id: payload.dataset?.id ?? "",
       dataset_name: payload.dataset?.name ?? "",
-      labels: annotation ? [...new Set(annotation.regions.map((region) => region.label).filter(Boolean))].join("|") : "",
+      labels: annotation ? getAnnotationLabels(annotation).join("|") : "",
       project_id: payload.project.id,
       project_name: payload.project.name,
       regions_json: annotation ? JSON.stringify(annotation.regions) : "",
@@ -1683,10 +1683,49 @@ function getAnnotationControlValues(annotation: ApprovedAnnotationsExportPayload
       continue;
     }
 
-    values[fromName] = result.value;
+    if (fromName in values) {
+      const current = values[fromName];
+      values[fromName] = Array.isArray(current) ? [...current, result.value] : [current, result.value];
+    } else {
+      values[fromName] = result.value;
+    }
   }
 
   return values;
+}
+
+function getAnnotationLabels(annotation: ApprovedAnnotationsExportPayload["tasks"][number]["annotations"][number]) {
+  const labels = [
+    ...annotation.regions.map((region) => region.label).filter((label): label is string => Boolean(label)),
+    ...getAnnotationResultLabels(annotation)
+  ];
+
+  return [...new Set(labels.map((label) => label.trim()).filter(Boolean))];
+}
+
+function getAnnotationResultLabels(annotation: ApprovedAnnotationsExportPayload["tasks"][number]["annotations"][number]) {
+  const labels: string[] = [];
+  const results = isPlainObject(annotation.result) && Array.isArray(annotation.result.results) ? annotation.result.results : [];
+
+  for (const result of results) {
+    if (!isPlainObject(result) || !isPlainObject(result.value)) {
+      continue;
+    }
+
+    const value = result.value;
+
+    for (const key of ["labels", "timeserieslabels", "choices"]) {
+      const rawLabels = value[key];
+
+      if (!Array.isArray(rawLabels)) {
+        continue;
+      }
+
+      labels.push(...rawLabels.filter((label): label is string => typeof label === "string"));
+    }
+  }
+
+  return labels;
 }
 
 function buildTaskData(task: ApprovedExportTask) {

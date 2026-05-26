@@ -20,6 +20,10 @@ export default defineConfig({
             return "icons";
           }
 
+          if (normalizedId.includes("/node_modules/pdfjs-dist/")) {
+            return "pdfjs";
+          }
+
           if (normalizedId.includes("/node_modules/yaml") || normalizedId.includes("/packages/label-templates/")) {
             return "label-templates";
           }

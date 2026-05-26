@@ -230,7 +230,7 @@ function summarizeConfig(config: string) {
 
 function getToolMatches(config: string) {
   const definitions: Array<[string, RegExp]> = [
-    ["BBOX", /<RectangleLabels\b|<Rectangle\b/],
+    ["BBOX", /<(?:RectangleLabels|Rectangle|OcrLabels)\b/],
     ["POLYGON", /<PolygonLabels\b|<Polygon\b/],
     ["BRUSH", /<BrushLabels\b|<BitmaskLabels\b/],
     ["ELLIPSE", /<EllipseLabels\b|<Ellipse\b/],

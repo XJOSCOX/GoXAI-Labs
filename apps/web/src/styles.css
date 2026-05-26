@@ -2500,6 +2500,132 @@ textarea:focus {
   pointer-events: none;
 }
 
+.annotation-stage.pdf-region-stage {
+  align-items: flex-start;
+}
+
+.pdf-annotation-canvas {
+  aspect-ratio: 8.5 / 11;
+  min-height: 560px;
+  border-inline: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  background: #101010;
+}
+
+.pdf-annotation-canvas canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #ffffff;
+  pointer-events: none;
+}
+
+.pdf-region-page-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 8px;
+}
+
+.pdf-region-page-control label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pdf-region-page-control input {
+  width: 56px;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 0 6px;
+}
+
+.pdf-region-page-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0;
+}
+
+.pdf-region-page-control button:not(:disabled) {
+  cursor: pointer;
+}
+
+.pdf-region-page-control button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.pdf-render-status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 10px;
+  pointer-events: none;
+}
+
+.pdf-render-status.error {
+  border-color: color-mix(in srgb, var(--danger-text) 46%, var(--border));
+  color: var(--danger-text);
+}
+
+.pdf-ocr-status {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 2;
+  border: 1px solid color-mix(in srgb, #eab308 38%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: #facc15;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 10px;
+  pointer-events: none;
+}
+
+.ocr-overlay-block {
+  cursor: copy;
+  pointer-events: auto;
+}
+
+.annotation-overlay .ocr-overlay-block rect {
+  fill: color-mix(in srgb, #facc15 14%, transparent);
+  stroke: #facc15;
+  stroke-dasharray: 0.012 0.01;
+  stroke-linecap: round;
+  stroke-width: 1.5px;
+  vector-effect: non-scaling-stroke;
+}
+
+.annotation-overlay .ocr-overlay-block:hover rect {
+  fill: color-mix(in srgb, #facc15 24%, transparent);
+  stroke: #fde68a;
+}
+
 .template-response-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
@@ -2589,6 +2715,7 @@ textarea:focus {
 
 .media-control-row select,
 .temporal-source-controls select,
+.pdf-page-marker-controls input,
 .temporal-region-form select,
 .temporal-region-form input {
   min-height: 34px;
@@ -2671,6 +2798,25 @@ textarea:focus {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-soft);
+}
+
+.pdf-page-marker-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.pdf-page-marker-controls label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pdf-page-marker-controls .compact-button {
+  min-height: 34px;
 }
 
 .time-series-chart-wrap {

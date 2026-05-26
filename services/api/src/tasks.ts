@@ -2061,7 +2061,7 @@ function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: 
   return values.includes(value) ? (value as T[keyof T]) : undefined;
 }
 
-function parseAnnotationBody(body: unknown):
+export function parseAnnotationBody(body: unknown):
   | {
       ok: true;
       value: {
@@ -2126,6 +2126,10 @@ function parseAnnotationBody(body: unknown):
     }
 
     const label = typeof region.label === "string" && region.label.trim() ? region.label.trim().slice(0, 120) : null;
+    const page = normalizePositiveInteger((geometry as Record<string, unknown>).page ?? region.page);
+    const sourceName = normalizeShortText((geometry as Record<string, unknown>).sourceName ?? region.sourceName, 120);
+    const ocrBlockId = normalizeShortText((geometry as Record<string, unknown>).ocrBlockId ?? region.ocrBlockId, 160);
+    const text = normalizeShortText((geometry as Record<string, unknown>).text ?? region.text, 4000);
 
     if (type === AnnotationRegionType.BBOX) {
       const box = geometry as Record<string, unknown>;
@@ -2140,6 +2144,10 @@ function parseAnnotationBody(body: unknown):
 
       const geometryJson = {
         height,
+        ...(ocrBlockId ? { ocrBlockId } : {}),
+        ...(page ? { page } : {}),
+        ...(sourceName ? { sourceName } : {}),
+        ...(text ? { text } : {}),
         width,
         x,
         y
@@ -2149,6 +2157,10 @@ function parseAnnotationBody(body: unknown):
         geometryJson,
         label,
         metadata: {
+          ...(ocrBlockId ? { ocrBlockId } : {}),
+          ...(page ? { page } : {}),
+          ...(sourceName ? { sourceName } : {}),
+          ...(text ? { text } : {}),
           tool: "bbox"
         },
         type
@@ -2185,13 +2197,21 @@ function parseAnnotationBody(body: unknown):
     }
 
     const geometryJson = {
-      points: normalizedPoints as { x: number; y: number }[]
+      ...(ocrBlockId ? { ocrBlockId } : {}),
+      ...(page ? { page } : {}),
+      points: normalizedPoints as { x: number; y: number }[],
+      ...(sourceName ? { sourceName } : {}),
+      ...(text ? { text } : {})
     };
 
     regions.push({
       geometryJson,
       label,
       metadata: {
+        ...(ocrBlockId ? { ocrBlockId } : {}),
+        ...(page ? { page } : {}),
+        ...(sourceName ? { sourceName } : {}),
+        ...(text ? { text } : {}),
         tool: "polygon"
       },
       type

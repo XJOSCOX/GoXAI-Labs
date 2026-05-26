@@ -627,4 +627,104 @@ describe("buildApprovedAnnotationsExportPayload", () => {
     assert.equal(firstRow.transcript, "hello world");
     assert.match(asr.fileName, /\.jsonl$/);
   });
+
+  it("keeps repeated media labels and page markers in compact exports", () => {
+    const payload = buildApprovedAnnotationsExportPayload({
+      dataset: null,
+      exportedAt: new Date("2026-05-25T12:00:00.000Z"),
+      exportJobId: "export-1",
+      project: {
+        createdById: "user-1",
+        id: "project-1",
+        name: "Media",
+        organizationId: "org-1",
+        slug: "media"
+      },
+      tasks: [
+        {
+          annotations: [
+            {
+              id: "annotation-1",
+              leadTimeSeconds: null,
+              regions: [],
+              resultJson: {
+                results: [
+                  {
+                    from_name: "segment",
+                    to_name: "video",
+                    type: "labels",
+                    value: {
+                      end: 2.5,
+                      labels: ["Intro"],
+                      start: 0.5
+                    }
+                  },
+                  {
+                    from_name: "segment",
+                    to_name: "video",
+                    type: "labels",
+                    value: {
+                      end: 5,
+                      labels: ["Action"],
+                      start: 3
+                    }
+                  },
+                  {
+                    from_name: "pdf_marker",
+                    to_name: "pdf",
+                    type: "labels",
+                    value: {
+                      end: 3,
+                      labels: ["Invoice"],
+                      page: 3,
+                      start: 3
+                    }
+                  }
+                ]
+              },
+              status: "ACCEPTED",
+              submittedAt: null,
+              user: {
+                email: "annotator@example.com",
+                firstName: null,
+                id: "user-2",
+                lastName: null
+              },
+              version: 1
+            }
+          ],
+          asset: {
+            bucket: "bucket",
+            fileName: "clip.mp4",
+            fileSize: 42n,
+            height: null,
+            id: "asset-1",
+            metadata: null,
+            mimeType: "video/mp4",
+            objectKey: "datasets/clip.mp4",
+            width: null
+          },
+          id: "task-1",
+          metadata: null,
+          reviews: [],
+          status: "APPROVED"
+        }
+      ]
+    });
+    const jsonMin = buildApprovedAnnotationsExportFile({
+      format: "JSON_MIN",
+      payload,
+      projectSlug: "media"
+    });
+    const csv = buildApprovedAnnotationsExportFile({
+      format: "CSV",
+      payload,
+      projectSlug: "media"
+    });
+    const minRows = JSON.parse(jsonMin.content.toString()) as Array<{ segment: unknown; pdf_marker: { page: number } }>;
+
+    assert.ok(Array.isArray(minRows[0].segment));
+    assert.equal(minRows[0].pdf_marker.page, 3);
+    assert.match(csv.content.toString(), /Intro\|Action\|Invoice/);
+  });
 });

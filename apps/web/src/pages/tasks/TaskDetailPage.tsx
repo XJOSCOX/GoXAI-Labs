@@ -10,7 +10,11 @@ interface AnnotationShape {
   height?: number;
   id: string;
   label: string;
+  ocrBlockId?: string;
+  page?: number;
   points?: Point[];
+  sourceName?: string;
+  text?: string;
   type: "BBOX" | "POLYGON";
   width?: number;
   x?: number;
@@ -24,6 +28,23 @@ interface LabelOption {
 }
 
 interface Point {
+  x: number;
+  y: number;
+}
+
+interface PdfPageInfo {
+  height: number;
+  pageCount: number;
+  width: number;
+}
+
+interface OcrBlock {
+  height: number;
+  id: string;
+  page: number;
+  sourceName?: string;
+  text: string;
+  width: number;
   x: number;
   y: number;
 }
@@ -89,6 +110,7 @@ interface TemporalRegionResponse {
   end: string;
   id: string;
   label: string;
+  page?: number;
   start: string;
 }
 
@@ -201,9 +223,11 @@ export function TaskDetailPage() {
   const [polygonPreviewPoint, setPolygonPreviewPoint] = useState<Point | null>(null);
   const [activeLabel, setActiveLabel] = useState(defaultLabel);
   const [activeTool, setActiveTool] = useState<"BBOX" | "POLYGON">("BBOX");
+  const [activePdfPage, setActivePdfPage] = useState(1);
   const [zoom, setZoom] = useState(1);
   const [fullscreenAnnotator, setFullscreenAnnotator] = useState(false);
   const [imageNaturalSize, setImageNaturalSize] = useState<{ height: number; width: number } | null>(null);
+  const [pdfPageInfo, setPdfPageInfo] = useState<PdfPageInfo | null>(null);
   const [annotationStageSize, setAnnotationStageSize] = useState<{ height: number; width: number }>({ height: 0, width: 0 });
   const [activeEdit, setActiveEdit] = useState<ActiveRegionEdit | null>(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -245,6 +269,7 @@ export function TaskDetailPage() {
   const selectedShapeIdRef = useRef<string | null>(null);
   const shapesRef = useRef<AnnotationShape[]>([]);
   const isImage = task?.asset?.mimeType.startsWith("image/") ?? false;
+  const isPdf = task?.asset?.mimeType === "application/pdf";
   const canAnnotate = Boolean(task?.canWork && !["APPROVED", "REVIEWING", "SUBMITTED"].includes(task.status));
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
@@ -263,10 +288,24 @@ export function TaskDetailPage() {
   const labelOptions = useMemo(() => getLabelOptions(task?.dataset?.labels, task?.dataset?.labelingConfig), [task?.dataset?.labels, task?.dataset?.labelingConfig]);
   const toolOptions = useMemo(() => getToolOptions(task?.dataset?.tools), [task?.dataset?.tools]);
   const regionBorderWidth = useMemo(() => getRegionBorderWidth(task?.dataset?.labelingConfig), [task?.dataset?.labelingConfig]);
-  const drawingToolOptions = useMemo(() => toolOptions.filter((tool): tool is "BBOX" | "POLYGON" => tool === "BBOX" || tool === "POLYGON"), [toolOptions]);
+  const configDrawingToolOptions = useMemo(() => parseRegionDrawingTools(configCode), [configCode]);
+  const drawingToolOptions = useMemo(
+    () => dedupeDrawingTools([
+      ...toolOptions.filter((tool): tool is "BBOX" | "POLYGON" => tool === "BBOX" || tool === "POLYGON"),
+      ...configDrawingToolOptions
+    ]),
+    [configDrawingToolOptions, toolOptions]
+  );
   const supportsBbox = drawingToolOptions.includes("BBOX");
   const supportsPolygon = drawingToolOptions.includes("POLYGON");
   const supportsRegionDrawing = supportsBbox || supportsPolygon;
+  const pdfSource = useMemo(() => templateSources.find((source) => source.type === "PDF") ?? null, [templateSources]);
+  const isPdfRegionWorkspace = Boolean(supportsRegionDrawing && accessUrl && !isImage && (isPdf || pdfSource));
+  const canDrawOnRegionSource = isImage || isPdfRegionWorkspace;
+  const ocrBlocks = useMemo(
+    () => extractOcrBlocks(task, pdfPageInfo, pdfSource?.name ?? "pdf"),
+    [pdfPageInfo, pdfSource?.name, task]
+  );
   const formControls = useMemo(
     () => [...choiceControls, ...textAreaControls, ...numberControls, ...ratingControls, ...dateTimeControls, ...temporalControls],
     [choiceControls, dateTimeControls, numberControls, ratingControls, temporalControls, textAreaControls]
@@ -276,9 +315,17 @@ export function TaskDetailPage() {
     [formControls, toolOptions]
   );
   const usesTemplateForm = !supportsRegionDrawing && (formControls.length > 0 || templateSources.some((source) => source.type !== "UNKNOWN"));
+  const visibleShapes = useMemo(
+    () => isPdfRegionWorkspace ? shapes.filter((shape) => (shape.page ?? 1) === activePdfPage) : shapes,
+    [activePdfPage, isPdfRegionWorkspace, shapes]
+  );
+  const visibleOcrBlocks = useMemo(
+    () => isPdfRegionWorkspace ? ocrBlocks.filter((block) => block.page === activePdfPage) : [],
+    [activePdfPage, isPdfRegionWorkspace, ocrBlocks]
+  );
   const selectedShape = useMemo(
-    () => shapes.find((shape) => shape.id === selectedShapeId) ?? null,
-    [selectedShapeId, shapes]
+    () => visibleShapes.find((shape) => shape.id === selectedShapeId) ?? null,
+    [selectedShapeId, visibleShapes]
   );
   const canRedoShapeEdit = canAnnotate && shapeRedoStack.length > 0;
   const canUndoShapeEdit = canAnnotate && shapeUndoStack.length > 0;
@@ -333,6 +380,26 @@ export function TaskDetailPage() {
   useEffect(() => {
     selectedShapeIdRef.current = selectedShapeId;
   }, [selectedShapeId]);
+
+  useEffect(() => {
+    if (!isPdfRegionWorkspace || !selectedShapeId) {
+      return;
+    }
+
+    const selected = shapes.find((shape) => shape.id === selectedShapeId);
+
+    if (selected && (selected.page ?? 1) !== activePdfPage) {
+      setSelectedShapeId(null);
+    }
+  }, [activePdfPage, isPdfRegionWorkspace, selectedShapeId, shapes]);
+
+  useEffect(() => {
+    if (!isPdfRegionWorkspace || !pdfPageInfo) {
+      return;
+    }
+
+    setActivePdfPage((current) => Math.max(1, Math.min(pdfPageInfo.pageCount, current)));
+  }, [isPdfRegionWorkspace, pdfPageInfo]);
 
   useEffect(() => {
     setSaveErrorMessage(null);
@@ -858,7 +925,7 @@ export function TaskDetailPage() {
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (!canAnnotate || !isImage) {
+    if (!canAnnotate || !canDrawOnRegionSource) {
       return;
     }
 
@@ -921,7 +988,7 @@ export function TaskDetailPage() {
     }
 
     if (polygonPoints.length === 0) {
-      const hitShape = findShapeAtPoint(shapes, point);
+      const hitShape = findShapeAtPoint(visibleShapes, point);
 
       if (hitShape) {
         editShapeHistoryRef.current = createShapeHistoryEntry("Moved region");
@@ -957,6 +1024,8 @@ export function TaskDetailPage() {
       height: 0,
       id: `draft-${Date.now()}`,
       label: activeLabel.trim() || defaultLabel,
+      page: isPdfRegionWorkspace ? activePdfPage : undefined,
+      sourceName: isPdfRegionWorkspace ? pdfSource?.name ?? "pdf" : undefined,
       type: "BBOX",
       width: 0,
       x: point.x,
@@ -1019,7 +1088,7 @@ export function TaskDetailPage() {
       return;
     }
 
-    setDraftShape(createBoxFromPoints(drawStartRef.current, point, activeLabel.trim() || defaultLabel));
+    setDraftShape(withCurrentRegionSource(createBoxFromPoints(drawStartRef.current, point, activeLabel.trim() || defaultLabel)));
   }
 
   function handlePointerUp() {
@@ -1080,7 +1149,9 @@ export function TaskDetailPage() {
       {
         id: polygonId,
         label: activeLabel.trim() || defaultLabel,
+        page: isPdfRegionWorkspace ? activePdfPage : undefined,
         points: polygonPoints,
+        sourceName: isPdfRegionWorkspace ? pdfSource?.name ?? "pdf" : undefined,
         type: "POLYGON"
       }
     ], null);
@@ -1131,7 +1202,7 @@ export function TaskDetailPage() {
   }
 
   function handleStageWheel(event: WheelEvent<HTMLDivElement>) {
-    if (!event.ctrlKey || !isImage) {
+    if (!event.ctrlKey || !canDrawOnRegionSource) {
       return;
     }
 
@@ -1376,6 +1447,51 @@ export function TaskDetailPage() {
     }),
     [annotationStageSize, fullscreenAnnotator, imageNaturalSize, zoom]
   );
+  const pdfCanvasWidth = useMemo(
+    () => getPdfCanvasWidth({
+      fullscreen: fullscreenAnnotator,
+      pageInfo: pdfPageInfo,
+      stageSize: annotationStageSize,
+      zoom
+    }),
+    [annotationStageSize, fullscreenAnnotator, pdfPageInfo, zoom]
+  );
+
+  function withCurrentRegionSource(shape: AnnotationShape): AnnotationShape {
+    if (!isPdfRegionWorkspace) {
+      return shape;
+    }
+
+    return {
+      ...shape,
+      page: activePdfPage,
+      sourceName: pdfSource?.name ?? "pdf"
+    };
+  }
+
+  function addOcrBlockRegion(block: OcrBlock) {
+    if (!canAnnotate || polygonInProgress) {
+      return;
+    }
+
+    const label = activeLabel.trim() || labelOptions[0]?.name || defaultLabel;
+    const shape: AnnotationShape = {
+      height: block.height,
+      id: `ocr-${block.id}-${Date.now()}`,
+      label,
+      ocrBlockId: block.id,
+      page: block.page,
+      sourceName: block.sourceName ?? pdfSource?.name ?? "pdf",
+      text: block.text,
+      type: "BBOX",
+      width: block.width,
+      x: block.x,
+      y: block.y
+    };
+
+    commitShapeEdit("Added OCR block", (current) => [...current, shape], shape.id);
+    setLabelArmed(labelDrawLock);
+  }
 
   useLayoutEffect(() => {
     const anchor = pendingZoomAnchorRef.current;
@@ -1393,7 +1509,7 @@ export function TaskDetailPage() {
 
     stageElement.scrollLeft = clampScroll(nextScrollLeft, stageElement.scrollWidth - stageElement.clientWidth);
     stageElement.scrollTop = clampScroll(nextScrollTop, stageElement.scrollHeight - stageElement.clientHeight);
-  }, [annotationCanvasWidth, zoom]);
+  }, [annotationCanvasWidth, pdfCanvasWidth, zoom]);
 
   return (
     <section className="page-stack">
@@ -1449,6 +1565,40 @@ export function TaskDetailPage() {
                         <button className="icon-button" type="button" onClick={resetZoom} aria-label="Reset zoom" title="Reset zoom">
                           <RotateCcw size={16} />
                         </button>
+                        {isPdfRegionWorkspace && (
+                          <div className="pdf-region-page-control">
+                            <button
+                              aria-label="Previous PDF page"
+                              disabled={activePdfPage <= 1}
+                              onClick={() => setActivePdfPage((current) => Math.max(1, current - 1))}
+                              type="button"
+                            >
+                              <ArrowLeft size={14} />
+                            </button>
+                            <label>
+                              Page
+                              <input
+                                max={pdfPageInfo?.pageCount}
+                                min={1}
+                                onChange={(event) => {
+                                  const page = Math.max(1, Number(event.target.value) || 1);
+                                  setActivePdfPage(pdfPageInfo ? Math.min(pdfPageInfo.pageCount, page) : page);
+                                }}
+                                type="number"
+                                value={activePdfPage}
+                              />
+                            </label>
+                            <span>/ {pdfPageInfo?.pageCount ?? "..."}</span>
+                            <button
+                              aria-label="Next PDF page"
+                              disabled={Boolean(pdfPageInfo && activePdfPage >= pdfPageInfo.pageCount)}
+                              onClick={() => setActivePdfPage((current) => Math.min(pdfPageInfo?.pageCount ?? current + 1, current + 1))}
+                              type="button"
+                            >
+                              <ArrowRight size={14} />
+                            </button>
+                          </div>
+                        )}
                         <button
                           className={panMode ? "icon-button active" : "icon-button"}
                           type="button"
@@ -1473,7 +1623,7 @@ export function TaskDetailPage() {
                   </div>
                 </div>
                 <div
-                  className={`annotation-stage${canAnnotate && isImage ? " drawing-enabled" : ""}${panMode ? " pan-mode" : ""}${isPanning ? " panning" : ""}${activeEdit ? ` editing-region ${activeEdit.kind}` : ""}`}
+                  className={`annotation-stage${canAnnotate && canDrawOnRegionSource ? " drawing-enabled" : ""}${isPdfRegionWorkspace ? " pdf-region-stage" : ""}${panMode ? " pan-mode" : ""}${isPanning ? " panning" : ""}${activeEdit ? ` editing-region ${activeEdit.kind}` : ""}`}
                   onWheel={handleStageWheel}
                   ref={annotationStageRef}
                 >
@@ -1532,7 +1682,85 @@ export function TaskDetailPage() {
                         style={{ ["--annotation-stroke-width" as string]: `${regionBorderWidth}px` }}
                         viewBox="0 0 1 1"
                       >
-                        {[...shapes, ...(draftShape ? [draftShape] : [])].map((shape) => (
+                        {[...visibleShapes, ...(draftShape ? [draftShape] : [])].map((shape) => (
+                          <AnnotationSvgShape
+                            activeEditKind={activeEdit?.id === shape.id ? activeEdit.kind : null}
+                            isSelected={shape.id === selectedShapeId}
+                            key={shape.id}
+                            labelOptions={labelOptions}
+                            shape={shape}
+                          />
+                        ))}
+                        {selectedShape && (
+                          <AnnotationEditHandles
+                            color={getLabelColor(selectedShape.label, labelOptions)}
+                            shape={selectedShape}
+                          />
+                        )}
+                        {livePolygonPoints.length > 1 && (
+                          <polyline className="annotation-draft-line" points={pointsToSvg(livePolygonPoints)} style={{ stroke: getLabelColor(activeLabel, labelOptions) }} />
+                        )}
+                        {polygonPoints.map((point, index) => (
+                          <circle
+                            className={index === 0 && polygonClosePointHover ? "annotation-point closing" : "annotation-point"}
+                            cx={point.x}
+                            cy={point.y}
+                            key={`${point.x}-${point.y}-${index}`}
+                            r={index === 0 && polygonClosePointHover ? "0.012" : "0.006"}
+                            style={{ fill: getLabelColor(activeLabel, labelOptions) }}
+                          />
+                        ))}
+                      </svg>
+                    </div>
+                  ) : isPdfRegionWorkspace && accessUrl ? (
+                    <div
+                      className="annotation-canvas pdf-annotation-canvas"
+                      onPointerDown={handlePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                      onPointerLeave={handlePointerLeave}
+                      onDoubleClick={finishPolygon}
+                      ref={annotationCanvasRef}
+                      style={{
+                        width: pdfCanvasWidth,
+                        ...(pdfPageInfo ? { aspectRatio: `${pdfPageInfo.width} / ${pdfPageInfo.height}` } : {})
+                      }}
+                    >
+                      <PdfPageCanvas
+                        fileName={task.asset?.fileName ?? "PDF task asset"}
+                        onPageInfo={setPdfPageInfo}
+                        pageNumber={activePdfPage}
+                        pdfUrl={accessUrl}
+                      />
+                      {ocrBlocks.length > 0 && (
+                        <span className="pdf-ocr-status">{visibleOcrBlocks.length} OCR blocks</span>
+                      )}
+                      <svg
+                        className="annotation-overlay"
+                        preserveAspectRatio="none"
+                        style={{ ["--annotation-stroke-width" as string]: `${regionBorderWidth}px` }}
+                        viewBox="0 0 1 1"
+                      >
+                        {visibleOcrBlocks.map((block) => (
+                          <g
+                            className="ocr-overlay-block"
+                            key={block.id}
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                              addOcrBlockRegion(block);
+                            }}
+                          >
+                            <rect
+                              height={block.height}
+                              rx="0.004"
+                              width={block.width}
+                              x={block.x}
+                              y={block.y}
+                            />
+                            <title>{block.text}</title>
+                          </g>
+                        ))}
+                        {[...visibleShapes, ...(draftShape ? [draftShape] : [])].map((shape) => (
                           <AnnotationSvgShape
                             activeEditKind={activeEdit?.id === shape.id ? activeEdit.kind : null}
                             isSelected={shape.id === selectedShapeId}
@@ -1811,6 +2039,7 @@ export function TaskDetailPage() {
                         >
                           <span>{index + 1}. {shape.label}</span>
                           <small>{shape.type === "POLYGON" ? `${shape.points?.length ?? 0} points` : `${Math.round((shape.width ?? 0) * 100)}% x ${Math.round((shape.height ?? 0) * 100)}%`}</small>
+                          {isPdfRegionWorkspace && <small>Page {shape.page ?? 1}</small>}
                         </button>
                         <button
                           aria-label={`Delete ${shape.label} region ${index + 1}`}
@@ -2170,7 +2399,16 @@ function TemplateSourcePreview({
   if (source.type === "VIDEO") {
     const videoUrl = sourceValue || accessUrl;
 
-    return <VideoSourceCard fileName={task.asset?.fileName ?? source.name} name={source.name} videoUrl={videoUrl} />;
+    return (
+      <VideoSourceCard
+        fileName={task.asset?.fileName ?? source.name}
+        name={source.name}
+        onAddTemporalRegion={onAddTemporalRegion}
+        temporalControls={sourceTemporalControls}
+        temporalResponses={temporalResponses}
+        videoUrl={videoUrl}
+      />
+    );
   }
 
   if (source.type === "AUDIO") {
@@ -2190,7 +2428,15 @@ function TemplateSourcePreview({
   if (source.type === "PDF") {
     const pdfUrl = sourceValue || accessUrl;
 
-    return <PdfSourceCard name={source.name} pdfUrl={pdfUrl} />;
+    return (
+      <PdfSourceCard
+        name={source.name}
+        onAddTemporalRegion={onAddTemporalRegion}
+        pdfUrl={pdfUrl}
+        temporalControls={sourceTemporalControls}
+        temporalResponses={temporalResponses}
+      />
+    );
   }
 
   if (source.type === "TEXT") {
@@ -2229,11 +2475,49 @@ function TemplateSourcePreview({
   );
 }
 
-function VideoSourceCard({ fileName, name, videoUrl }: { fileName: string; name: string; videoUrl: string | null }) {
+function VideoSourceCard({
+  fileName,
+  name,
+  onAddTemporalRegion,
+  temporalControls,
+  temporalResponses,
+  videoUrl
+}: {
+  fileName: string;
+  name: string;
+  onAddTemporalRegion: (controlName: string, region: Omit<TemporalRegionResponse, "id">) => void;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
+  videoUrl: string | null;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [activeControlName, setActiveControlName] = useState(temporalControls[0]?.name ?? "");
+  const [activeLabel, setActiveLabel] = useState(temporalControls[0]?.labels[0]?.value ?? "");
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [segmentStart, setSegmentStart] = useState<number | null>(null);
+  const activeControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+  const selectedRegionCount = activeControl ? temporalResponses[activeControl.name]?.length ?? 0 : 0;
+
+  useEffect(() => {
+    const nextControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+
+    if (!nextControl) {
+      setActiveControlName("");
+      setActiveLabel("");
+      setSegmentStart(null);
+      return;
+    }
+
+    if (nextControl.name !== activeControlName) {
+      setActiveControlName(nextControl.name);
+    }
+
+    if (!nextControl.labels.some((label) => label.value === activeLabel)) {
+      setActiveLabel(nextControl.labels[0]?.value ?? "");
+    }
+  }, [activeControlName, activeLabel, temporalControls]);
 
   function seekBy(seconds: number) {
     const video = videoRef.current;
@@ -2254,6 +2538,44 @@ function VideoSourceCard({ fileName, name, videoUrl }: { fileName: string; name:
     }
   }
 
+  function captureSegmentStart() {
+    setSegmentStart(currentTime);
+  }
+
+  function addCurrentTimestamp() {
+    if (!activeControl || !activeLabel) {
+      return;
+    }
+
+    const timestamp = currentTime.toFixed(2);
+    onAddTemporalRegion(activeControl.name, {
+      end: timestamp,
+      label: activeLabel,
+      start: timestamp
+    });
+  }
+
+  function addSegmentEnd() {
+    if (!activeControl || !activeLabel || segmentStart === null) {
+      return;
+    }
+
+    const start = Math.min(segmentStart, currentTime);
+    const end = Math.max(segmentStart, currentTime);
+
+    if (end - start < 0.01) {
+      addCurrentTimestamp();
+    } else {
+      onAddTemporalRegion(activeControl.name, {
+        end: end.toFixed(2),
+        label: activeLabel,
+        start: start.toFixed(2)
+      });
+    }
+
+    setSegmentStart(null);
+  }
+
   return (
     <div className="template-source-card media-source-card video-source-card">
       <div className="template-source-head">
@@ -2265,6 +2587,14 @@ function VideoSourceCard({ fileName, name, videoUrl }: { fileName: string; name:
       </div>
       {videoUrl ? (
         <>
+          <TemporalSourceControls
+            activeControlName={activeControlName}
+            activeLabel={activeLabel}
+            controls={temporalControls}
+            onControlChange={setActiveControlName}
+            onLabelChange={setActiveLabel}
+            regionCount={selectedRegionCount}
+          />
           <video
             controls
             onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
@@ -2276,6 +2606,11 @@ function VideoSourceCard({ fileName, name, videoUrl }: { fileName: string; name:
             <button className="secondary-button compact-button" onClick={() => seekBy(-1)} type="button">-1s</button>
             <button className="secondary-button compact-button" onClick={() => seekBy(1 / 30)} type="button">+1 frame</button>
             <button className="secondary-button compact-button" onClick={() => seekBy(1)} type="button">+1s</button>
+            <button className="secondary-button compact-button" onClick={captureSegmentStart} disabled={!activeControl} type="button">Mark start</button>
+            <button className="secondary-button compact-button" onClick={addSegmentEnd} disabled={!activeControl || segmentStart === null} type="button">
+              {segmentStart === null ? "Mark end" : `End from ${formatMediaTime(segmentStart)}`}
+            </button>
+            <button className="secondary-button compact-button" onClick={addCurrentTimestamp} disabled={!activeControl} type="button">Add instant</button>
             <select value={playbackRate} onChange={(event) => updatePlaybackRate(Number(event.target.value))}>
               <option value={0.5}>0.5x</option>
               <option value={1}>1x</option>
@@ -2480,7 +2815,57 @@ function AudioSourceCard({
   );
 }
 
-function PdfSourceCard({ name, pdfUrl }: { name: string; pdfUrl: string | null }) {
+function PdfSourceCard({
+  name,
+  onAddTemporalRegion,
+  pdfUrl,
+  temporalControls,
+  temporalResponses
+}: {
+  name: string;
+  onAddTemporalRegion: (controlName: string, region: Omit<TemporalRegionResponse, "id">) => void;
+  pdfUrl: string | null;
+  temporalControls: TemporalLabelControl[];
+  temporalResponses: Record<string, TemporalRegionResponse[]>;
+}) {
+  const [activeControlName, setActiveControlName] = useState(temporalControls[0]?.name ?? "");
+  const [activeLabel, setActiveLabel] = useState(temporalControls[0]?.labels[0]?.value ?? "");
+  const [activePage, setActivePage] = useState(1);
+  const activeControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+  const selectedRegionCount = activeControl ? temporalResponses[activeControl.name]?.length ?? 0 : 0;
+
+  useEffect(() => {
+    const nextControl = temporalControls.find((control) => control.name === activeControlName) ?? temporalControls[0] ?? null;
+
+    if (!nextControl) {
+      setActiveControlName("");
+      setActiveLabel("");
+      return;
+    }
+
+    if (nextControl.name !== activeControlName) {
+      setActiveControlName(nextControl.name);
+    }
+
+    if (!nextControl.labels.some((label) => label.value === activeLabel)) {
+      setActiveLabel(nextControl.labels[0]?.value ?? "");
+    }
+  }, [activeControlName, activeLabel, temporalControls]);
+
+  function addPageMarker() {
+    if (!activeControl || !activeLabel) {
+      return;
+    }
+
+    const page = Math.max(1, Math.round(activePage));
+    onAddTemporalRegion(activeControl.name, {
+      end: String(page),
+      label: activeLabel,
+      page,
+      start: String(page)
+    });
+  }
+
   return (
     <div className="template-source-card pdf-source-card">
       <div className="template-source-head">
@@ -2495,7 +2880,31 @@ function PdfSourceCard({ name, pdfUrl }: { name: string; pdfUrl: string | null }
         )}
       </div>
       {pdfUrl ? (
-        <iframe src={pdfUrl} title={name} />
+        <>
+          <TemporalSourceControls
+            activeControlName={activeControlName}
+            activeLabel={activeLabel}
+            controls={temporalControls}
+            onControlChange={setActiveControlName}
+            onLabelChange={setActiveLabel}
+            regionCount={selectedRegionCount}
+          />
+          {activeControl && (
+            <div className="pdf-page-marker-controls">
+              <label>
+                Page
+                <input
+                  min={1}
+                  onChange={(event) => setActivePage(Number(event.target.value))}
+                  type="number"
+                  value={activePage}
+                />
+              </label>
+              <button className="secondary-button compact-button" onClick={addPageMarker} type="button">Add page marker</button>
+            </div>
+          )}
+          <iframe src={pdfUrl} title={name} />
+        </>
       ) : (
         <p className="muted-copy">No PDF source is available.</p>
       )}
@@ -2913,6 +3322,107 @@ function LabelPicker({
   );
 }
 
+function PdfPageCanvas({
+  fileName,
+  onPageInfo,
+  pageNumber,
+  pdfUrl
+}: {
+  fileName: string;
+  onPageInfo: (info: PdfPageInfo) => void;
+  pageNumber: number;
+  pdfUrl: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadingTask: { destroy: () => Promise<void> } | null = null;
+    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
+
+    async function renderPage() {
+      setError(null);
+      setLoading(true);
+
+      try {
+        const [pdfjs, worker] = await Promise.all([
+          import("pdfjs-dist"),
+          import("pdfjs-dist/build/pdf.worker.mjs?url")
+        ]);
+
+        pdfjs.GlobalWorkerOptions.workerSrc = worker.default;
+        const nextLoadingTask = pdfjs.getDocument({ url: pdfUrl });
+        loadingTask = nextLoadingTask;
+        const document = await nextLoadingTask.promise;
+        const safePageNumber = Math.max(1, Math.min(document.numPages, pageNumber));
+        const page = await document.getPage(safePageNumber);
+        const baseViewport = page.getViewport({ scale: 1 });
+
+        if (cancelled) {
+          return;
+        }
+
+        onPageInfo({
+          height: baseViewport.height,
+          pageCount: document.numPages,
+          width: baseViewport.width
+        });
+
+        const canvas = canvasRef.current;
+        const context = canvas?.getContext("2d");
+
+        if (!canvas || !context) {
+          return;
+        }
+
+        const deviceScale = Math.max(1.5, Math.min(window.devicePixelRatio || 1, 3));
+        const viewport = page.getViewport({ scale: deviceScale });
+
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.aspectRatio = `${baseViewport.width} / ${baseViewport.height}`;
+
+        renderTask = page.render({
+          canvas,
+          canvasContext: context,
+          viewport
+        });
+
+        await renderTask.promise;
+
+        if (!cancelled) {
+          setLoading(false);
+        }
+      } catch (reason) {
+        if (!cancelled && reason instanceof Error && reason.name !== "RenderingCancelledException") {
+          setError(reason.message || "Unable to render PDF page.");
+          setLoading(false);
+        }
+      }
+    }
+
+    void renderPage();
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+      if (loadingTask) {
+        void loadingTask.destroy();
+      }
+    };
+  }, [onPageInfo, pageNumber, pdfUrl]);
+
+  return (
+    <>
+      <canvas aria-label={fileName} ref={canvasRef} />
+      {loading && <span className="pdf-render-status">Rendering page...</span>}
+      {error && <span className="pdf-render-status error">{error}</span>}
+    </>
+  );
+}
+
 function parseTemplateSources(configCode: string): TemplateSource[] {
   const sources: TemplateSource[] = [];
   const objectTagPattern = /<(Image|Text|HyperText|Paragraphs|Audio|Video|TimeSeries|Table|List|Chat|Pdf|PDF)\b([^>]*)\/?>/gi;
@@ -3134,6 +3644,36 @@ function parseTemporalLabelControls(configCode: string): TemporalLabelControl[] 
   }
 
   return controls;
+}
+
+function parseRegionDrawingTools(configCode: string): Array<"BBOX" | "POLYGON"> {
+  const tools: Array<"BBOX" | "POLYGON"> = [];
+
+  if (/<(?:RectangleLabels|Rectangle|OcrLabels)\b/i.test(configCode)) {
+    tools.push("BBOX");
+  }
+
+  if (/<(?:PolygonLabels|Polygon)\b/i.test(configCode)) {
+    tools.push("POLYGON");
+  }
+
+  return tools;
+}
+
+function dedupeDrawingTools(tools: Array<"BBOX" | "POLYGON">): Array<"BBOX" | "POLYGON"> {
+  const seen = new Set<string>();
+  const deduped: Array<"BBOX" | "POLYGON"> = [];
+
+  tools.forEach((tool) => {
+    if (seen.has(tool)) {
+      return;
+    }
+
+    seen.add(tool);
+    deduped.push(tool);
+  });
+
+  return deduped;
 }
 
 function parseLabelValues(body: string): TemporalLabelControl["labels"] {
@@ -3479,12 +4019,14 @@ function formResponsesToResults({
           ? {
               end: region.end,
               instant: region.start === region.end,
+              ...(region.page ? { page: region.page } : {}),
               start: region.start,
               timeserieslabels: [region.label]
             }
           : {
               end: Number(region.end),
               labels: [region.label],
+              ...(region.page ? { page: region.page } : {}),
               start: Number(region.start)
             }
     }))
@@ -3493,7 +4035,12 @@ function formResponsesToResults({
       return typeof result.value.start === "string" && result.value.start.length > 0 && typeof result.value.end === "string" && result.value.end.length > 0;
     }
 
-    return Number.isFinite(result.value.start) && Number.isFinite(result.value.end) && result.value.end >= result.value.start;
+    return (
+      Number.isFinite(result.value.start) &&
+      Number.isFinite(result.value.end) &&
+      result.value.end >= result.value.start &&
+      (!("page" in result.value) || Number.isFinite(result.value.page))
+    );
   });
 
   return [...choiceResults, ...textResults, ...numberResults, ...ratingResults, ...dateTimeResults, ...temporalResults];
@@ -3581,6 +4128,311 @@ function getStringValue(value: unknown) {
   return typeof value === "string" ? value : null;
 }
 
+function extractOcrBlocks(task: TaskSummary | null | undefined, pageInfo: PdfPageInfo | null, defaultSourceName: string): OcrBlock[] {
+  if (!task) {
+    return [];
+  }
+
+  const roots = [
+    task.metadata,
+    isRecord(task.metadata) ? task.metadata.data : null,
+    task.asset?.metadata,
+    isRecord(task.asset?.metadata) ? task.asset.metadata.data : null
+  ].filter(isRecord);
+  const blocks: OcrBlock[] = [];
+  const seen = new Set<string>();
+
+  roots.forEach((root) => {
+    collectOcrBlocks(root, {
+      blocks,
+      defaultSourceName,
+      pageInfo,
+      seen
+    });
+  });
+
+  return blocks;
+}
+
+function collectOcrBlocks(
+  value: unknown,
+  context: {
+    blocks: OcrBlock[];
+    defaultSourceName: string;
+    fallbackHeight?: number;
+    fallbackPage?: number;
+    fallbackWidth?: number;
+    pageInfo: PdfPageInfo | null;
+    seen: Set<string>;
+  },
+  depth = 0
+) {
+  if (!isRecord(value) || depth > 3) {
+    return;
+  }
+
+  const page = getOcrPage(value, context.fallbackPage);
+  const dimensions = getOcrDimensions(value, context.fallbackWidth, context.fallbackHeight);
+  const candidate = normalizeOcrBlock(value, {
+    defaultSourceName: context.defaultSourceName,
+    fallbackHeight: dimensions.height,
+    fallbackPage: page,
+    fallbackWidth: dimensions.width,
+    index: context.blocks.length,
+    pageInfo: context.pageInfo
+  });
+
+  if (candidate) {
+    const key = `${candidate.page}:${candidate.x}:${candidate.y}:${candidate.width}:${candidate.height}:${candidate.text}`;
+
+    if (!context.seen.has(key)) {
+      context.seen.add(key);
+      context.blocks.push(candidate);
+    }
+  }
+
+  const pages = value.pages;
+
+  if (Array.isArray(pages)) {
+    pages.forEach((pageValue, pageIndex) => {
+      if (isRecord(pageValue)) {
+        const pageNumber = getOcrPage(pageValue, pageIndex + 1);
+        const pageDimensions = getOcrDimensions(pageValue, dimensions.width, dimensions.height);
+        collectOcrBlocks(pageValue, {
+          ...context,
+          fallbackHeight: pageDimensions.height,
+          fallbackPage: pageNumber,
+          fallbackWidth: pageDimensions.width
+        }, depth + 1);
+      }
+    });
+  }
+
+  for (const key of ["ocr", "ocrBlocks", "textBlocks", "blocks", "lines", "words", "tokens"]) {
+    const list = value[key];
+
+    if (!Array.isArray(list)) {
+      continue;
+    }
+
+    list.forEach((item, index) => {
+      if (isRecord(item)) {
+        const nestedPage = getOcrPage(item, page);
+        const nestedDimensions = getOcrDimensions(item, dimensions.width, dimensions.height);
+        const block = normalizeOcrBlock(item, {
+          defaultSourceName: context.defaultSourceName,
+          fallbackHeight: nestedDimensions.height,
+          fallbackPage: nestedPage,
+          fallbackWidth: nestedDimensions.width,
+          index,
+          pageInfo: context.pageInfo
+        });
+
+        if (!block) {
+          collectOcrBlocks(item, {
+            ...context,
+            fallbackHeight: nestedDimensions.height,
+            fallbackPage: nestedPage,
+            fallbackWidth: nestedDimensions.width
+          }, depth + 1);
+          return;
+        }
+
+        const dedupeKey = `${block.page}:${block.x}:${block.y}:${block.width}:${block.height}:${block.text}`;
+
+        if (!context.seen.has(dedupeKey)) {
+          context.seen.add(dedupeKey);
+          context.blocks.push(block);
+        }
+      }
+    });
+  }
+}
+
+function normalizeOcrBlock(
+  value: Record<string, unknown>,
+  options: {
+    defaultSourceName: string;
+    fallbackHeight?: number;
+    fallbackPage?: number;
+    fallbackWidth?: number;
+    index: number;
+    pageInfo: PdfPageInfo | null;
+  }
+): OcrBlock | null {
+  const text = getOcrText(value);
+  const bounds = normalizeOcrBounds(value, options);
+
+  if (!text || !bounds || bounds.width <= 0 || bounds.height <= 0) {
+    return null;
+  }
+
+  const page = getOcrPage(value, options.fallbackPage) ?? 1;
+  const sourceName = getStringValue(value.sourceName) ?? getStringValue(value.source_name) ?? options.defaultSourceName;
+  const id = getStringValue(value.id) ?? getStringValue(value.blockId) ?? getStringValue(value.block_id) ?? `${page}-${options.index}-${bounds.x}-${bounds.y}`;
+
+  return {
+    height: bounds.height,
+    id,
+    page,
+    sourceName,
+    text,
+    width: bounds.width,
+    x: bounds.x,
+    y: bounds.y
+  };
+}
+
+function getOcrText(value: Record<string, unknown>) {
+  for (const key of ["text", "value", "content", "word"]) {
+    const text = getStringValue(value[key]);
+
+    if (text?.trim()) {
+      return text.trim();
+    }
+  }
+
+  return null;
+}
+
+function getOcrPage(value: Record<string, unknown>, fallback?: number) {
+  const rawPage = value.page ?? value.pageNumber ?? value.page_number;
+  const page = typeof rawPage === "number" && Number.isFinite(rawPage) ? Math.floor(rawPage) : null;
+
+  if (page && page > 0) {
+    return page;
+  }
+
+  const rawPageIndex = value.pageIndex ?? value.page_index;
+  const pageIndex = typeof rawPageIndex === "number" && Number.isFinite(rawPageIndex) ? Math.floor(rawPageIndex) : null;
+
+  if (pageIndex !== null && pageIndex >= 0) {
+    return pageIndex + 1;
+  }
+
+  return fallback;
+}
+
+function getOcrDimensions(value: Record<string, unknown>, fallbackWidth?: number, fallbackHeight?: number) {
+  return {
+    height: getNumberValue(value.pageHeight ?? value.page_height ?? value.originalHeight ?? value.original_height ?? value.imageHeight ?? value.image_height) ?? fallbackHeight,
+    width: getNumberValue(value.pageWidth ?? value.page_width ?? value.originalWidth ?? value.original_width ?? value.imageWidth ?? value.image_width) ?? fallbackWidth
+  };
+}
+
+function normalizeOcrBounds(
+  value: Record<string, unknown>,
+  options: {
+    fallbackHeight?: number;
+    fallbackWidth?: number;
+    pageInfo: PdfPageInfo | null;
+  }
+) {
+  const dimensions = {
+    height: options.fallbackHeight ?? options.pageInfo?.height,
+    width: options.fallbackWidth ?? options.pageInfo?.width
+  };
+  const geometry = isRecord(value.geometry) ? value.geometry : value;
+  const objectBox = getObjectOcrBox(geometry, dimensions);
+
+  if (objectBox) {
+    return objectBox;
+  }
+
+  const boxValue = value.bbox ?? value.boundingBox ?? value.bounding_box ?? value.box;
+
+  if (Array.isArray(boxValue)) {
+    return normalizeOcrBoxArray(boxValue, dimensions);
+  }
+
+  if (isRecord(boxValue)) {
+    return getObjectOcrBox(boxValue, dimensions);
+  }
+
+  return null;
+}
+
+function getObjectOcrBox(value: Record<string, unknown>, dimensions: { height?: number; width?: number }) {
+  const x = getNumberValue(value.x);
+  const y = getNumberValue(value.y);
+  const width = getNumberValue(value.width);
+  const height = getNumberValue(value.height);
+
+  if (x !== null && y !== null && width !== null && height !== null) {
+    return normalizeOcrBoxNumbers(x, y, width, height, dimensions, "xywh");
+  }
+
+  const left = getNumberValue(value.left ?? value.xmin ?? value.minX);
+  const top = getNumberValue(value.top ?? value.ymin ?? value.minY);
+  const right = getNumberValue(value.right ?? value.xmax ?? value.maxX);
+  const bottom = getNumberValue(value.bottom ?? value.ymax ?? value.maxY);
+
+  if (left !== null && top !== null && right !== null && bottom !== null) {
+    return normalizeOcrBoxNumbers(left, top, right, bottom, dimensions, "xyxy");
+  }
+
+  return null;
+}
+
+function normalizeOcrBoxArray(value: unknown[], dimensions: { height?: number; width?: number }) {
+  const numbers = value.map(getNumberValue).filter((number): number is number => number !== null);
+
+  if (numbers.length >= 8) {
+    const xs = numbers.filter((_, index) => index % 2 === 0);
+    const ys = numbers.filter((_, index) => index % 2 === 1);
+    return normalizeOcrBoxNumbers(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), dimensions, "xyxy");
+  }
+
+  if (numbers.length >= 4) {
+    const [x, y, third, fourth] = numbers;
+    const allUnit = [x, y, third, fourth].every((number) => number >= 0 && number <= 1);
+    const preferXyxy = !allUnit && dimensions.width && dimensions.height && third > x && fourth > y && (x + third > dimensions.width || y + fourth > dimensions.height);
+
+    return normalizeOcrBoxNumbers(x, y, third, fourth, dimensions, preferXyxy ? "xyxy" : "xywh");
+  }
+
+  return null;
+}
+
+function normalizeOcrBoxNumbers(
+  x: number,
+  y: number,
+  third: number,
+  fourth: number,
+  dimensions: { height?: number; width?: number },
+  mode: "xywh" | "xyxy"
+) {
+  const left = x;
+  const top = y;
+  const width = mode === "xyxy" ? third - x : third;
+  const height = mode === "xyxy" ? fourth - y : fourth;
+  const allUnit = [left, top, width, height].every((value) => Number.isFinite(value) && value >= 0 && value <= 1);
+
+  if (allUnit) {
+    return {
+      height: Math.max(0, Math.min(1 - clamp(top), height)),
+      width: Math.max(0, Math.min(1 - clamp(left), width)),
+      x: clamp(left),
+      y: clamp(top)
+    };
+  }
+
+  if (!dimensions.width || !dimensions.height || dimensions.width <= 0 || dimensions.height <= 0) {
+    return null;
+  }
+
+  return {
+    height: Math.max(0, Math.min(1 - clamp(top / dimensions.height), height / dimensions.height)),
+    width: Math.max(0, Math.min(1 - clamp(left / dimensions.width), width / dimensions.width)),
+    x: clamp(left / dimensions.width),
+    y: clamp(top / dimensions.height)
+  };
+}
+
+function getNumberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -3608,7 +4460,11 @@ function annotationToShapes(annotation: AnnotationSummary | null): AnnotationSha
       shapes.push({
         id: region.id || `region-${index}`,
         label: region.label ?? defaultLabel,
+        ocrBlockId: geometry.ocrBlockId,
+        page: geometry.page,
         points: geometry.points,
+        sourceName: geometry.sourceName,
+        text: geometry.text,
         type: "POLYGON"
       });
       return;
@@ -3622,6 +4478,10 @@ function annotationToShapes(annotation: AnnotationSummary | null): AnnotationSha
       height: geometry.height,
       id: region.id || `region-${index}`,
       label: region.label ?? defaultLabel,
+      ocrBlockId: geometry.ocrBlockId,
+      page: geometry.page,
+      sourceName: geometry.sourceName,
+      text: geometry.text,
       type: "BBOX",
       width: geometry.width,
       x: geometry.x,
@@ -3643,7 +4503,7 @@ function areShapesEqual(first: AnnotationShape[], second: AnnotationShape[]) {
   return JSON.stringify(first) === JSON.stringify(second);
 }
 
-function isBoxGeometry(value: unknown): value is { height: number; width: number; x: number; y: number } {
+function isBoxGeometry(value: unknown): value is { height: number; ocrBlockId?: string; page?: number; sourceName?: string; text?: string; width: number; x: number; y: number } {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -3652,7 +4512,7 @@ function isBoxGeometry(value: unknown): value is { height: number; width: number
   return ["height", "width", "x", "y"].every((key) => typeof geometry[key] === "number");
 }
 
-function isPolygonGeometry(value: unknown): value is { points: Point[] } {
+function isPolygonGeometry(value: unknown): value is { ocrBlockId?: string; page?: number; points: Point[]; sourceName?: string; text?: string } {
   if (!value || typeof value !== "object" || !Array.isArray((value as Record<string, unknown>).points)) {
     return false;
   }
@@ -3760,10 +4620,18 @@ function shapesToAnnotationPayload(shapes: AnnotationShape[]): SaveAnnotationInp
       geometry:
         shape.type === "POLYGON"
           ? {
-              points: shape.points ?? []
+              ...(shape.ocrBlockId ? { ocrBlockId: shape.ocrBlockId } : {}),
+              ...(shape.page ? { page: shape.page } : {}),
+              points: shape.points ?? [],
+              ...(shape.sourceName ? { sourceName: shape.sourceName } : {}),
+              ...(shape.text ? { text: shape.text } : {})
             }
           : {
               height: shape.height ?? 0,
+              ...(shape.ocrBlockId ? { ocrBlockId: shape.ocrBlockId } : {}),
+              ...(shape.page ? { page: shape.page } : {}),
+              ...(shape.sourceName ? { sourceName: shape.sourceName } : {}),
+              ...(shape.text ? { text: shape.text } : {}),
               width: shape.width ?? 0,
               x: shape.x ?? 0,
               y: shape.y ?? 0
@@ -3998,6 +4866,30 @@ function getAnnotationCanvasWidth({
   const baseWidth = Math.min(cappedWidth, availableHeight * aspectRatio);
 
   return `${Math.max(260, Math.round(baseWidth * zoom))}px`;
+}
+
+function getPdfCanvasWidth({
+  fullscreen,
+  pageInfo,
+  stageSize,
+  zoom
+}: {
+  fullscreen: boolean;
+  pageInfo: PdfPageInfo | null;
+  stageSize: { height: number; width: number };
+  zoom: number;
+}) {
+  if (stageSize.width <= 0 || stageSize.height <= 0) {
+    return "100%";
+  }
+
+  const availableWidth = Math.max(320, stageSize.width - 24);
+  const availableHeight = Math.max(360, stageSize.height - 24);
+  const pageAspectRatio = pageInfo ? pageInfo.width / pageInfo.height : 8.5 / 11;
+  const cappedWidth = fullscreen ? availableWidth : Math.min(availableWidth, 960);
+  const baseWidth = Math.min(cappedWidth, availableHeight * pageAspectRatio);
+
+  return `${Math.max(300, Math.round(baseWidth * zoom))}px`;
 }
 
 function pointsToSvg(points: Point[]) {

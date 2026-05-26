@@ -30,7 +30,7 @@ import { builtInTemplateToPreset } from "../../utils/templates";
 const dataTypes = ["IMAGE", "VIDEO", "AUDIO", "TEXT", "PDF", "TIME_SERIES", "MULTIMODAL"];
 const labelPositions: Array<LabelingSettings["labelPosition"]> = ["top", "right", "bottom", "left"];
 const templateToolDefinitions = [
-  { id: "BBOX", label: "Bounding box", tagNames: ["RectangleLabels"], type: "label" },
+  { id: "BBOX", label: "Bounding box", tagNames: ["RectangleLabels", "OcrLabels"], type: "label" },
   { id: "RECTANGLE", label: "Rectangle", tagNames: ["Rectangle"], type: "direct" },
   { id: "POLYGON", label: "Polygon", tagNames: ["PolygonLabels"], type: "label" },
   { id: "BRUSH", label: "Brush", tagNames: ["BrushLabels"], type: "label" },
