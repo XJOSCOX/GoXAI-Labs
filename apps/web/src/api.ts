@@ -624,6 +624,7 @@ export interface TaskSummary {
     email: string;
     name: string;
   } | null;
+  canManage: boolean;
   canReview: boolean;
   canWork: boolean;
   createdAt: string;
@@ -763,8 +764,32 @@ export interface GenerateTasksResult {
   tasks: TaskSummary[];
 }
 
+export interface DatasetWorkflowResult {
+  tasks: TaskSummary[];
+  updatedCount: number;
+}
+
 export interface DatasetAssignmentResult {
   assignedCount: number;
+}
+
+export interface TaskParticipantSummary {
+  canReview: boolean;
+  canWork: boolean;
+  email: string;
+  id: string;
+  name: string;
+  roles: string[];
+}
+
+export interface TaskWorkflowInput {
+  assignmentMode?: "round_robin" | "single" | "unassigned";
+  assignedToId?: string | null;
+  assigneeIds?: string[];
+  dueAt?: string | null;
+  priority?: number;
+  reviewerId?: string | null;
+  saveDefaults?: boolean;
 }
 
 export interface TaskPageResult {
@@ -775,8 +800,20 @@ export interface TaskPageResult {
   totalPages: number;
 }
 
+export type TaskAssignmentFilter = "all" | "mine" | "unassigned";
+export type TaskDueFilter = "any" | "overdue" | "soon" | "none";
+
+export interface TaskQueueFilters {
+  assignment?: TaskAssignmentFilter;
+  due?: TaskDueFilter;
+  minPriority?: number;
+  search?: string;
+  status?: string;
+}
+
 export interface TaskProjectFolderSummary {
   active: number;
+  approved: number;
   datasetCount: number;
   done: number;
   pending: number;
@@ -784,12 +821,15 @@ export interface TaskProjectFolderSummary {
   projectName: string;
   projectSlug: string;
   projectStatus: string;
+  rejected: number;
+  review: number;
   total: number;
   unassigned: number;
 }
 
 export interface TaskDatasetFolderSummary {
   active: number;
+  approved: number;
   datasetId: string;
   datasetName: string;
   done: number;
@@ -798,6 +838,8 @@ export interface TaskDatasetFolderSummary {
   projectName: string;
   projectSlug: string;
   readyLabel: string;
+  rejected: number;
+  review: number;
   total: number;
   unassigned: number;
   versionLabel: string;
@@ -816,8 +858,11 @@ export interface TaskFoldersResult {
 
 export interface TaskStatsSummary {
   active: number;
+  approved: number;
   done: number;
   pending: number;
+  rejected: number;
+  review: number;
   total: number;
   unassigned: number;
 }
@@ -1700,7 +1745,7 @@ export async function listTasks(session: Session, input: { datasetId?: string; p
 
 export async function listTaskPage(
   session: Session,
-  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string; queue?: "review" | "work" } = {}
+  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string; queue?: "review" | "work" } & TaskQueueFilters = {}
 ) {
   const params = new URLSearchParams();
 
@@ -1723,6 +1768,8 @@ export async function listTaskPage(
   if (input.queue === "review") {
     params.set("queue", "review");
   }
+
+  appendTaskQueueFilters(params, input);
 
   const query = params.toString();
   const response = await authenticatedFetch(session, `/api/tasks${query ? `?${query}` : ""}`);
@@ -1815,7 +1862,7 @@ export async function reviewTask(
 export async function getNextTask(
   session: Session,
   taskId: string,
-  input: { datasetId?: string; projectId?: string; queue?: "review" | "work" } = {}
+  input: { datasetId?: string; projectId?: string; queue?: "review" | "work" } & TaskQueueFilters = {}
 ) {
   const params = new URLSearchParams();
 
@@ -1830,6 +1877,8 @@ export async function getNextTask(
   if (input.queue === "review") {
     params.set("queue", "review");
   }
+
+  appendTaskQueueFilters(params, input);
 
   const query = params.toString();
   const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/next${query ? `?${query}` : ""}`);
@@ -1867,10 +1916,10 @@ export async function submitTaskAnnotation(session: Session, taskId: string, inp
   return (await response.json()) as TaskDetailResult;
 }
 
-export async function generateTasksFromDataset(session: Session, datasetId: string, input: { quantity?: number } = {}) {
+export async function generateTasksFromDataset(session: Session, datasetId: string, input: { quantity?: number } & TaskWorkflowInput = {}) {
   const response = await authenticatedFetch(session, "/api/tasks/generate-from-dataset", {
     method: "POST",
-    body: JSON.stringify(removeEmptyValues({ datasetId, quantity: input.quantity }))
+    body: JSON.stringify(removeEmptyValues({ ...input, datasetId }))
   });
 
   if (!response.ok) {
@@ -1878,6 +1927,19 @@ export async function generateTasksFromDataset(session: Session, datasetId: stri
   }
 
   return (await response.json()) as GenerateTasksResult;
+}
+
+export async function applyDatasetTaskWorkflow(session: Session, datasetId: string, input: TaskWorkflowInput) {
+  const response = await authenticatedFetch(session, "/api/tasks/dataset-workflow", {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues({ ...input, datasetId }))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update dataset task workflow."));
+  }
+
+  return (await response.json()) as DatasetWorkflowResult;
 }
 
 export async function assignDatasetToSelf(session: Session, datasetId: string) {
@@ -1891,6 +1953,30 @@ export async function assignDatasetToSelf(session: Session, datasetId: string) {
   }
 
   return (await response.json()) as DatasetAssignmentResult;
+}
+
+export async function listTaskParticipants(session: Session, projectId: string) {
+  const params = new URLSearchParams({ projectId });
+  const response = await authenticatedFetch(session, `/api/tasks/participants?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load task participants."));
+  }
+
+  return ((await response.json()) as { participants: TaskParticipantSummary[] }).participants;
+}
+
+export async function updateTaskWorkflow(session: Session, taskId: string, input: TaskWorkflowInput) {
+  const response = await authenticatedFetch(session, `/api/tasks/${encodeURIComponent(taskId)}/workflow`, {
+    method: "PATCH",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to update task workflow."));
+  }
+
+  return ((await response.json()) as { task: TaskSummary }).task;
 }
 
 export async function assignTaskToSelf(session: Session, taskId: string) {
@@ -2201,6 +2287,28 @@ function authenticatedFetch(session: Session, path: string, init: RequestInit = 
       ...init.headers
     }
   });
+}
+
+function appendTaskQueueFilters(params: URLSearchParams, input: TaskQueueFilters) {
+  if (input.assignment && input.assignment !== "all") {
+    params.set("assignment", input.assignment);
+  }
+
+  if (input.due && input.due !== "any") {
+    params.set("due", input.due);
+  }
+
+  if (typeof input.minPriority === "number" && Number.isFinite(input.minPriority)) {
+    params.set("minPriority", String(input.minPriority));
+  }
+
+  if (input.search?.trim()) {
+    params.set("search", input.search.trim());
+  }
+
+  if (input.status?.trim()) {
+    params.set("status", input.status.trim());
+  }
 }
 
 async function updateTask(session: Session, taskId: string, action: "assign-self" | "start" | "submit") {

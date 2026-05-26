@@ -42,8 +42,9 @@ const maxConcurrentAssetUploads = 3;
 const maxUploadFolderAssets = 250;
 const maxStructuredImportRows = 500;
 const structuredImportExtensions = new Set(["csv", "json", "jsonl", "ndjson"]);
-
 function DatasetTasksPanel({
+  activeTaskTotal,
+  assetTotal,
   canGenerateTasks,
   dataset,
   loading,
@@ -55,6 +56,8 @@ function DatasetTasksPanel({
   taskTotal,
   tasks
 }: {
+  activeTaskTotal: number;
+  assetTotal: number;
   canGenerateTasks: boolean;
   dataset: DatasetSummary;
   loading: boolean;
@@ -75,6 +78,16 @@ function DatasetTasksPanel({
   const [generationMode, setGenerationMode] = useState<"all" | "custom">("all");
   const [taskQuantity, setTaskQuantity] = useState("10");
   const [message, setMessage] = useState<string | null>(null);
+  const hasTemplateConfig = hasDatasetTemplateConfig(dataset);
+  const hasControllerConfig = hasDatasetControllerConfig(dataset);
+  const canGenerateConfiguredTasks = hasTemplateConfig && hasControllerConfig;
+  const configIssue = !hasTemplateConfig && !hasControllerConfig
+    ? "Apply a controller and template config before generating tasks."
+    : !hasTemplateConfig
+      ? "Apply a template config before generating tasks."
+      : !hasControllerConfig
+        ? "Apply a controller config before generating tasks."
+        : null;
 
   async function handleGenerate() {
     setMessage(null);
@@ -92,18 +105,22 @@ function DatasetTasksPanel({
       return;
     }
 
+    if (!canGenerateConfiguredTasks) {
+      setPageError(configIssue ?? "Apply config before generating tasks.");
+      return;
+    }
+
     setGenerating(true);
 
     try {
       const result = await generateTasksFromDataset(session, dataset.id, {
         quantity: generationMode === "custom" ? normalizedQuantity : undefined
       });
+      const remainingCount = result.remainingCount ?? 0;
       setMessage(
-        result.createdCount > 0
-          ? `${result.createdCount} task${result.createdCount === 1 ? "" : "s"} generated.${
-              result.remainingCount ? ` ${result.remainingCount} asset${result.remainingCount === 1 ? "" : "s"} still need tasks.` : ""
-            }`
-          : "Tasks already exist for every dataset asset."
+        `Generated ${result.createdCount} task${result.createdCount === 1 ? "" : "s"}. ` +
+          `Skipped ${result.skippedCount} existing. Remaining ${remainingCount}. ` +
+          `Assignment: ${getDatasetAssignmentLabel(dataset)}.`
       );
       await onGenerated();
     } catch (reason) {
@@ -119,10 +136,27 @@ function DatasetTasksPanel({
         <div>
           <p className="eyebrow">Workflow</p>
           <h2>Dataset tasks</h2>
-          <span>{taskTotal} task records for this dataset</span>
+          <span>
+            {taskTotal} task records for this dataset - {activeTaskTotal} active
+          </span>
+          <div className="dataset-readiness-badges">
+            <span className={`status-pill compact ${hasControllerConfig ? "ready" : "warning"}`}>
+              Controller: {hasControllerConfig ? "Ready" : "Required"}
+            </span>
+            <span className={`status-pill compact ${hasTemplateConfig ? "ready" : "warning"}`}>
+              Template: {hasTemplateConfig ? "Ready" : "Required"}
+            </span>
+            <span className={`status-pill compact ${taskTotal >= assetTotal && assetTotal > 0 ? "ready" : "warning"}`}>
+              Tasks: {taskTotal}/{assetTotal}
+            </span>
+          </div>
         </div>
         {canGenerateTasks ? (
           <div className="task-generator">
+            <Link className="secondary-button compact-button" to={`/datasets/${dataset.id}/label-config`}>
+              <ClipboardList size={15} />
+              Apply Config
+            </Link>
             <div className="task-generator-options" aria-label="Task generation quantity">
               <button
                 className={generationMode === "all" ? "option-chip active" : "option-chip"}
@@ -151,7 +185,8 @@ function DatasetTasksPanel({
                 </label>
               )}
             </div>
-            <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating}>
+            {configIssue ? <span className="inline-hint">{configIssue}</span> : null}
+            <button className="primary-button" type="button" onClick={handleGenerate} disabled={generating || !canGenerateConfiguredTasks}>
               <ClipboardList size={18} />
               {generating ? "Generating" : "Generate tasks"}
             </button>
@@ -325,9 +360,9 @@ function DatasetExportsPanel({
               <div>
                 <strong>{exportJob.outputAsset?.fileName ?? "Approved annotations export"}</strong>
                 <span>
-                  {formatEnum(exportJob.status)} · {formatDate(exportJob.createdAt)}
-                  {exportJob.format ? ` · ${formatEnum(exportJob.format)}` : ""}
-                  {exportJob.metadata && typeof exportJob.metadata.taskCount === "number" ? ` · ${exportJob.metadata.taskCount} tasks` : ""}
+                  {formatEnum(exportJob.status)} - {formatDate(exportJob.createdAt)}
+                  {exportJob.format ? ` - ${formatEnum(exportJob.format)}` : ""}
+                  {exportJob.metadata && typeof exportJob.metadata.taskCount === "number" ? ` - ${exportJob.metadata.taskCount} tasks` : ""}
                 </span>
                 {exportJob.errorMessage && <span className="danger-copy">{exportJob.errorMessage}</span>}
               </div>
@@ -882,10 +917,6 @@ export function DatasetDetailPage() {
                   </div>
                   {dataset.canManage ? (
                     <div className="row-actions compact">
-                      <Link className="secondary-button compact-button" to={`/datasets/${dataset.id}/label-config`}>
-                        <ClipboardList size={16} />
-                        Template
-                      </Link>
                       <button className="secondary-button compact-button" type="button" onClick={() => setShowEditModal(true)}>
                         <Edit3 size={16} />
                         Edit dataset
@@ -917,8 +948,43 @@ export function DatasetDetailPage() {
                     <dd>{dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) ? "Applied" : "Required"}</dd>
                   </div>
                 </dl>
+                <div className="dataset-progress-panel">
+                  <div className="dataset-progress-head">
+                    <span>
+                      <strong>{getCompletionPercent(taskStats.approved, taskStats.total)}%</strong>
+                      <small>approved</small>
+                    </span>
+                    <div className="dataset-progress-track" aria-label="Approved task progress">
+                      <span style={{ width: `${getCompletionPercent(taskStats.approved, taskStats.total)}%` }} />
+                    </div>
+                  </div>
+                  <div className="dataset-progress-stats">
+                    <span>
+                      <strong>{taskStats.pending}</strong>
+                      <small>Pending</small>
+                    </span>
+                    <span>
+                      <strong>{taskStats.active}</strong>
+                      <small>Active</small>
+                    </span>
+                    <span>
+                      <strong>{taskStats.review}</strong>
+                      <small>Review</small>
+                    </span>
+                    <span>
+                      <strong>{taskStats.approved}</strong>
+                      <small>Approved</small>
+                    </span>
+                    <span>
+                      <strong>{taskStats.rejected}</strong>
+                      <small>Rejected</small>
+                    </span>
+                  </div>
+                </div>
               </section>
               <DatasetTasksPanel
+                activeTaskTotal={taskStats.active}
+                assetTotal={assets.length}
                 canGenerateTasks={dataset.canGenerateTasks}
                 dataset={dataset}
                 loading={tasksLoading}
@@ -2530,6 +2596,40 @@ function getStructuredRowTitle(row: Record<string, unknown>, bindings: string[],
   return typeof titleValue === "string" && titleValue.trim()
     ? titleValue.trim().slice(0, 80)
     : `Row ${rowNumber}`;
+}
+
+function hasDatasetTemplateConfig(dataset: DatasetSummary) {
+  return dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) && isRecord(dataset.labelingConfig);
+}
+
+function hasDatasetControllerConfig(dataset: DatasetSummary) {
+  return isRecord(dataset.metadata) && isRecord(dataset.metadata.taskWorkflowDefaults);
+}
+
+function getDatasetAssignmentLabel(dataset: DatasetSummary) {
+  if (!isRecord(dataset.metadata) || !isRecord(dataset.metadata.taskWorkflowDefaults)) {
+    return "Unassigned";
+  }
+
+  const mode = dataset.metadata.taskWorkflowDefaults.assignmentMode;
+
+  if (mode === "round_robin") {
+    return "Round-robin";
+  }
+
+  if (mode === "single") {
+    return "One annotator";
+  }
+
+  return "Unassigned";
+}
+
+function getCompletionPercent(approved: number, total: number) {
+  if (total <= 0) {
+    return 0;
+  }
+
+  return Math.round((approved / total) * 100);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

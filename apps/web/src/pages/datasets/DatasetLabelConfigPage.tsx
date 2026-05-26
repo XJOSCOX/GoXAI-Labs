@@ -2,10 +2,15 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CheckCircle2, GalleryHorizontalEnd, Save, Settings2, X } from "lucide-react";
 import {
+  applyDatasetTaskWorkflow,
   listAnnotationTemplates,
   listBuiltInAnnotationTemplates,
+  listTaskParticipants,
   updateDataset,
-  type AnnotationTemplateSummary
+  type AnnotationTemplateSummary,
+  type DatasetSummary,
+  type TaskParticipantSummary,
+  type TaskWorkflowInput
 } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -27,6 +32,13 @@ import {
 import { useDataset } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
 import { builtInTemplateToPreset } from "../../utils/templates";
+
+const priorityPresets = [
+  { label: "Normal", value: "0" },
+  { label: "High", value: "5" },
+  { label: "Urgent", value: "10" }
+];
+type DatasetTaskAssignmentMode = NonNullable<TaskWorkflowInput["assignmentMode"]>;
 
 export function DatasetLabelConfigPage() {
   const { datasetId = "" } = useParams();
@@ -185,16 +197,24 @@ export function DatasetLabelConfigPage() {
               </p>
             </section>
 
-            <section className="panel dataset-template-assignment">
+            <div className="dataset-config-grid">
+              <DatasetControllerConfig
+                dataset={dataset}
+                onSaved={reload}
+                session={session}
+                setPageError={setPageError}
+              />
+
+              <section className="panel dataset-template-assignment">
               <div className="dataset-template-assignment-head">
                 <div>
-                  <p className="eyebrow">Assigned template</p>
+                  <p className="eyebrow">Template assignment</p>
                   <h3>{appliedTemplate?.name ?? "No template assigned"}</h3>
-                  <p className="muted-copy">
-                    {appliedTemplate
-                      ? `${appliedTemplate.category} · ${appliedTemplate.dataType}`
-                      : "Choose a reusable template, then configure labels, tools, and settings in the popup."}
-                  </p>
+                    <p className="muted-copy">
+                      {appliedTemplate
+                        ? `${appliedTemplate.category} - ${appliedTemplate.dataType}`
+                        : "Choose a reusable template, then configure labels, tools, and settings in the popup."}
+                    </p>
                 </div>
                 <button className="primary-button" type="button" onClick={() => setShowTemplatePicker(true)}>
                   <GalleryHorizontalEnd size={18} />
@@ -232,7 +252,8 @@ export function DatasetLabelConfigPage() {
                 </button>
               )}
               {message && <p className="form-success">{message}</p>}
-            </section>
+              </section>
+            </div>
           </div>
         ) : !error ? (
           <p className="muted-copy">Dataset was not found.</p>
@@ -272,6 +293,281 @@ export function DatasetLabelConfigPage() {
           builtInTemplates={builtInTemplates}
         />
       )}
+    </section>
+  );
+}
+
+function DatasetControllerConfig({
+  dataset,
+  onSaved,
+  session,
+  setPageError
+}: {
+  dataset: DatasetSummary;
+  onSaved: () => Promise<void>;
+  session: ReturnType<typeof useAuth>["session"];
+  setPageError: (error: string | null) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<TaskParticipantSummary[]>([]);
+  const [workflow, setWorkflow] = useState(() => getDatasetWorkflowDraft(dataset));
+  const assignees = participants.filter((participant) => participant.canWork);
+  const reviewers = participants.filter((participant) => participant.canReview);
+  const selectedAssigneeNames = assignees
+    .filter((participant) => workflow.assigneeIds.includes(participant.id))
+    .map((participant) => participant.name);
+  const priorityMeaning = getPriorityMeaning(workflow.priority);
+
+  useEffect(() => {
+    setWorkflow(getDatasetWorkflowDraft(dataset));
+  }, [dataset.id]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!session || !dataset.canGenerateTasks) {
+      setParticipants([]);
+      return () => {
+        active = false;
+      };
+    }
+
+    listTaskParticipants(session, dataset.projectId)
+      .then((result) => {
+        if (active) {
+          setParticipants(result);
+        }
+      })
+      .catch((reason) => {
+        if (active) {
+          setParticipants([]);
+          setPageError(reason instanceof Error ? reason.message : "Unable to load dataset task members.");
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [dataset.canGenerateTasks, dataset.projectId, session?.access_token]);
+
+  function getWorkflowInput(): TaskWorkflowInput | null {
+    const priority = workflow.priority.trim() === "" ? 0 : Number(workflow.priority);
+
+    if (!Number.isInteger(priority) || priority < 0 || priority > 10) {
+      setPageError("Priority must be a whole number from 0 to 10.");
+      return null;
+    }
+
+    let dueAt: string | null = null;
+
+    if (workflow.dueAt) {
+      const dueDate = new Date(workflow.dueAt);
+
+      if (Number.isNaN(dueDate.getTime())) {
+        setPageError("Due date must be a valid date.");
+        return null;
+      }
+
+      dueAt = dueDate.toISOString();
+    }
+
+    if (workflow.assignmentMode === "single" && !workflow.assignedToId) {
+      setPageError("Choose an assignee or switch assignment mode to Unassigned.");
+      return null;
+    }
+
+    if (workflow.assignmentMode === "round_robin" && workflow.assigneeIds.length === 0) {
+      setPageError("Choose at least one annotator for round-robin assignment.");
+      return null;
+    }
+
+    return {
+      assignedToId: workflow.assignmentMode === "single" ? workflow.assignedToId : null,
+      assigneeIds: workflow.assignmentMode === "round_robin" ? workflow.assigneeIds : [],
+      assignmentMode: workflow.assignmentMode,
+      dueAt,
+      priority,
+      reviewerId: workflow.reviewerId || null,
+      saveDefaults: true
+    };
+  }
+
+  async function handleSaveController() {
+    setMessage(null);
+    setPageError(null);
+
+    if (!session) {
+      setPageError("Authentication required.");
+      return;
+    }
+
+    const workflowInput = getWorkflowInput();
+
+    if (!workflowInput) {
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const result = await applyDatasetTaskWorkflow(session, dataset.id, workflowInput);
+      setMessage(
+        result.updatedCount > 0
+          ? `Controller saved. ${result.updatedCount} active task${result.updatedCount === 1 ? "" : "s"} updated.`
+          : "Controller saved. No active tasks needed updates."
+      );
+      await onSaved();
+    } catch (reason) {
+      setPageError(reason instanceof Error ? reason.message : "Unable to save controller config.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="panel dataset-controller-config">
+      <div className="dataset-template-assignment-head">
+        <div>
+          <p className="eyebrow">Controller</p>
+          <h3>Task controller config</h3>
+          <p className="muted-copy">Set assignment, review, due date, and queue priority before generating tasks.</p>
+        </div>
+        <span className={`status-pill compact ${isDatasetControllerConfigured(dataset) ? "" : "warning"}`}>
+          {isDatasetControllerConfigured(dataset) ? "Configured" : "Required"}
+        </span>
+      </div>
+      <div className="dataset-workflow-controls stacked">
+        <label>
+          Assignment
+          <select
+            onChange={(event) => {
+              const assignmentMode = event.currentTarget.value as DatasetTaskAssignmentMode;
+              setWorkflow((current) => ({
+                ...current,
+                assignmentMode,
+                assignedToId: assignmentMode === "single" ? current.assignedToId : "",
+                assigneeIds: assignmentMode === "round_robin" ? current.assigneeIds : []
+              }));
+            }}
+            value={workflow.assignmentMode}
+          >
+            <option value="unassigned">Unassigned</option>
+            <option value="single">One annotator</option>
+            <option value="round_robin">Round-robin</option>
+          </select>
+        </label>
+        {workflow.assignmentMode === "single" ? (
+          <label>
+            Assign to
+            <select
+              onChange={(event) => {
+                const assignedToId = event.currentTarget.value;
+                setWorkflow((current) => ({ ...current, assignedToId }));
+              }}
+              value={workflow.assignedToId}
+            >
+              <option value="">Choose annotator</option>
+              {assignees.map((participant) => (
+                <option key={participant.id} value={participant.id}>
+                  {participant.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {workflow.assignmentMode === "round_robin" ? (
+          <label className="wide">
+            Round-robin annotators
+            <select
+              multiple
+              onChange={(event) => {
+                const assigneeIds = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
+                setWorkflow((current) => ({ ...current, assigneeIds }));
+              }}
+              value={workflow.assigneeIds}
+            >
+              {assignees.map((participant) => (
+                <option key={participant.id} value={participant.id}>
+                  {participant.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <label>
+          Reviewer
+          <select
+            onChange={(event) => {
+              const reviewerId = event.currentTarget.value;
+              setWorkflow((current) => ({ ...current, reviewerId }));
+            }}
+            value={workflow.reviewerId}
+          >
+            <option value="">No reviewer</option>
+            {reviewers.map((participant) => (
+              <option key={participant.id} value={participant.id}>
+                {participant.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Priority preset
+          <select
+            onChange={(event) => {
+              const priority = event.currentTarget.value;
+              setWorkflow((current) => ({ ...current, priority }));
+            }}
+            value={workflow.priority}
+          >
+            {priorityPresets.map((preset) => (
+              <option key={preset.value} value={preset.value}>
+                {preset.label} ({preset.value})
+              </option>
+            ))}
+            {!priorityPresets.some((preset) => preset.value === workflow.priority) ? (
+              <option value={workflow.priority}>Custom ({workflow.priority})</option>
+            ) : null}
+          </select>
+        </label>
+        <label>
+          Priority number
+          <input
+            max="10"
+            min="0"
+            onChange={(event) => {
+              const priority = event.currentTarget.value;
+              setWorkflow((current) => ({ ...current, priority }));
+            }}
+            type="number"
+            value={workflow.priority}
+          />
+        </label>
+        <label>
+          Due date
+          <input
+            onChange={(event) => {
+              const dueAt = event.currentTarget.value;
+              setWorkflow((current) => ({ ...current, dueAt }));
+            }}
+            type="datetime-local"
+            value={workflow.dueAt}
+          />
+        </label>
+        <div className="workflow-summary wide">
+          <strong>{priorityMeaning.title}</strong>
+          <span>{priorityMeaning.description}</span>
+          {workflow.assignmentMode === "round_robin" && selectedAssigneeNames.length > 0 ? (
+            <span>Rotation: {selectedAssigneeNames.join(" -> ")}</span>
+          ) : null}
+        </div>
+      </div>
+      <button className="primary-button" disabled={saving} onClick={handleSaveController} type="button">
+        <Save size={18} />
+        {saving ? "Saving controller" : "Save controller"}
+      </button>
+      {message ? <p className="form-success">{message}</p> : null}
     </section>
   );
 }
@@ -558,6 +854,93 @@ function getConfigString(config: Record<string, unknown>, key: string) {
   const value = config[key];
 
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getDatasetWorkflowDraft(dataset: DatasetSummary) {
+  const defaults = isRecord(dataset.metadata) && isRecord(dataset.metadata.taskWorkflowDefaults) ? dataset.metadata.taskWorkflowDefaults : null;
+  const assignedToId = getOptionalString(defaults?.assignedToId);
+  const assigneeIds = Array.isArray(defaults?.assigneeIds)
+    ? [...new Set(defaults.assigneeIds.filter((value): value is string => typeof value === "string" && value.length > 0))]
+    : [];
+  const assignmentMode = getDatasetAssignmentMode(defaults?.assignmentMode, assignedToId, assigneeIds);
+
+  return {
+    assignedToId: assignmentMode === "single" ? assignedToId : "",
+    assigneeIds: assignmentMode === "round_robin" ? assigneeIds : [],
+    assignmentMode,
+    dueAt: getDateTimeLocalValue(defaults?.dueAt),
+    priority: getPriorityDraftValue(defaults?.priority),
+    reviewerId: getOptionalString(defaults?.reviewerId)
+  };
+}
+
+function getDatasetAssignmentMode(value: unknown, assignedToId: string, assigneeIds: string[]): DatasetTaskAssignmentMode {
+  if (value === "single" || value === "round_robin" || value === "unassigned") {
+    return value;
+  }
+
+  if (assigneeIds.length > 0) {
+    return "round_robin";
+  }
+
+  return assignedToId ? "single" : "unassigned";
+}
+
+function getOptionalString(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function getPriorityDraftValue(value: unknown) {
+  const priority = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : 0;
+
+  return Number.isInteger(priority) && priority >= 0 && priority <= 10 ? String(priority) : "0";
+}
+
+function getDateTimeLocalValue(value: unknown) {
+  if (typeof value !== "string" || !value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const pad = (part: number) => String(part).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getPriorityMeaning(value: string) {
+  const priority = Number(value);
+
+  if (Number.isFinite(priority) && priority >= 10) {
+    return {
+      description: "Use 10 for urgent work. Higher priority appears first in task queues.",
+      title: "Urgent priority"
+    };
+  }
+
+  if (Number.isFinite(priority) && priority >= 5) {
+    return {
+      description: "Use 5 for important work that should appear before normal tasks.",
+      title: "High priority"
+    };
+  }
+
+  return {
+    description: "Use 0 for normal work. The allowed range is 0 to 10.",
+    title: "Normal priority"
+  };
+}
+
+function isDatasetControllerConfigured(dataset: DatasetSummary) {
+  return isRecord(dataset.metadata) && isRecord(dataset.metadata.taskWorkflowDefaults);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function getSelectedTemplateFromForm(form: HTMLFormElement, templates: TemplatePreset[]) {

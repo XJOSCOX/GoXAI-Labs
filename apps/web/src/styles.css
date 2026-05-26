@@ -907,6 +907,16 @@ textarea:focus {
   font-size: 11px;
 }
 
+.status-pill.ready {
+  background: color-mix(in srgb, #2fbf71 16%, var(--surface-strong));
+  color: #8ef0b5;
+}
+
+.status-pill.warning {
+  background: color-mix(in srgb, #f4c542 18%, var(--surface-strong));
+  color: #ffd978;
+}
+
 .page-stack {
   display: grid;
   align-content: start;
@@ -2028,9 +2038,9 @@ textarea:focus {
 }
 
 .task-panel-head {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, auto);
+  align-items: start;
   gap: 16px;
 }
 
@@ -2042,12 +2052,111 @@ textarea:focus {
   color: var(--muted);
 }
 
+.dataset-readiness-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
 .task-generator {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
+  max-width: 720px;
+}
+
+.dataset-workflow-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: end;
+  gap: 8px;
+  width: 100%;
+}
+
+.dataset-workflow-controls.stacked {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.dataset-workflow-controls .wide {
+  grid-column: span 2;
+}
+
+.dataset-workflow-controls label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dataset-workflow-controls input,
+.dataset-workflow-controls select {
+  min-height: 34px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.dataset-workflow-controls select[multiple] {
+  min-height: 72px;
+  padding: 7px 9px;
+}
+
+.workflow-default-toggle {
+  align-items: center;
+  grid-auto-flow: column;
+  justify-content: start;
+  min-height: 34px;
+}
+
+.workflow-default-toggle input {
+  min-height: 0;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.workflow-summary {
+  display: grid;
+  gap: 3px;
+  align-self: stretch;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 8px 10px;
+}
+
+.workflow-summary strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.dataset-controller-config > .primary-button {
+  justify-self: start;
+}
+
+.inline-hint {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  max-width: none;
+  text-align: right;
 }
 
 .task-generator-options {
@@ -2226,7 +2335,7 @@ textarea:focus {
 }
 
 .table-row.task-head {
-  grid-template-columns: minmax(0, 2fr) 1fr 1fr 1fr;
+  grid-template-columns: minmax(0, 2fr) 0.75fr 0.68fr minmax(142px, 0.95fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr);
 }
 
 .table-row.member-head {
@@ -2333,6 +2442,97 @@ textarea:focus {
   gap: 10px;
 }
 
+.task-queue-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(130px, 160px)) minmax(108px, 130px) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.compact-search-field input,
+.task-queue-filters select,
+.compact-number-field input {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.task-queue-filters select {
+  padding: 0 10px;
+}
+
+.compact-number-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 0 8px;
+}
+
+.compact-number-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.compact-number-field input {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.task-priority-pill {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.task-priority-pill.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  color: var(--text);
+}
+
+.task-inline-input,
+.task-inline-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.task-inline-input[type="number"] {
+  max-width: 72px;
+}
+
+.task-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .compact-segmented {
   min-height: 34px;
 }
@@ -2424,7 +2624,7 @@ textarea:focus {
 
 .task-folder-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -2446,6 +2646,63 @@ textarea:focus {
 .task-folder-stats small {
   color: var(--muted);
   font-size: 11px;
+}
+
+.dataset-progress-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 12px;
+}
+
+.dataset-progress-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.dataset-progress-head > span,
+.dataset-progress-stats > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dataset-progress-head strong,
+.dataset-progress-stats strong {
+  color: var(--text);
+  line-height: 1;
+}
+
+.dataset-progress-head small,
+.dataset-progress-stats small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dataset-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.dataset-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.dataset-progress-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .task-detail-frame {
@@ -3215,10 +3472,25 @@ textarea:focus {
 }
 
 .task-review-panel,
+.task-revision-panel,
 .task-comments-panel,
 .task-history-panel {
   display: grid;
   gap: 10px;
+}
+
+.task-revision-panel {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface-strong));
+}
+
+.task-revision-panel strong {
+  color: var(--text);
+}
+
+.task-revision-panel span,
+.task-revision-panel small {
+  color: var(--muted);
 }
 
 .review-feedback-input,
@@ -3920,6 +4192,20 @@ textarea:focus {
 
 .dataset-template-assignment {
   display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.dataset-config-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.85fr) minmax(460px, 1.15fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.dataset-controller-config {
+  display: grid;
+  align-content: start;
   gap: 14px;
 }
 
@@ -3937,7 +4223,7 @@ textarea:focus {
 .dataset-template-card,
 .dataset-template-empty {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(120px, 150px) minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   min-width: 0;
@@ -5536,6 +5822,7 @@ textarea:focus {
   .organization-layout,
   .project-workspace-layout,
   .dataset-detail-layout,
+  .dataset-config-grid,
   .dataset-template-card,
   .dataset-template-picker,
   .labeling-interface-builder,
@@ -5562,6 +5849,27 @@ textarea:focus {
 
   .task-folder-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-queue-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dataset-progress-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .task-panel-head {
+    grid-template-columns: 1fr;
+  }
+
+  .task-generator {
+    justify-content: flex-start;
+    max-width: none;
+  }
+
+  .inline-hint {
+    text-align: left;
   }
 
   .plan-option-row {
@@ -5609,6 +5917,7 @@ textarea:focus {
   .management-grid,
   .dataset-template-card,
   .dataset-template-picker,
+  .dataset-config-grid,
   .dataset-template-assignment-head,
   .label-config-layout,
   .label-settings-grid,
@@ -5623,6 +5932,10 @@ textarea:focus {
   .table-row.project-head,
   .table-row.task-head,
   .table-row,
+  .dataset-workflow-controls,
+  .dataset-progress-head,
+  .dataset-progress-stats,
+  .task-queue-filters,
   .task-folder-grid,
   .admin-user-row {
     grid-template-columns: 1fr;
@@ -5647,6 +5960,10 @@ textarea:focus {
     flex-direction: column;
   }
 
+  .task-panel-head {
+    grid-template-columns: 1fr;
+  }
+
   .section-actions,
   .table-toolbar,
   .asset-toolbar-actions,
@@ -5656,6 +5973,10 @@ textarea:focus {
 
   .task-generator {
     justify-content: flex-start;
+  }
+
+  .inline-hint {
+    text-align: left;
   }
 
   .pagination-bar > div {

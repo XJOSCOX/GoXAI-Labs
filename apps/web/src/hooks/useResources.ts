@@ -19,6 +19,7 @@ import {
   type ProjectSummary,
   type TaskDatasetFolderSummary,
   type TaskProjectFolderSummary,
+  type TaskQueueFilters,
   type TaskStatsSummary,
   type TaskSummary
 } from "../api";
@@ -351,7 +352,7 @@ export function useTasks(
 
 export function useTaskPage(
   session: ReturnType<typeof useAuth>["session"],
-  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string; queue?: "review" | "work" } = {}
+  input: { datasetId?: string; page?: number; pageSize?: number; projectId?: string; queue?: "review" | "work" } & TaskQueueFilters = {}
 ) {
   const sessionRef = useLatestSessionRef(session);
   const sessionKey = getSessionKey(session);
@@ -391,7 +392,20 @@ export function useTaskPage(
     } finally {
       setLoading(false);
     }
-  }, [input.datasetId, input.page, input.pageSize, input.projectId, input.queue, sessionKey, sessionRef]);
+  }, [
+    input.assignment,
+    input.datasetId,
+    input.due,
+    input.minPriority,
+    input.page,
+    input.pageSize,
+    input.projectId,
+    input.queue,
+    input.search,
+    input.status,
+    sessionKey,
+    sessionRef
+  ]);
 
   useEffect(() => {
     void reload();
@@ -467,8 +481,11 @@ export function useTaskStats(
   const sessionKey = getSessionKey(session);
   const [stats, setStats] = useState<TaskStatsSummary>({
     active: 0,
+    approved: 0,
     done: 0,
     pending: 0,
+    rejected: 0,
+    review: 0,
     total: 0,
     unassigned: 0
   });
@@ -481,8 +498,11 @@ export function useTaskStats(
     if (!activeSession) {
       setStats({
         active: 0,
+        approved: 0,
         done: 0,
         pending: 0,
+        rejected: 0,
+        review: 0,
         total: 0,
         unassigned: 0
       });

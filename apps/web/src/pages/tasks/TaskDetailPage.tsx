@@ -1,7 +1,20 @@
 import { type PointerEvent, type WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, CheckCircle2, Eye, Hand, History, Lock, Maximize2, MessageSquare, Minimize2, Minus, Plus, Redo2, RotateCcw, Save, Send, SquareDashedMousePointer, Trash2, Undo2, Unlock, XCircle } from "lucide-react";
-import { addTaskComment, getAssetAccessUrl, getNextTask, reviewTask, saveTaskAnnotation, startTask, submitTaskAnnotation, type AnnotationSummary, type ReviewSummary, type SaveAnnotationInput, type TaskSummary } from "../../api";
+import {
+  addTaskComment,
+  getAssetAccessUrl,
+  getNextTask,
+  reviewTask,
+  saveTaskAnnotation,
+  startTask,
+  submitTaskAnnotation,
+  type AnnotationSummary,
+  type ReviewSummary,
+  type SaveAnnotationInput,
+  type TaskQueueFilters,
+  type TaskSummary
+} from "../../api";
 import { useAuth } from "../../auth";
 import { useTask } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
@@ -31,6 +44,13 @@ interface Point {
   x: number;
   y: number;
 }
+
+type ResolvedTaskQueueFilters = Omit<TaskQueueFilters, "assignment" | "due" | "search" | "status"> & {
+  assignment: NonNullable<TaskQueueFilters["assignment"]>;
+  due: NonNullable<TaskQueueFilters["due"]>;
+  search: string;
+  status: string;
+};
 
 interface PdfPageInfo {
   height: number;
@@ -195,6 +215,7 @@ export function TaskDetailPage() {
   const queuePage = searchParams.get("page");
   const queueProjectId = searchParams.get("projectId");
   const queueMode = searchParams.get("queue");
+  const queueFilters = useMemo(() => getQueueFilters(searchParams), [searchParams]);
   const { session } = useAuth();
   const {
     annotation,
@@ -274,7 +295,7 @@ export function TaskDetailPage() {
   const nextAction = task ? getNextTaskAction(task.status) : null;
   const annotationStatus = annotation?.status ?? "No draft";
   const pageTitle = task?.asset?.fileName ?? "Task workspace";
-  const taskQueueLink = getTaskQueueLink({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId, queue: queueMode }, task);
+  const taskQueueLink = getTaskQueueLink({ datasetId: queueDatasetId, filters: queueFilters, page: queuePage, projectId: queueProjectId, queue: queueMode }, task);
   const canReviewTask = Boolean(task?.canReview && (task.status === "SUBMITTED" || task.status === "REVIEWING"));
   const configCode = getConfigString(task?.dataset?.labelingConfig, "configCode") ?? "";
   const templateSources = useMemo(() => parseTemplateSources(configCode), [configCode]);
@@ -330,6 +351,10 @@ export function TaskDetailPage() {
   const canRedoShapeEdit = canAnnotate && shapeRedoStack.length > 0;
   const canUndoShapeEdit = canAnnotate && shapeUndoStack.length > 0;
   const taskHistoryItems = useMemo(() => buildTaskHistoryItems(annotationHistory, reviews), [annotationHistory, reviews]);
+  const latestRejectedReview = useMemo(
+    () => reviews.find((review) => review.status === "NEEDS_CHANGES") ?? null,
+    [reviews]
+  );
   const polygonInProgress = activeTool === "POLYGON" && polygonPoints.length > 0;
   const canStartPolygon = activeTool === "POLYGON" && (labelArmed || labelDrawLock);
 
@@ -422,7 +447,7 @@ export function TaskDetailPage() {
     setNextTaskLoading(true);
     setNextTaskError(null);
 
-    getNextTask(session, task.id, { datasetId, projectId, queue: queueMode === "review" ? "review" : "work" })
+    getNextTask(session, task.id, { ...queueFilters, datasetId, projectId, queue: queueMode === "review" ? "review" : "work" })
       .then((result) => {
         if (active) {
           setNextTask(result.task);
@@ -443,7 +468,7 @@ export function TaskDetailPage() {
     return () => {
       active = false;
     };
-  }, [queueDatasetId, queueMode, queueProjectId, session, task?.datasetId, task?.id, task?.projectId]);
+  }, [queueDatasetId, queueFilters, queueMode, queueProjectId, session, task?.datasetId, task?.id, task?.projectId]);
 
   useEffect(() => {
     setActiveTool((current) => (drawingToolOptions.includes(current) ? current : drawingToolOptions[0] ?? "BBOX"));
@@ -1247,7 +1272,12 @@ export function TaskDetailPage() {
       }
     }
 
-    navigate(`/tasks/${nextTask.id}${getTaskDetailSearch({ datasetId: queueDatasetId, page: queuePage, projectId: queueProjectId, queue: queueMode }, nextTask)}`);
+    navigate(
+      `/tasks/${nextTask.id}${getTaskDetailSearch(
+        { datasetId: queueDatasetId, filters: queueFilters, page: queuePage, projectId: queueProjectId, queue: queueMode },
+        nextTask
+      )}`
+    );
   }
 
   function clearAutoSaveTimers() {
@@ -1945,6 +1975,14 @@ export function TaskDetailPage() {
                     <dd>{task.assignedTo?.name ?? "Unassigned"}</dd>
                   </div>
                   <div>
+                    <dt>Reviewer</dt>
+                    <dd>{task.reviewer?.name ?? "No reviewer"}</dd>
+                  </div>
+                  <div>
+                    <dt>Status</dt>
+                    <dd>{formatEnum(task.status)}</dd>
+                  </div>
+                  <div>
                     <dt>Annotation</dt>
                     <dd>{formatEnum(annotationStatus)}</dd>
                   </div>
@@ -2058,6 +2096,14 @@ export function TaskDetailPage() {
                   )}
                 </div>
               </section>
+              {task.status === "REJECTED" && latestRejectedReview ? (
+                <section className="panel task-revision-panel">
+                  <p className="eyebrow">Needs revision</p>
+                  <strong>{latestRejectedReview.reviewer.name}</strong>
+                  <span>{latestRejectedReview.feedback?.trim() || "Reviewer requested changes."}</span>
+                  <small>{formatDateTime(latestRejectedReview.createdAt)}</small>
+                </section>
+              ) : null}
               {canReviewTask && (
                 <section className="panel task-review-panel">
                   <p className="eyebrow">Review decision</p>
@@ -4901,7 +4947,7 @@ function getShortcutKey(index: number) {
 }
 
 function getTaskQueueLink(
-  queueQuery: { datasetId: string | null; page: string | null; projectId: string | null; queue: string | null },
+  queueQuery: { datasetId: string | null; filters: ResolvedTaskQueueFilters; page: string | null; projectId: string | null; queue: string | null },
   task: TaskSummary | null | undefined
 ) {
   const params = new URLSearchParams();
@@ -4924,12 +4970,14 @@ function getTaskQueueLink(
     params.set("queue", "review");
   }
 
+  appendQueueFiltersToParams(params, queueQuery.filters);
+
   const query = params.toString();
   return query ? `/tasks?${query}` : "/tasks";
 }
 
 function getTaskDetailSearch(
-  queueQuery: { datasetId: string | null; page: string | null; projectId: string | null; queue: string | null },
+  queueQuery: { datasetId: string | null; filters: ResolvedTaskQueueFilters; page: string | null; projectId: string | null; queue: string | null },
   task: TaskSummary
 ) {
   const params = new URLSearchParams();
@@ -4950,8 +4998,46 @@ function getTaskDetailSearch(
     params.set("queue", "review");
   }
 
+  appendQueueFiltersToParams(params, queueQuery.filters);
+
   const query = params.toString();
   return query ? `?${query}` : "";
+}
+
+function getQueueFilters(params: URLSearchParams): ResolvedTaskQueueFilters {
+  const assignment = params.get("assignment");
+  const due = params.get("due");
+  const minPriority = Number(params.get("minPriority"));
+
+  return {
+    assignment: assignment === "mine" || assignment === "unassigned" ? assignment : "all",
+    due: due === "overdue" || due === "soon" || due === "none" ? due : "any",
+    minPriority: Number.isInteger(minPriority) && minPriority >= 0 && minPriority <= 10 ? minPriority : undefined,
+    search: params.get("search") ?? "",
+    status: params.get("status") ?? ""
+  };
+}
+
+function appendQueueFiltersToParams(params: URLSearchParams, filters: ResolvedTaskQueueFilters) {
+  if (filters.assignment !== "all") {
+    params.set("assignment", filters.assignment);
+  }
+
+  if (filters.due !== "any") {
+    params.set("due", filters.due);
+  }
+
+  if (filters.minPriority !== undefined) {
+    params.set("minPriority", String(filters.minPriority));
+  }
+
+  if (filters.search) {
+    params.set("search", filters.search);
+  }
+
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
 }
 
 function buildTaskHistoryItems(annotationHistory: AnnotationSummary[], reviews: ReviewSummary[]): TaskHistoryItem[] {

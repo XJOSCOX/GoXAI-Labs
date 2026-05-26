@@ -1,12 +1,49 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth";
-import { assignDatasetToSelf, assignTaskToSelf, startTask, type TaskDatasetFolderSummary, type TaskProjectFolderSummary, type TaskSummary } from "../../api";
+import {
+  assignDatasetToSelf,
+  assignTaskToSelf,
+  startTask,
+  type TaskAssignmentFilter,
+  type TaskDatasetFolderSummary,
+  type TaskDueFilter,
+  type TaskProjectFolderSummary,
+  type TaskQueueFilters,
+  type TaskSummary
+} from "../../api";
 import { useTaskFolders, useTaskPage } from "../../hooks/useResources";
 import { formatEnum } from "../../utils/format";
-import { ArrowLeft, ClipboardList, Eye, FolderKanban, UserPlus } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FolderKanban, Search, UserPlus, X } from "lucide-react";
 
 const taskPageSize = 8;
+const statusFilterOptions = [
+  { label: "All statuses", value: "" },
+  { label: "Pending", value: "PENDING" },
+  { label: "Assigned", value: "ASSIGNED" },
+  { label: "In progress", value: "IN_PROGRESS" },
+  { label: "Submitted", value: "SUBMITTED" },
+  { label: "Reviewing", value: "REVIEWING" },
+  { label: "Rejected", value: "REJECTED" },
+  { label: "Approved", value: "APPROVED" }
+];
+const assignmentFilterOptions: { label: string; value: TaskAssignmentFilter }[] = [
+  { label: "All assignees", value: "all" },
+  { label: "Assigned to me", value: "mine" },
+  { label: "Unassigned", value: "unassigned" }
+];
+const dueFilterOptions: { label: string; value: TaskDueFilter }[] = [
+  { label: "Any due date", value: "any" },
+  { label: "Overdue", value: "overdue" },
+  { label: "Due in 24h", value: "soon" },
+  { label: "No due date", value: "none" }
+];
+type ResolvedTaskQueueFilters = Omit<TaskQueueFilters, "assignment" | "due" | "search" | "status"> & {
+  assignment: TaskAssignmentFilter;
+  due: TaskDueFilter;
+  search: string;
+  status: string;
+};
 
 export function TasksPage() {
   const { session } = useAuth();
@@ -15,9 +52,17 @@ export function TasksPage() {
   const projectId = searchParams.get("projectId") ?? undefined;
   const queueMode = searchParams.get("queue") === "review" ? "review" : "work";
   const page = getPositivePage(searchParams.get("page"));
+  const queueFilters = getQueueFilters(searchParams);
   const projectFolders = useTaskFolders(!projectId && !datasetId ? session : null);
   const datasetFolders = useTaskFolders(projectId && !datasetId ? session : null, { projectId });
-  const taskPage = useTaskPage(datasetId ? session : null, { datasetId, page, pageSize: taskPageSize, projectId, queue: queueMode });
+  const taskPage = useTaskPage(datasetId ? session : null, {
+    ...queueFilters,
+    datasetId,
+    page,
+    pageSize: taskPageSize,
+    projectId,
+    queue: queueMode
+  });
   const [assigningDataset, setAssigningDataset] = useState(false);
   const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null);
   const selectedProjectName = taskPage.tasks[0]?.project.name ?? datasetFolders.project?.name ?? "Project";
@@ -53,6 +98,31 @@ export function TasksPage() {
     setSearchParams(nextParams);
   }
 
+  function handleFilterChange(name: keyof TaskQueueFilters, value: string) {
+    const nextParams = new URLSearchParams(searchParams);
+
+    nextParams.delete("page");
+
+    if (!value || value === "all" || value === "any") {
+      nextParams.delete(name);
+    } else {
+      nextParams.set(name, value);
+    }
+
+    setSearchParams(nextParams);
+  }
+
+  function clearFilters() {
+    const nextParams = new URLSearchParams(searchParams);
+
+    for (const key of ["assignment", "due", "minPriority", "search", "status"]) {
+      nextParams.delete(key);
+    }
+
+    nextParams.delete("page");
+    setSearchParams(nextParams);
+  }
+
   function getTaskDetailQuery(task: TaskSummary, currentPage: number) {
     const nextParams = new URLSearchParams();
 
@@ -69,6 +139,8 @@ export function TasksPage() {
     if (queueMode === "review") {
       nextParams.set("queue", "review");
     }
+
+    appendQueueFiltersToParams(nextParams, queueFilters);
 
     const query = nextParams.toString();
     return query ? `?${query}` : "";
@@ -135,6 +207,7 @@ export function TasksPage() {
               </div>
             </div>
             {assignmentMessage && <p className="form-success">{assignmentMessage}</p>}
+            <TaskQueueFiltersBar filters={queueFilters} onChange={handleFilterChange} onClear={clearFilters} />
             <TasksTable
               detailQuery={getTaskDetailQuery}
               mode={queueMode}
@@ -154,6 +227,77 @@ export function TasksPage() {
         )}
       </section>
     </section>
+  );
+}
+
+function TaskQueueFiltersBar({
+  filters,
+  onChange,
+  onClear
+}: {
+  filters: ResolvedTaskQueueFilters;
+  onChange: (name: keyof TaskQueueFilters, value: string) => void;
+  onClear: () => void;
+}) {
+  const hasFilters =
+    filters.assignment !== "all" || filters.due !== "any" || filters.minPriority !== undefined || filters.search !== "" || filters.status !== "";
+
+  return (
+    <div className="task-queue-filters">
+      <label className="search-field compact-search-field">
+        <Search size={15} />
+        <input
+          aria-label="Search tasks"
+          onChange={(event) => onChange("search", event.currentTarget.value)}
+          placeholder="Search asset, dataset, project"
+          type="search"
+          value={filters.search}
+        />
+      </label>
+      <select
+        aria-label="Filter by assignee"
+        onChange={(event) => onChange("assignment", event.currentTarget.value)}
+        value={filters.assignment}
+      >
+        {assignmentFilterOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <select aria-label="Filter by status" onChange={(event) => onChange("status", event.currentTarget.value)} value={filters.status}>
+        {statusFilterOptions.map((option) => (
+          <option key={option.value || "all"} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <select aria-label="Filter by due date" onChange={(event) => onChange("due", event.currentTarget.value)} value={filters.due}>
+        {dueFilterOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <label className="compact-number-field">
+        <span>Priority</span>
+        <input
+          aria-label="Minimum priority"
+          max="10"
+          min="0"
+          onChange={(event) => onChange("minPriority", event.currentTarget.value)}
+          placeholder="0+"
+          type="number"
+          value={filters.minPriority ?? ""}
+        />
+      </label>
+      {hasFilters && (
+        <button className="secondary-button compact-button" onClick={onClear} type="button">
+          <X size={15} />
+          Clear
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -200,8 +344,16 @@ function TaskProjectFolders({ folders, loading }: { folders: TaskProjectFolderSu
                   <small>Active</small>
                 </span>
                 <span>
-                  <strong>{folder.done}</strong>
-                  <small>Done</small>
+                  <strong>{folder.review}</strong>
+                  <small>Review</small>
+                </span>
+                <span>
+                  <strong>{folder.approved}</strong>
+                  <small>Approved</small>
+                </span>
+                <span>
+                  <strong>{folder.rejected}</strong>
+                  <small>Rejected</small>
                 </span>
               </div>
               <div className="task-folder-footer">
@@ -281,8 +433,16 @@ function TaskDatasetFolders({
                   <small>Active</small>
                 </span>
                 <span>
-                  <strong>{folder.done}</strong>
-                  <small>Done</small>
+                  <strong>{folder.review}</strong>
+                  <small>Review</small>
+                </span>
+                <span>
+                  <strong>{folder.approved}</strong>
+                  <small>Approved</small>
+                </span>
+                <span>
+                  <strong>{folder.rejected}</strong>
+                  <small>Rejected</small>
                 </span>
               </div>
               <div className="task-folder-footer">
@@ -359,7 +519,10 @@ export function TasksTable({
       <div className="table-row task-head table-head">
         <span>Asset</span>
         <span>Status</span>
+        <span>Priority</span>
+        <span>Due</span>
         <span>Assigned</span>
+        <span>Reviewer</span>
         <span>Action</span>
       </div>
       {loading ? (
@@ -474,23 +637,40 @@ function TaskRow({
       <span>
         <span className="status-pill compact">{formatEnum(task.status)}</span>
       </span>
-      <span>{task.assignedTo?.name ?? "Unassigned"}</span>
       <span>
-        {mode === "review" && task.canReview ? (
-          <Link className="secondary-button compact-button" to={`/tasks/${task.id}${detailQuery?.(task, detailQueryPage) ?? ""}`}>
-            <Eye size={16} />
-            Review
-          </Link>
-        ) : task.canWork && action ? (
-          <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
-            <Eye size={16} />
-            {saving ? "Saving" : action.label}
-          </button>
-        ) : !task.canWork ? (
-          <span className="muted-copy">Read only</span>
+        <span className={`task-priority-pill ${task.priority > 0 ? "active" : ""}`}>{task.priority}</span>
+      </span>
+      <span>
+        {task.dueAt ? (
+          <span className={isPastDue(task.dueAt) ? "danger-copy" : "muted-copy"}>{formatTaskDueDate(task.dueAt)}</span>
         ) : (
-          <span className="muted-copy">Waiting</span>
+          <span className="muted-copy">No due date</span>
         )}
+      </span>
+      <span>
+        {task.assignedTo?.name ?? "Unassigned"}
+      </span>
+      <span>
+        {task.reviewer?.name ?? "No reviewer"}
+      </span>
+      <span>
+        <div className="task-row-actions">
+          {mode === "review" && task.canReview ? (
+            <Link className="secondary-button compact-button" to={`/tasks/${task.id}${detailQuery?.(task, detailQueryPage) ?? ""}`}>
+              <Eye size={16} />
+              Review
+            </Link>
+          ) : task.canWork && action ? (
+            <button className="secondary-button compact-button" type="button" onClick={handleAction} disabled={saving}>
+              <Eye size={16} />
+              {saving ? "Saving" : action.label}
+            </button>
+          ) : !task.canWork ? (
+            <span className="muted-copy">Read only</span>
+          ) : (
+            <span className="muted-copy">Waiting</span>
+          )}
+        </div>
       </span>
     </article>
   );
@@ -499,6 +679,53 @@ function TaskRow({
 function getPositivePage(value: string | null) {
   const page = Number(value);
   return Number.isInteger(page) && page > 0 ? page : 1;
+}
+
+function getQueueFilters(params: URLSearchParams): ResolvedTaskQueueFilters {
+  const assignment = params.get("assignment");
+  const due = params.get("due");
+  const minPriority = Number(params.get("minPriority"));
+
+  return {
+    assignment: assignment === "mine" || assignment === "unassigned" ? assignment : "all",
+    due: due === "overdue" || due === "soon" || due === "none" ? due : "any",
+    minPriority: Number.isInteger(minPriority) && minPriority >= 0 && minPriority <= 10 ? minPriority : undefined,
+    search: params.get("search") ?? "",
+    status: params.get("status") ?? ""
+  };
+}
+
+function appendQueueFiltersToParams(params: URLSearchParams, filters: ResolvedTaskQueueFilters) {
+  if (filters.assignment !== "all") {
+    params.set("assignment", filters.assignment);
+  }
+
+  if (filters.due !== "any") {
+    params.set("due", filters.due);
+  }
+
+  if (filters.minPriority !== undefined) {
+    params.set("minPriority", String(filters.minPriority));
+  }
+
+  if (filters.search) {
+    params.set("search", filters.search);
+  }
+
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+}
+
+function formatTaskDueDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short"
+  }).format(new Date(value));
+}
+
+function isPastDue(value: string) {
+  return new Date(value).getTime() < Date.now();
 }
 
 function getNextTaskAction(task: TaskSummary): { kind: "assign" | "start"; label: string } | null {

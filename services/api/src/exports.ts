@@ -440,7 +440,7 @@ const exportJobIncludes = {
   }
 } as const;
 
-const exportAnnotationStatuses: AnnotationStatus[] = [AnnotationStatus.ACCEPTED, AnnotationStatus.SUBMITTED];
+const exportAnnotationStatuses: AnnotationStatus[] = [AnnotationStatus.ACCEPTED];
 
 const exportTaskIncludes = Prisma.validator<Prisma.TaskInclude>()({
   annotations: {

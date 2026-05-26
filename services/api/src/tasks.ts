@@ -165,6 +165,7 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
   const datasetId = normalizeId(request.query.datasetId);
   const projectId = normalizeId(request.query.projectId);
   const queue = normalizeShortText(request.query.queue, 40);
+  const queueFilters = parseTaskQueueFilters(request.query);
   const page = normalizePositiveInteger(request.query.page);
   const requestedPageSize = normalizePositiveInteger(request.query.pageSize);
   const isPaginated = Boolean(page || requestedPageSize);
@@ -209,9 +210,18 @@ router.get("/", async (request: AuthenticatedRequest, response) => {
     }
   }
 
-  const where = queue === "review"
+  const visibleWhere = queue === "review"
     ? buildReviewTaskWhere(scope, { datasetId, projectId })
     : buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const where = {
+    AND: [
+      visibleWhere,
+      buildTaskQueueFilterWhere(queueFilters, {
+        now: new Date(),
+        userId: user.id
+      })
+    ]
+  };
   const [tasks, total] = await Promise.all([
     prisma.task.findMany({
       where,
@@ -265,9 +275,21 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
     },
     select: {
       id: true,
+      labelingConfig: true,
+      labels: {
+        select: {
+          id: true
+        }
+      },
       name: true,
+      metadata: true,
       organizationId: true,
-      projectId: true
+      projectId: true,
+      tools: {
+        select: {
+          enabled: true
+        }
+      }
     }
   });
 
@@ -276,22 +298,36 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
     return;
   }
 
-  const membership = await prisma.membership.findFirst({
-    where: {
-      userId: user.id,
-      organizationId: dataset.organizationId,
-      status: "ACTIVE"
-    },
-    select: {
-      id: true,
-      role: true
-    }
+  const configIssue = getDatasetGenerationConfigIssue(dataset);
+
+  if (configIssue) {
+    response.status(400).json({ error: configIssue });
+    return;
+  }
+
+  const workflowDefaults = parseDatasetTaskWorkflowBody(request.body, {
+    fallback: readDatasetTaskWorkflowDefaults(dataset.metadata),
+    requireWorkflow: false
   });
+
+  if (!workflowDefaults.ok) {
+    response.status(400).json({ error: workflowDefaults.error });
+    return;
+  }
+
+  const membership = await getEffectiveProjectMembership(user.id, dataset.projectId, dataset.organizationId);
 
   if (!membership || !canGenerateTasks(membership)) {
     response.status(403).json({
       error: "You need owner, admin, or manager access to generate tasks for this dataset."
     });
+    return;
+  }
+
+  const workflowValidationError = await validateDatasetTaskWorkflowMembers(workflowDefaults.value, dataset.projectId, dataset.organizationId);
+
+  if (workflowValidationError) {
+    response.status(400).json({ error: workflowValidationError });
     return;
   }
 
@@ -334,17 +370,36 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
   if (assetsToCreate.length > 0) {
     await prisma.$transaction(async (tx) => {
       await tx.task.createMany({
-        data: assetsToCreate.map((asset) => ({
-          projectId: dataset.projectId,
-          datasetId: dataset.id,
-          assetId: asset.id,
-          status: TaskStatus.PENDING,
-          metadata: {
-            source: "dataset-generation",
-            fileName: asset.fileName
-          }
-        }))
+        data: assetsToCreate.map((asset, index) => {
+          const assignedToId = getDatasetWorkflowAssignee(workflowDefaults.value, index);
+
+          return {
+            projectId: dataset.projectId,
+            datasetId: dataset.id,
+            assetId: asset.id,
+            status: assignedToId ? TaskStatus.ASSIGNED : TaskStatus.PENDING,
+            assignedToId,
+            reviewerId: workflowDefaults.value.reviewerId,
+            priority: workflowDefaults.value.priority,
+            dueAt: workflowDefaults.value.dueAt,
+            metadata: {
+              source: "dataset-generation",
+              fileName: asset.fileName
+            }
+          };
+        })
       });
+
+      if (workflowDefaults.saveDefaults) {
+        await tx.dataset.update({
+          where: {
+            id: dataset.id
+          },
+          data: {
+            metadata: mergeDatasetTaskWorkflowDefaults(dataset.metadata, workflowDefaults.value)
+          }
+        });
+      }
 
       await tx.auditLog.create({
         data: {
@@ -360,7 +415,8 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
             createdCount: assetsToCreate.length,
             remainingCount,
             requestedQuantity: quantity ?? "all",
-            skippedCount: existingAssetIds.size
+            skippedCount: existingAssetIds.size,
+            workflow: serializeDatasetTaskWorkflowDefaults(workflowDefaults.value)
           }
         }
       });
@@ -372,10 +428,23 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
           createdCount: assetsToCreate.length,
           remainingCount,
           requestedQuantity: quantity ?? "all",
-          skippedCount: existingAssetIds.size
+          skippedCount: existingAssetIds.size,
+          savedWorkflowDefaults: workflowDefaults.saveDefaults,
+          workflow: serializeDatasetTaskWorkflowDefaults(workflowDefaults.value)
         },
         userId: user.id
       });
+    });
+  }
+
+  if (assetsToCreate.length === 0 && workflowDefaults.saveDefaults) {
+    await prisma.dataset.update({
+      where: {
+        id: dataset.id
+      },
+      data: {
+        metadata: mergeDatasetTaskWorkflowDefaults(dataset.metadata, workflowDefaults.value)
+      }
     });
   }
 
@@ -392,6 +461,196 @@ router.post("/generate-from-dataset", async (request: AuthenticatedRequest, resp
     remainingCount,
     skippedCount: existingAssetIds.size,
     tasks: tasks.map((task) => serializeTask(task, membership))
+  });
+});
+
+router.patch("/dataset-workflow", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const datasetId = normalizeId(request.body?.datasetId);
+
+  if (!datasetId) {
+    response.status(400).json({ error: "Dataset is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const dataset = await prisma.dataset.findUnique({
+    where: {
+      id: datasetId
+    },
+    select: {
+      id: true,
+      name: true,
+      metadata: true,
+      organizationId: true,
+      projectId: true
+    }
+  });
+
+  if (!dataset) {
+    response.status(404).json({ error: "Dataset was not found." });
+    return;
+  }
+
+  const parsed = parseDatasetTaskWorkflowBody(request.body, {
+    fallback: readDatasetTaskWorkflowDefaults(dataset.metadata),
+    requireWorkflow: true
+  });
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const membership = await getEffectiveProjectMembership(user.id, dataset.projectId, dataset.organizationId);
+
+  if (!membership || !canGenerateTasks(membership)) {
+    response.status(403).json({ error: "You need owner, admin, or manager access to update this dataset queue." });
+    return;
+  }
+
+  const workflowValidationError = await validateDatasetTaskWorkflowMembers(parsed.value, dataset.projectId, dataset.organizationId);
+
+  if (workflowValidationError) {
+    response.status(400).json({ error: workflowValidationError });
+    return;
+  }
+
+  const activeStatuses = [TaskStatus.PENDING, TaskStatus.ASSIGNED, TaskStatus.IN_PROGRESS, TaskStatus.REJECTED];
+  const result = await prisma.$transaction(async (tx) => {
+    const activeTasks = await tx.task.findMany({
+      where: {
+        datasetId: dataset.id,
+        status: {
+          in: activeStatuses
+        }
+      },
+      orderBy: getTaskQueueOrderBy(),
+      select: {
+        id: true,
+        status: true
+      }
+    });
+
+    if (parsed.value.assignmentMode === "round_robin") {
+      await Promise.all(
+        activeTasks.map((task, index) => {
+          const assignedToId = getDatasetWorkflowAssignee(parsed.value, index);
+
+          return tx.task.update({
+            where: {
+              id: task.id
+            },
+            data: {
+              ...buildDatasetTaskWorkflowUpdateData(parsed.value, assignedToId),
+              status: assignedToId && task.status === TaskStatus.PENDING
+                ? TaskStatus.ASSIGNED
+                : !assignedToId && task.status === TaskStatus.ASSIGNED
+                  ? TaskStatus.PENDING
+                  : task.status
+            }
+          });
+        })
+      );
+    } else {
+      const assignedToId = getDatasetWorkflowAssignee(parsed.value, 0);
+      await tx.task.updateMany({
+        where: {
+          id: {
+            in: activeTasks.map((task) => task.id)
+          }
+        },
+        data: buildDatasetTaskWorkflowUpdateData(parsed.value, assignedToId)
+      });
+
+      if (assignedToId) {
+        await tx.task.updateMany({
+          where: {
+            id: {
+              in: activeTasks.filter((task) => task.status === TaskStatus.PENDING).map((task) => task.id)
+            }
+          },
+          data: {
+            status: TaskStatus.ASSIGNED
+          }
+        });
+      } else {
+        await tx.task.updateMany({
+          where: {
+            id: {
+              in: activeTasks.filter((task) => task.status === TaskStatus.ASSIGNED).map((task) => task.id)
+            }
+          },
+          data: {
+            status: TaskStatus.PENDING
+          }
+        });
+      }
+    }
+
+    if (parsed.saveDefaults) {
+      await tx.dataset.update({
+        where: {
+          id: dataset.id
+        },
+        data: {
+          metadata: mergeDatasetTaskWorkflowDefaults(dataset.metadata, parsed.value)
+        }
+      });
+    }
+
+    if (activeTasks.length > 0 || parsed.saveDefaults) {
+      await tx.auditLog.create({
+        data: {
+          organizationId: dataset.organizationId,
+          projectId: dataset.projectId,
+          userId: user.id,
+          action: "task.dataset_workflow.updated",
+          entityType: "dataset",
+          entityId: dataset.id,
+          metadata: {
+            requestId: getRequestId(request),
+            changes: serializeDatasetTaskWorkflowDefaults(parsed.value),
+            datasetName: dataset.name,
+            savedWorkflowDefaults: parsed.saveDefaults,
+            updatedCount: activeTasks.length
+          }
+        }
+      });
+
+      await recordDatasetVersionChange(tx, {
+        datasetId: dataset.id,
+        reason: "task_workflow_updated",
+        summary: {
+          savedWorkflowDefaults: parsed.saveDefaults,
+          updatedCount: activeTasks.length
+        },
+        userId: user.id
+      });
+    }
+
+    return {
+      count: activeTasks.length
+    };
+  });
+
+  const tasks = await prisma.task.findMany({
+    where: {
+      datasetId: dataset.id
+    },
+    include: taskIncludes,
+    orderBy: getTaskQueueOrderBy()
+  });
+
+  response.status(200).json({
+    tasks: tasks.map((task) => serializeTask(task, membership)),
+    updatedCount: result.count
   });
 });
 
@@ -502,8 +761,235 @@ router.post("/assign-dataset-to-self", async (request: AuthenticatedRequest, res
   });
 });
 
+router.get("/participants", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const projectId = normalizeId(request.query.projectId);
+
+  if (!projectId) {
+    response.status(400).json({ error: "Project is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const project = await prisma.project.findUnique({
+    where: {
+      id: projectId
+    },
+    select: {
+      createdById: true,
+      id: true,
+      organizationId: true,
+      organization: {
+        select: {
+          memberships: {
+            where: {
+              status: "ACTIVE"
+            },
+            select: {
+              role: true,
+              user: {
+                select: {
+                  email: true,
+                  firstName: true,
+                  id: true,
+                  lastName: true
+                }
+              },
+              userId: true
+            }
+          }
+        }
+      },
+      projectMemberships: {
+        where: {
+          status: "ACTIVE"
+        },
+        select: {
+          role: true,
+          user: {
+            select: {
+              email: true,
+              firstName: true,
+              id: true,
+              lastName: true
+            }
+          },
+          userId: true
+        }
+      }
+    }
+  });
+
+  if (!project) {
+    response.status(404).json({ error: "Project was not found." });
+    return;
+  }
+
+  const manager = await getEffectiveProjectMembership(user.id, project.id, project.organizationId);
+
+  if (project.createdById !== user.id && (!manager || !canGenerateTasks(manager))) {
+    response.status(403).json({ error: "You need manager access to view task assignment controls." });
+    return;
+  }
+
+  const participants = new Map<string, {
+    canReview: boolean;
+    canWork: boolean;
+    email: string;
+    id: string;
+    name: string;
+    roles: Set<MembershipRole>;
+  }>();
+
+  for (const membership of [...project.organization.memberships, ...project.projectMemberships]) {
+    const existing = participants.get(membership.userId);
+    const roles = existing?.roles ?? new Set<MembershipRole>();
+    roles.add(membership.role);
+    participants.set(membership.userId, {
+      canReview: [...roles].some((role) => canReviewTasks({ role })),
+      canWork: [...roles].some((role) => canWorkTasks({ role })),
+      email: membership.user.email,
+      id: membership.user.id,
+      name: serializeUserName(membership.user).name,
+      roles
+    });
+  }
+
+  response.status(200).json({
+    participants: [...participants.values()]
+      .map((participant) => ({
+        canReview: participant.canReview,
+        canWork: participant.canWork,
+        email: participant.email,
+        id: participant.id,
+        name: participant.name,
+        roles: [...participant.roles]
+      }))
+      .filter((participant) => participant.canWork || participant.canReview)
+      .sort((left, right) => left.name.localeCompare(right.name))
+  });
+});
+
 router.post("/:taskId/assign-self", async (request: AuthenticatedRequest, response) => {
   await updateTaskForUser(request, response, "assign-self");
+});
+
+router.patch("/:taskId/workflow", async (request: AuthenticatedRequest, response) => {
+  const user = request.currentUser;
+
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  const taskId = normalizeId(request.params.taskId);
+
+  if (!taskId) {
+    response.status(400).json({ error: "Task is required." });
+    return;
+  }
+
+  const parsed = parseTaskWorkflowBody(request.body);
+
+  if (!parsed.ok) {
+    response.status(400).json({ error: parsed.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const task = await prisma.task.findUnique({
+    where: {
+      id: taskId
+    },
+    select: {
+      assignedToId: true,
+      dueAt: true,
+      id: true,
+      priority: true,
+      project: {
+        select: {
+          createdById: true,
+          id: true,
+          organizationId: true
+        }
+      },
+      projectId: true,
+      reviewerId: true
+    }
+  });
+
+  if (!task) {
+    response.status(404).json({ error: "Task was not found." });
+    return;
+  }
+
+  const manager = await getEffectiveProjectMembership(user.id, task.project.id, task.project.organizationId);
+
+  if (task.project.createdById !== user.id && (!manager || !canGenerateTasks(manager))) {
+    response.status(403).json({ error: "You need manager access to update this task queue." });
+    return;
+  }
+
+  if (parsed.value.assignedToId !== undefined && parsed.value.assignedToId !== null) {
+    const canAssign = await userCanWorkProjectTasks(parsed.value.assignedToId, task.project.id, task.project.organizationId);
+
+    if (!canAssign) {
+      response.status(400).json({ error: "Choose a project member who can work tasks." });
+      return;
+    }
+  }
+
+  if (parsed.value.reviewerId !== undefined && parsed.value.reviewerId !== null) {
+    const canReview = await userCanReviewProjectTasks(parsed.value.reviewerId, task.project.id, task.project.organizationId);
+
+    if (!canReview) {
+      response.status(400).json({ error: "Choose a reviewer, manager, admin, or owner for review." });
+      return;
+    }
+  }
+
+  const updatedTask = await prisma.$transaction(async (tx) => {
+    const saved = await tx.task.update({
+      where: {
+        id: task.id
+      },
+      data: parsed.value,
+      include: taskIncludes
+    });
+
+    await tx.auditLog.create({
+      data: {
+        organizationId: saved.project.organizationId,
+        projectId: saved.projectId,
+        userId: user.id,
+        action: "task.workflow.updated",
+        entityType: "task",
+        entityId: saved.id,
+        metadata: {
+          changes: parsed.value,
+          previous: {
+            assignedToId: task.assignedToId,
+            dueAt: task.dueAt,
+            priority: task.priority,
+            reviewerId: task.reviewerId
+          },
+          requestId: getRequestId(request)
+        }
+      }
+    });
+
+    return saved;
+  });
+
+  response.status(200).json({
+    task: serializeTask(updatedTask, manager ?? { role: MembershipRole.OWNER })
+  });
 });
 
 router.get("/:taskId/next", async (request: AuthenticatedRequest, response) => {
@@ -531,11 +1017,21 @@ router.get("/:taskId/next", async (request: AuthenticatedRequest, response) => {
   const datasetId = normalizeId(request.query.datasetId) ?? access.task.datasetId ?? undefined;
   const projectId = normalizeId(request.query.projectId) ?? access.task.projectId;
   const queue = normalizeShortText(request.query.queue, 40);
+  const taskQueueFilters = parseTaskQueueFilters(request.query);
   const prisma = getPrismaClient();
   const scope = await getTaskAccessScope(user.id);
-  const where = queue === "review"
+  const visibleWhere = queue === "review"
     ? buildReviewTaskWhere(scope, { datasetId, projectId })
     : buildVisibleTaskWhere(scope, { datasetId, projectId });
+  const where = {
+    AND: [
+      visibleWhere,
+      buildTaskQueueFilterWhere(taskQueueFilters, {
+        now: new Date(),
+        userId: user.id
+      })
+    ]
+  };
   const queueFilters: Prisma.TaskWhereInput = queue === "review"
     ? {
         status: {
@@ -1235,6 +1731,44 @@ async function getActiveMemberships(userId: string) {
   });
 }
 
+async function getEffectiveProjectMembership(userId: string, projectId: string, organizationId: string) {
+  const prisma = getPrismaClient();
+  const [organizationMembership, projectMembership] = await Promise.all([
+    prisma.membership.findFirst({
+      where: {
+        organizationId,
+        status: "ACTIVE",
+        userId
+      },
+      select: {
+        role: true
+      }
+    }),
+    prisma.projectMembership.findFirst({
+      where: {
+        projectId,
+        status: "ACTIVE",
+        userId
+      },
+      select: {
+        role: true
+      }
+    })
+  ]);
+
+  return organizationMembership ?? projectMembership;
+}
+
+async function userCanWorkProjectTasks(userId: string, projectId: string, organizationId: string) {
+  const membership = await getEffectiveProjectMembership(userId, projectId, organizationId);
+  return Boolean(membership && canWorkTasks(membership));
+}
+
+async function userCanReviewProjectTasks(userId: string, projectId: string, organizationId: string) {
+  const membership = await getEffectiveProjectMembership(userId, projectId, organizationId);
+  return Boolean(membership && canReviewTasks(membership));
+}
+
 async function getTaskAccessScope(userId: string) {
   const prisma = getPrismaClient();
   const [memberships, projectMemberships] = await Promise.all([
@@ -1370,11 +1904,433 @@ function buildReviewTaskWhere(scope: TaskAccessScope, filters: { datasetId?: str
   };
 }
 
+type TaskQueueFilters = {
+  assignment?: "mine" | "unassigned";
+  due?: "overdue" | "soon" | "none";
+  minPriority?: number;
+  search?: string;
+  status?: TaskStatus;
+};
+
+type TaskWorkflowBody =
+  | {
+      assignmentMode?: unknown;
+      assignedToId?: unknown;
+      assigneeIds?: unknown;
+      dueAt?: unknown;
+      priority?: unknown;
+      reviewerId?: unknown;
+      saveDefaults?: unknown;
+    }
+  | undefined;
+
+type DatasetTaskAssignmentMode = "single" | "round_robin" | "unassigned";
+
+type DatasetTaskWorkflowValue = {
+  assignedToId: string | null;
+  assigneeIds: string[];
+  assignmentMode: DatasetTaskAssignmentMode;
+  dueAt: Date | null;
+  priority: number;
+  reviewerId: string | null;
+};
+
+function parseTaskQueueFilters(query: Record<string, unknown>): TaskQueueFilters {
+  const assignment = query.assignment === "mine" || query.assignment === "unassigned" ? query.assignment : undefined;
+  const due = query.due === "overdue" || query.due === "soon" || query.due === "none" ? query.due : undefined;
+  const minPriority = normalizeInteger(query.minPriority);
+  const search = normalizeShortText(query.search, 160) ?? undefined;
+  const status = parseTaskStatusQuery(query.status);
+
+  return {
+    ...(assignment ? { assignment } : {}),
+    ...(due ? { due } : {}),
+    ...(minPriority !== undefined && minPriority >= 0 && minPriority <= 10 ? { minPriority } : {}),
+    ...(search ? { search } : {}),
+    ...(status ? { status } : {})
+  };
+}
+
+export function buildTaskQueueFilterWhere(
+  filters: TaskQueueFilters,
+  input: { now: Date; userId: string }
+): Prisma.TaskWhereInput {
+  const where: Prisma.TaskWhereInput = {};
+
+  if (filters.assignment === "mine") {
+    where.assignedToId = input.userId;
+  } else if (filters.assignment === "unassigned") {
+    where.assignedToId = null;
+  }
+
+  if (filters.status) {
+    where.status = filters.status;
+  }
+
+  if (filters.minPriority !== undefined) {
+    where.priority = {
+      gte: filters.minPriority
+    };
+  }
+
+  if (filters.due === "overdue") {
+    where.dueAt = {
+      lt: input.now
+    };
+  } else if (filters.due === "soon") {
+    const soon = new Date(input.now.getTime() + 24 * 60 * 60 * 1000);
+    where.dueAt = {
+      gte: input.now,
+      lte: soon
+    };
+  } else if (filters.due === "none") {
+    where.dueAt = null;
+  }
+
+  if (filters.search) {
+    where.OR = [
+      {
+        asset: {
+          fileName: {
+            contains: filters.search,
+            mode: "insensitive"
+          }
+        }
+      },
+      {
+        dataset: {
+          name: {
+            contains: filters.search,
+            mode: "insensitive"
+          }
+        }
+      },
+      {
+        project: {
+          name: {
+            contains: filters.search,
+            mode: "insensitive"
+          }
+        }
+      }
+    ];
+  }
+
+  return where;
+}
+
+export function parseTaskWorkflowBody(body: TaskWorkflowBody):
+  | {
+      ok: true;
+      value: {
+        assignedToId?: string | null;
+        dueAt?: Date | null;
+        priority?: number;
+        reviewerId?: string | null;
+      };
+    }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== "object") {
+    return { ok: false, error: "Task workflow update is required." };
+  }
+
+  const value: {
+    assignedToId?: string | null;
+    dueAt?: Date | null;
+    priority?: number;
+    reviewerId?: string | null;
+  } = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, "assignedToId")) {
+    const assignedToId = normalizeNullableId(body.assignedToId);
+
+    if (assignedToId === false) {
+      return { ok: false, error: "Assigned user must be a valid user id." };
+    }
+
+    value.assignedToId = assignedToId;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "reviewerId")) {
+    const reviewerId = normalizeNullableId(body.reviewerId);
+
+    if (reviewerId === false) {
+      return { ok: false, error: "Reviewer must be a valid user id." };
+    }
+
+    value.reviewerId = reviewerId;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "priority")) {
+    const priority = normalizeInteger(body.priority);
+
+    if (priority === undefined || priority < 0 || priority > 10) {
+      return { ok: false, error: "Priority must be a whole number from 0 to 10." };
+    }
+
+    value.priority = priority;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "dueAt")) {
+    const dueAt = normalizeNullableDate(body.dueAt);
+
+    if (dueAt === false) {
+      return { ok: false, error: "Due date must be a valid date." };
+    }
+
+    value.dueAt = dueAt;
+  }
+
+  if (Object.keys(value).length === 0) {
+    return { ok: false, error: "Choose at least one task workflow field to update." };
+  }
+
+  return { ok: true, value };
+}
+
+export function parseDatasetTaskWorkflowBody(
+  body: TaskWorkflowBody,
+  options: { fallback?: DatasetTaskWorkflowValue; requireWorkflow: boolean }
+):
+  | {
+      ok: true;
+      saveDefaults: boolean;
+      value: DatasetTaskWorkflowValue;
+    }
+  | { ok: false; error: string } {
+  if (!body || typeof body !== "object") {
+    return options.requireWorkflow
+      ? { ok: false, error: "Dataset task workflow update is required." }
+      : { ok: true, saveDefaults: false, value: options.fallback ?? getDefaultDatasetTaskWorkflow() };
+  }
+
+  if (options.requireWorkflow && !hasDatasetTaskWorkflowFields(body)) {
+    return { ok: false, error: "Choose at least one dataset task workflow field to update." };
+  }
+
+  const fallback = options.fallback ?? getDefaultDatasetTaskWorkflow();
+  const assignmentMode = parseDatasetTaskAssignmentMode(body.assignmentMode) ?? inferDatasetTaskAssignmentMode(body, fallback);
+  const assignedToId = Object.prototype.hasOwnProperty.call(body, "assignedToId")
+    ? normalizeNullableId(body.assignedToId)
+    : fallback.assignedToId;
+  const reviewerId = Object.prototype.hasOwnProperty.call(body, "reviewerId")
+    ? normalizeNullableId(body.reviewerId)
+    : fallback.reviewerId;
+  const assigneeIds = Object.prototype.hasOwnProperty.call(body, "assigneeIds")
+    ? normalizeIdList(body.assigneeIds)
+    : fallback.assigneeIds;
+  const priority = Object.prototype.hasOwnProperty.call(body, "priority")
+    ? normalizeInteger(body.priority)
+    : fallback.priority;
+  const dueAt = Object.prototype.hasOwnProperty.call(body, "dueAt")
+    ? normalizeNullableDate(body.dueAt)
+    : fallback.dueAt;
+
+  if (assignedToId === false) {
+    return { ok: false, error: "Assigned user must be a valid user id." };
+  }
+
+  if (reviewerId === false) {
+    return { ok: false, error: "Reviewer must be a valid user id." };
+  }
+
+  if (assigneeIds === false) {
+    return { ok: false, error: "Round-robin assignees must be valid user ids." };
+  }
+
+  if (priority === undefined || priority < 0 || priority > 10) {
+    return { ok: false, error: "Priority must be a whole number from 0 to 10." };
+  }
+
+  if (dueAt === false) {
+    return { ok: false, error: "Due date must be a valid date." };
+  }
+
+  if (assignmentMode === "single" && !assignedToId) {
+    return { ok: false, error: "Choose an assignee or use Unassigned." };
+  }
+
+  if (assignmentMode === "round_robin" && assigneeIds.length === 0) {
+    return { ok: false, error: "Choose at least one annotator for round-robin assignment." };
+  }
+
+  return {
+    ok: true,
+    saveDefaults: body.saveDefaults === true,
+    value: {
+      assignedToId: assignmentMode === "single" ? assignedToId : null,
+      assigneeIds: assignmentMode === "round_robin" ? assigneeIds : [],
+      assignmentMode,
+      dueAt,
+      priority,
+      reviewerId
+    }
+  };
+}
+
+function hasDatasetTaskWorkflowFields(body: TaskWorkflowBody) {
+  return Boolean(
+    body &&
+      typeof body === "object" &&
+      ["assignedToId", "assignmentMode", "assigneeIds", "dueAt", "priority", "reviewerId", "saveDefaults"].some((field) =>
+        Object.prototype.hasOwnProperty.call(body, field)
+      )
+  );
+}
+
+function inferDatasetTaskAssignmentMode(body: TaskWorkflowBody, fallback: DatasetTaskWorkflowValue): DatasetTaskAssignmentMode {
+  if (body && typeof body === "object" && Object.prototype.hasOwnProperty.call(body, "assigneeIds")) {
+    return "round_robin";
+  }
+
+  if (body && typeof body === "object" && Object.prototype.hasOwnProperty.call(body, "assignedToId")) {
+    return body.assignedToId ? "single" : "unassigned";
+  }
+
+  return fallback.assignmentMode;
+}
+
+function parseDatasetTaskAssignmentMode(value: unknown): DatasetTaskAssignmentMode | undefined {
+  return value === "single" || value === "round_robin" || value === "unassigned" ? value : undefined;
+}
+
+function normalizeIdList(value: unknown) {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+
+  const ids = [];
+
+  for (const item of value) {
+    const id = normalizeNullableId(item);
+
+    if (!id) {
+      return false;
+    }
+
+    ids.push(id);
+  }
+
+  return [...new Set(ids)];
+}
+
+function getDefaultDatasetTaskWorkflow(): DatasetTaskWorkflowValue {
+  return {
+    assignedToId: null,
+    assigneeIds: [],
+    assignmentMode: "unassigned",
+    dueAt: null,
+    priority: 0,
+    reviewerId: null
+  };
+}
+
+function readDatasetTaskWorkflowDefaults(metadata: unknown): DatasetTaskWorkflowValue {
+  if (!isPlainJsonObject(metadata) || !isPlainJsonObject(metadata.taskWorkflowDefaults)) {
+    return getDefaultDatasetTaskWorkflow();
+  }
+
+  const parsed = parseDatasetTaskWorkflowBody(metadata.taskWorkflowDefaults as TaskWorkflowBody, {
+    fallback: getDefaultDatasetTaskWorkflow(),
+    requireWorkflow: false
+  });
+
+  return parsed.ok ? parsed.value : getDefaultDatasetTaskWorkflow();
+}
+
+function serializeDatasetTaskWorkflowDefaults(value: DatasetTaskWorkflowValue) {
+  return {
+    assignedToId: value.assignedToId,
+    assigneeIds: value.assigneeIds,
+    assignmentMode: value.assignmentMode,
+    dueAt: value.dueAt ? value.dueAt.toISOString() : null,
+    priority: value.priority,
+    reviewerId: value.reviewerId
+  };
+}
+
+function mergeDatasetTaskWorkflowDefaults(metadata: unknown, value: DatasetTaskWorkflowValue) {
+  const base = isPlainJsonObject(metadata) ? metadata : {};
+
+  return {
+    ...base,
+    taskWorkflowDefaults: serializeDatasetTaskWorkflowDefaults(value)
+  } as Prisma.InputJsonObject;
+}
+
+function getDatasetWorkflowAssignee(value: DatasetTaskWorkflowValue, index: number) {
+  if (value.assignmentMode === "single") {
+    return value.assignedToId;
+  }
+
+  if (value.assignmentMode === "round_robin") {
+    return value.assigneeIds[index % value.assigneeIds.length] ?? null;
+  }
+
+  return null;
+}
+
+function buildDatasetTaskWorkflowUpdateData(value: DatasetTaskWorkflowValue, assignedToId: string | null): Prisma.TaskUncheckedUpdateManyInput {
+  return {
+    assignedToId,
+    dueAt: value.dueAt,
+    priority: value.priority,
+    reviewerId: value.reviewerId
+  };
+}
+
+async function validateDatasetTaskWorkflowMembers(value: DatasetTaskWorkflowValue, projectId: string, organizationId: string) {
+  const assigneeIds = value.assignmentMode === "single"
+    ? value.assignedToId ? [value.assignedToId] : []
+    : value.assignmentMode === "round_robin"
+      ? value.assigneeIds
+      : [];
+
+  for (const assigneeId of assigneeIds) {
+    if (!(await userCanWorkProjectTasks(assigneeId, projectId, organizationId))) {
+      return "Choose project members who can work tasks.";
+    }
+  }
+
+  if (value.reviewerId && !(await userCanReviewProjectTasks(value.reviewerId, projectId, organizationId))) {
+    return "Choose a reviewer, manager, admin, or owner for review.";
+  }
+
+  return null;
+}
+
+export function getDatasetGenerationConfigIssue(dataset: {
+  labelingConfig: unknown;
+  labels: unknown[];
+  metadata: unknown;
+  tools: { enabled: boolean }[];
+}) {
+  const hasControllerConfig = isPlainJsonObject(dataset.metadata) && isPlainJsonObject(dataset.metadata.taskWorkflowDefaults);
+  const hasTemplateConfig = dataset.labels.length > 0 && dataset.tools.some((tool) => tool.enabled) && isPlainJsonObject(dataset.labelingConfig);
+
+  if (!hasControllerConfig && !hasTemplateConfig) {
+    return "Apply a controller and template config before generating tasks.";
+  }
+
+  if (!hasControllerConfig) {
+    return "Apply a controller config before generating tasks.";
+  }
+
+  if (!hasTemplateConfig) {
+    return "Apply a template config before generating tasks.";
+  }
+
+  return null;
+}
+
 function createTaskFolderCounters() {
   return {
     active: 0,
+    approved: 0,
     done: 0,
     pending: 0,
+    rejected: 0,
+    review: 0,
     total: 0,
     unassigned: 0
   };
@@ -1410,12 +2366,16 @@ function addTaskFolderCount(
     counters.pending += input.count;
   } else if (
     input.status === TaskStatus.ASSIGNED ||
-    input.status === TaskStatus.IN_PROGRESS ||
-    input.status === TaskStatus.REVIEWING
+    input.status === TaskStatus.IN_PROGRESS
   ) {
     counters.active += input.count;
-  } else if (input.status === TaskStatus.SUBMITTED || input.status === TaskStatus.APPROVED) {
+  } else if (input.status === TaskStatus.SUBMITTED || input.status === TaskStatus.REVIEWING) {
+    counters.review += input.count;
+  } else if (input.status === TaskStatus.APPROVED) {
+    counters.approved += input.count;
     counters.done += input.count;
+  } else if (input.status === TaskStatus.REJECTED) {
+    counters.rejected += input.count;
   }
 }
 
@@ -1927,6 +2887,7 @@ function serializeTask(task: TaskWithRelations, membership?: { role: MembershipR
       : null,
     assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,
     reviewer: task.reviewer ? serializeUserName(task.reviewer) : null,
+    canManage: membership ? canGenerateTasks(membership) : false,
     canReview: membership ? canReviewTasks(membership) : false,
     canWork: membership ? canWorkTasks(membership) : false,
     createdAt: task.createdAt,
@@ -1964,6 +2925,7 @@ function serializeTaskListItem(task: TaskListWithRelations, membership?: { role:
       : null,
     assignedTo: task.assignedTo ? serializeUserName(task.assignedTo) : null,
     reviewer: task.reviewer ? serializeUserName(task.reviewer) : null,
+    canManage: membership ? canGenerateTasks(membership) : false,
     canReview: membership ? canReviewTasks(membership) : false,
     canWork: membership ? canWorkTasks(membership) : false,
     createdAt: task.createdAt,
@@ -2052,6 +3014,14 @@ function normalizeId(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+function normalizeNullableId(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : false;
+}
+
 function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: unknown) {
   if (typeof value !== "string") {
     return undefined;
@@ -2059,6 +3029,15 @@ function parseEnumValue<T extends Record<string, string>>(enumValues: T, value: 
 
   const values = Object.values(enumValues);
   return values.includes(value) ? (value as T[keyof T]) : undefined;
+}
+
+function parseTaskStatusQuery(value: unknown) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toUpperCase().replaceAll("-", "_");
+  return parseEnumValue(TaskStatus, normalized);
 }
 
 export function parseAnnotationBody(body: unknown):
@@ -2292,4 +3271,30 @@ function normalizePositiveInteger(value: unknown) {
 
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function normalizeInteger(value: unknown) {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+function normalizeNullableDate(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? false : date;
 }
