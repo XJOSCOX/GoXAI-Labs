@@ -1,4 +1,4 @@
-import { Bell, CheckCheck } from "lucide-react";
+import { Bell, CheckCheck, Inbox, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -16,8 +16,10 @@ export function NotificationCenter() {
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState<NotificationSummary[]>([]);
   const [open, setOpen] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const lastUpdatedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!session) {
@@ -26,13 +28,15 @@ export function NotificationCenter() {
       return;
     }
 
-    void loadNotifications(session);
+    void loadNotifications(session, { quiet: true });
     const interval = window.setInterval(() => {
-      void loadNotifications(session, { quiet: true });
+      if (!document.hidden) {
+        void loadNotifications(session, { quiet: true });
+      }
     }, 60000);
 
     return () => window.clearInterval(interval);
-  }, [session]);
+  }, [session, unreadOnly]);
 
   useEffect(() => {
     function onDocumentPointerDown(event: PointerEvent) {
@@ -48,7 +52,7 @@ export function NotificationCenter() {
     return () => document.removeEventListener("pointerdown", onDocumentPointerDown);
   }, [open]);
 
-  async function loadNotifications(activeSession = session, options: { quiet?: boolean } = {}) {
+  async function loadNotifications(activeSession = session, options: { quiet?: boolean; unreadOnly?: boolean } = {}) {
     if (!activeSession) {
       return;
     }
@@ -60,9 +64,10 @@ export function NotificationCenter() {
     setError(null);
 
     try {
-      const result = await listNotifications(activeSession, { pageSize: 20 });
+      const result = await listNotifications(activeSession, { pageSize: 20, unreadOnly: options.unreadOnly ?? unreadOnly });
       setNotifications(result.notifications);
       setUnreadCount(result.unreadCount);
+      lastUpdatedRef.current = new Date().toISOString();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load notifications.");
     } finally {
@@ -87,8 +92,16 @@ export function NotificationCenter() {
     }
 
     await markAllNotificationsRead(session);
-    setNotifications((items) => items.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
+    setNotifications((items) => unreadOnly ? [] : items.map((item) => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
     setUnreadCount(0);
+  }
+
+  async function handleUnreadOnlyChange(nextUnreadOnly: boolean) {
+    setUnreadOnly(nextUnreadOnly);
+
+    if (session) {
+      await loadNotifications(session, { unreadOnly: nextUnreadOnly });
+    }
   }
 
   async function handleNotificationClick(notification: NotificationSummary) {
@@ -121,13 +134,39 @@ export function NotificationCenter() {
           <header className="notification-menu-header">
             <div>
               <strong>Notifications</strong>
-              <small>{unreadCount} unread</small>
+              <small>{unreadCount} unread{lastUpdatedRef.current ? ` - updated ${formatNotificationTime(lastUpdatedRef.current)}` : ""}</small>
             </div>
-            <button className="link-button" type="button" onClick={() => void handleMarkAllRead()}>
-              <CheckCheck size={15} />
-              Mark read
-            </button>
+            <div className="notification-header-actions">
+              <button className="link-button" disabled={loading} type="button" onClick={() => void loadNotifications(session)}>
+                <RefreshCw size={15} />
+                Refresh
+              </button>
+              <button className="link-button" disabled={unreadCount === 0} type="button" onClick={() => void handleMarkAllRead()}>
+                <CheckCheck size={15} />
+                Mark read
+              </button>
+            </div>
           </header>
+          <div className="notification-controls">
+            <div className="segmented-control compact-segmented">
+              <button className={!unreadOnly ? "active" : ""} onClick={() => void handleUnreadOnlyChange(false)} type="button">
+                All
+              </button>
+              <button className={unreadOnly ? "active" : ""} onClick={() => void handleUnreadOnlyChange(true)} type="button">
+                Unread
+              </button>
+            </div>
+            <div className="notification-quick-links">
+              <Link to="/tasks" onClick={() => setOpen(false)}>
+                <Inbox size={14} />
+                Work
+              </Link>
+              <Link to="/tasks?queue=review" onClick={() => setOpen(false)}>
+                <Inbox size={14} />
+                Reviews
+              </Link>
+            </div>
+          </div>
           {error && <p className="form-error compact">{error}</p>}
           {loading && <p className="empty-state">Loading updates...</p>}
           {!loading && notifications.length === 0 && <p className="empty-state">No notifications yet.</p>}

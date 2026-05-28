@@ -1,4 +1,4 @@
-import { Activity, BadgeCheck, GitCompareArrows, ListChecks, Microscope, Star, TriangleAlert, UsersRound } from "lucide-react";
+import { Activity, Award, BadgeCheck, Bot, GitCompareArrows, ListChecks, Microscope, Star, TriangleAlert, UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -6,12 +6,12 @@ import { getQualityStats, type QualityStatsResult } from "../../api";
 import { useAuth } from "../../auth";
 import { formatEnum } from "../../utils/format";
 
-type QualityView = "datasets" | "people" | "review" | "trend";
+type QualityView = "ai" | "datasets" | "people" | "review" | "trend";
 const qualityStatsCache = new Map<string, { fetchedAt: number; quality: QualityStatsResult }>();
 const qualityStatsCacheTtlMs = 60_000;
 
 export function QualityPage() {
-  const { session } = useAuth();
+  const { features, session } = useAuth();
   const [activeView, setActiveView] = useState<QualityView>("review");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -22,6 +22,12 @@ export function QualityPage() {
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+
+  useEffect(() => {
+    if (!features.aiEnabled && activeView === "ai") {
+      setActiveView("review");
+    }
+  }, [activeView, features.aiEnabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -111,13 +117,28 @@ export function QualityPage() {
           <div className="quality-metric-grid">
             <QualityMetric icon={<Microscope size={15} />} label="Sampling" value={formatPercent(quality?.sampling.sampleRate ?? 0)} />
             <QualityMetric icon={<GitCompareArrows size={15} />} label="Agreement" value={formatNullablePercent(quality?.consensus.agreementRate ?? null)} />
+            <QualityMetric icon={<Award size={15} />} label="Credits" value={quality?.credits.totalCredits ?? 0} />
             <QualityMetric icon={<UsersRound size={15} />} label="Reviewers" value={quality?.reviewers.length ?? 0} />
           </div>
         </div>
+        {features.aiEnabled ? (
+          <div className="quality-command-card">
+            <div>
+              <Bot size={20} />
+              <span>AI assist</span>
+            </div>
+            <div className="quality-metric-grid">
+              <QualityMetric icon={<Bot size={15} />} label="Tasks" value={quality?.ai.assistedTasks ?? 0} />
+              <QualityMetric icon={<BadgeCheck size={15} />} label="Accepted" value={quality?.ai.acceptedRegions ?? 0} />
+              <QualityMetric icon={<Activity size={15} />} label="Edited" value={quality?.ai.editedRegions ?? 0} />
+              <QualityMetric icon={<Microscope size={15} />} label="Confidence" value={formatNullablePercent(quality?.ai.averageConfidence ?? null)} />
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <nav className="quality-view-tabs" aria-label="Quality dashboard sections">
-        {qualityViews.map((view) => (
+        {getQualityViews(features.aiEnabled).map((view) => (
           <button className={activeView === view.value ? "active" : ""} key={view.value} onClick={() => setActiveView(view.value)} type="button">
             <view.icon size={16} />
             {view.label}
@@ -144,8 +165,15 @@ export function QualityPage() {
 
       {activeView === "people" ? (
         <div className="quality-grid">
+          <QualityCreditsPanel quality={quality} loading={loading} />
           <QualityPeoplePanel title="Reviewer activity" eyebrow="Reviewers" people={quality?.reviewers ?? []} loading={loading} mode="review" />
           <QualityPeoplePanel title="Annotator performance" eyebrow="Annotators" people={quality?.annotators ?? []} loading={loading} mode="annotator" />
+        </div>
+      ) : null}
+
+      {features.aiEnabled && activeView === "ai" ? (
+        <div className="quality-grid">
+          <QualityAIPanel quality={quality} loading={loading} />
         </div>
       ) : null}
 
@@ -158,12 +186,15 @@ export function QualityPage() {
   );
 }
 
-const qualityViews: { icon: typeof Microscope; label: string; value: QualityView }[] = [
+function getQualityViews(aiEnabled: boolean): { icon: typeof Microscope; label: string; value: QualityView }[] {
+  return [
   { icon: Microscope, label: "Review", value: "review" },
   { icon: Star, label: "Datasets", value: "datasets" },
   { icon: UsersRound, label: "People", value: "people" },
+  ...(aiEnabled ? [{ icon: Bot, label: "AI", value: "ai" } as const] : []),
   { icon: Activity, label: "Trend", value: "trend" }
-];
+  ];
+}
 
 function QualityMetric({ icon, label, value }: { icon: ReactNode; label: string; value: number | string }) {
   return (
@@ -287,6 +318,44 @@ function QualityPeoplePanel({
   );
 }
 
+function QualityCreditsPanel({ loading, quality }: { loading: boolean; quality: QualityStatsResult | null }) {
+  return (
+    <section className="panel quality-list-panel quality-wide-panel">
+      <div>
+        <p className="eyebrow">Task credits</p>
+        <h2>Worker balances</h2>
+      </div>
+      {loading ? (
+        <p className="muted-copy">Loading.</p>
+      ) : quality && quality.credits.leaderboard.length > 0 ? (
+        <>
+          <div className="quality-metric-strip">
+            <Metric label="Under review" value={quality.credits.underReviewCredits} />
+            <Metric label="Approved" value={quality.credits.approvedCredits} />
+            <Metric label="Available" value={quality.credits.availableCredits} />
+            <Metric label="Withdrawn" value={quality.credits.withdrawnCredits} />
+          </div>
+          <div className="quality-list">
+            {quality.credits.leaderboard.map((person) => (
+              <article className="quality-person-row" key={person.id}>
+                <span>
+                  <strong>{person.name}</strong>
+                  <small>
+                    {person.underReviewCredits} under review - {person.approvedCredits} approved - {person.availableCredits} available
+                  </small>
+                </span>
+                <em>{person.approvedCredits + person.availableCredits} credits</em>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="muted-copy">Approved work will show here once workers start earning credits.</p>
+      )}
+    </section>
+  );
+}
+
 function QualitySamplingPanel({ loading, quality }: { loading: boolean; quality: QualityStatsResult | null }) {
   return (
     <section className="panel quality-list-panel quality-sampling-panel">
@@ -393,6 +462,82 @@ function QualityDatasetPanel({ loading, quality }: { loading: boolean; quality: 
       )}
     </section>
   );
+}
+
+function QualityAIPanel({ loading, quality }: { loading: boolean; quality: QualityStatsResult | null }) {
+  return (
+    <section className="panel quality-list-panel quality-wide-panel quality-ai-panel">
+      <div>
+        <p className="eyebrow">AI assistance</p>
+        <h2>Prediction acceptance</h2>
+      </div>
+      {loading ? (
+        <p className="muted-copy">Loading.</p>
+      ) : quality && (quality.ai.predictionRegions > 0 || quality.ai.acceptedRegions > 0) ? (
+        <>
+          <div className="quality-metric-strip">
+            <Metric label="Predicted" value={quality.ai.predictionRegions} />
+            <Metric label="Accepted" value={quality.ai.acceptedRegions} />
+            <Metric label="Edited" value={quality.ai.editedRegions} />
+            <Metric label="Removed" value={quality.ai.removedRegions} />
+            <Metric label="Avg confidence" value={formatNullablePercent(quality.ai.averageConfidence)} />
+          </div>
+          <div className="quality-ai-columns">
+            <div className="quality-ai-column">
+              <h3>Datasets</h3>
+              <div className="quality-list compact">
+                {quality.ai.datasetBreakdown.map((dataset) => (
+                  <article className="quality-dataset-row" key={dataset.id ?? dataset.name}>
+                    <span>
+                      <strong>{dataset.name}</strong>
+                      <small>
+                        {dataset.assistedTasks} tasks - {dataset.acceptedRegions}/{dataset.predictionRegions} accepted - {formatNullablePercent(dataset.averageConfidence)} confidence
+                      </small>
+                      <span className="quality-ai-drilldowns">
+                        <Link to={buildAIQueueLink(dataset.id, "ai_assisted")}>Assisted queue</Link>
+                        <Link to={buildAIQueueLink(dataset.id, "ai_edited")}>Edited</Link>
+                        <Link to={buildAIQueueLink(dataset.id, "ai_low_confidence")}>Low confidence</Link>
+                      </span>
+                    </span>
+                    <em>{dataset.editedRegions} edits</em>
+                  </article>
+                ))}
+              </div>
+            </div>
+            <div className="quality-ai-column">
+              <h3>Models</h3>
+              <div className="quality-list compact">
+                {quality.ai.providerBreakdown.map((provider) => (
+                  <article className="quality-dataset-row" key={provider.id ?? provider.name}>
+                    <span>
+                      <strong>{provider.name}</strong>
+                      <small>{provider.type ? formatEnum(provider.type) : "Provider"} - {provider.tasks} assisted tasks</small>
+                    </span>
+                    <em>{provider.regions} regions</em>
+                  </article>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="muted-copy">AI predictions will show here once imported or generated for tasks.</p>
+      )}
+    </section>
+  );
+}
+
+function buildAIQueueLink(datasetId: string | null, quality: "ai_assisted" | "ai_edited" | "ai_low_confidence") {
+  const params = new URLSearchParams({
+    quality,
+    queue: "review"
+  });
+
+  if (datasetId) {
+    params.set("datasetId", datasetId);
+  }
+
+  return `/tasks?${params.toString()}`;
 }
 
 function Metric({ label, value }: { label: string; value: number | string }) {

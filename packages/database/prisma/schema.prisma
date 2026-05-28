@@ -203,6 +203,20 @@ enum ReviewStatus {
   NEEDS_CHANGES
 }
 
+enum TaskCreditEventType {
+  ANNOTATION_SUBMITTED
+  ANNOTATION_APPROVED
+  REVIEW_COMPLETED
+}
+
+enum TaskCreditStatus {
+  UNDER_REVIEW
+  APPROVED
+  AVAILABLE
+  WITHDRAWN
+  VOIDED
+}
+
 enum WorkflowActionType {
   ANNOTATE
   REVIEW
@@ -297,6 +311,28 @@ enum PayoutStatus {
   CANCELLED
 }
 
+enum PaymentIntentStatus {
+  CREATED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum FundingSourceStatus {
+  ACTIVE
+  PENDING
+  DISABLED
+  ERROR
+}
+
+enum WalletReceiptType {
+  TOP_UP
+  PAYOUT
+  REFUND
+  ADJUSTMENT
+}
+
 enum NotificationType {
   INFO
   SUCCESS
@@ -370,8 +406,10 @@ model User {
   uploadedAssets      StorageAsset[]    @relation("AssetUploader")
   assignedTasks       Task[]            @relation("TaskAssignee")
   reviewTasks         Task[]            @relation("TaskReviewer")
+  taskViews           TaskView[]
   annotations         Annotation[]
   reviews             Review[]
+  taskCreditEvents    TaskCreditEvent[] @relation("TaskCreditEventUser")
   comments            Comment[]
   presenceSessions    PresenceSession[]
   modelProviders      ModelProvider[]   @relation("ModelProviderCreator")
@@ -379,7 +417,10 @@ model User {
   exportJobs          ExportJob[]       @relation("ExportRequester")
   jobApplications     JobApplication[]
   wallets             Wallet[]
+  fundingSources      FundingSource[]
   payouts             Payout[]
+  paymentIntents      PaymentIntent[]
+  walletReceipts      WalletReceipt[]
   notifications       Notification[]
   notificationPreferences NotificationPreference[]
   auditLogs           AuditLog[]
@@ -475,10 +516,14 @@ model Organization {
   projects            Project[]
   datasets            Dataset[]
   assets              StorageAsset[]
+  taskCreditEvents    TaskCreditEvent[]
   modelProviders      ModelProvider[]
   marketplaceListings MarketplaceListing[] @relation("SellerOrgListings")
   jobPosts            JobPost[]
   wallets             Wallet[]
+  fundingSources      FundingSource[]
+  paymentIntents      PaymentIntent[]
+  walletReceipts      WalletReceipt[]
   auditLogs           AuditLog[]
   apiKeys             ApiKey[]
   webhooks            Webhook[]
@@ -544,6 +589,7 @@ model Membership {
   @@index([workspaceId])
   @@index([role])
   @@index([status])
+  @@index([organizationId, userId, status])
   @@unique([userId, organizationId, workspaceId])
   @@map("memberships")
 }
@@ -575,7 +621,9 @@ model Project {
   datasets     Dataset[]
   assets       StorageAsset[]
   tasks        Task[]
+  taskViews    TaskView[]
   annotations  Annotation[]
+  taskCreditEvents TaskCreditEvent[]
   workflows    Workflow[]
   modelProviders ModelProvider[]
   aiJobs       AIJob[]
@@ -644,6 +692,18 @@ model AnnotationTemplate {
   @@map("annotation_templates")
 }
 
+model PlatformSetting {
+  key         String  @id
+  value       Json    @default("{}")
+  description String?
+  updatedById String? @map("updated_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("platform_settings")
+}
+
 model ProjectMembership {
   id          String           @id @default(cuid())
   projectId   String           @map("project_id")
@@ -664,6 +724,7 @@ model ProjectMembership {
   @@index([userId])
   @@index([role])
   @@index([status])
+  @@index([projectId, userId, status])
   @@unique([projectId, userId])
   @@map("project_memberships")
 }
@@ -690,6 +751,8 @@ model Dataset {
   versions     DatasetVersion[]
   assets       StorageAsset[]
   tasks        Task[]
+  taskViews    TaskView[]
+  taskCreditEvents TaskCreditEvent[]
   aiJobs       AIJob[]
   exports      ExportJob[]
 
@@ -796,6 +859,7 @@ model StorageAsset {
   @@index([organizationId])
   @@index([projectId])
   @@index([datasetId])
+  @@index([datasetId, createdAt, id])
   @@index([uploadedById])
   @@unique([provider, bucket, objectKey])
   @@map("storage_assets")
@@ -827,6 +891,7 @@ model Task {
   comments    Comment[]
   presenceSessions PresenceSession[]
   aiJobs      AIJob[]
+  taskCreditEvents TaskCreditEvent[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -838,7 +903,37 @@ model Task {
   @@index([reviewerId])
   @@index([status])
   @@index([priority])
+  @@index([datasetId, status])
+  @@index([datasetId, status, createdAt, id])
+  @@index([datasetId, status, priority, dueAt, createdAt, id])
   @@map("tasks")
+}
+
+model TaskView {
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  projectId String? @map("project_id")
+  datasetId String? @map("dataset_id")
+  name      String
+  scope     String @default("task_manager")
+  queue     String @default("work")
+  filters   Json   @default("{}")
+  sort       Json?
+  isDefault Boolean @default(false) @map("is_default")
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dataset Dataset? @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([datasetId])
+  @@index([userId, projectId, datasetId])
+  @@unique([userId, projectId, datasetId, name])
+  @@map("task_views")
 }
 
 model Annotation {
@@ -858,6 +953,7 @@ model Annotation {
   regions    AnnotationRegion[]
   reviews    Review[]
   comments   Comment[]
+  taskCreditEvents TaskCreditEvent[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -907,6 +1003,7 @@ model Review {
   annotation Annotation @relation(fields: [annotationId], references: [id], onDelete: Cascade)
   task       Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
   reviewer   User       @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  taskCreditEvents TaskCreditEvent[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -916,6 +1013,50 @@ model Review {
   @@index([reviewerId])
   @@index([status])
   @@map("reviews")
+}
+
+model TaskCreditEvent {
+  id             String              @id @default(cuid())
+  referenceKey   String              @unique @map("reference_key")
+  eventType      TaskCreditEventType @map("event_type")
+  status         TaskCreditStatus    @default(UNDER_REVIEW)
+  points         Int
+  credits        Int                 @default(0)
+  amount         Decimal             @default(0) @db.Decimal(12, 2)
+  currency       String              @default("USD")
+  userId         String?             @map("user_id")
+  organizationId String?             @map("organization_id")
+  projectId      String?             @map("project_id")
+  datasetId      String?             @map("dataset_id")
+  taskId         String?             @map("task_id")
+  annotationId   String?             @map("annotation_id")
+  reviewId       String?             @map("review_id")
+  metadata       Json?
+
+  user         User?         @relation("TaskCreditEventUser", fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  dataset      Dataset?      @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  task         Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  annotation   Annotation?   @relation(fields: [annotationId], references: [id], onDelete: SetNull)
+  review       Review?       @relation(fields: [reviewId], references: [id], onDelete: SetNull)
+
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz(6)
+  availableAt DateTime? @map("available_at") @db.Timestamptz(6)
+  withdrawnAt DateTime? @map("withdrawn_at") @db.Timestamptz(6)
+  voidedAt DateTime? @map("voided_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@index([projectId])
+  @@index([datasetId])
+  @@index([taskId])
+  @@index([annotationId])
+  @@index([reviewId])
+  @@index([eventType])
+  @@index([status])
+  @@map("task_credit_events")
 }
 
 model Workflow {
@@ -1158,6 +1299,9 @@ model Wallet {
   organization  Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   ledgerEntries LedgerEntry[]
   payouts       Payout[]
+  paymentIntents PaymentIntent[]
+  receipts      WalletReceipt[]
+  fundingSources FundingSource[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1179,6 +1323,7 @@ model LedgerEntry {
   metadata    Json?
 
   wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  receipts WalletReceipt[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -1201,6 +1346,7 @@ model Payout {
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  receipts WalletReceipt[]
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1209,6 +1355,117 @@ model Payout {
   @@index([walletId])
   @@index([status])
   @@map("payouts")
+}
+
+model PaymentIntent {
+  id             String              @id @default(cuid())
+  walletId       String              @map("wallet_id")
+  createdById    String?             @map("created_by_id")
+  organizationId String?             @map("organization_id")
+  fundingSourceId String?             @map("funding_source_id")
+  amount         Decimal             @db.Decimal(12, 2)
+  currency       String              @default("USD")
+  status         PaymentIntentStatus @default(CREATED)
+  provider       String              @default("manual")
+  providerRef    String?             @map("provider_ref")
+  purpose        String              @default("creator_wallet_top_up")
+  description    String?
+  metadata       Json?
+  completedAt    DateTime?           @map("completed_at") @db.Timestamptz(6)
+  cancelledAt    DateTime?           @map("cancelled_at") @db.Timestamptz(6)
+
+  wallet       Wallet        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  fundingSource FundingSource? @relation(fields: [fundingSourceId], references: [id], onDelete: SetNull)
+  receipts     WalletReceipt[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([walletId])
+  @@index([createdById])
+  @@index([organizationId])
+  @@index([fundingSourceId])
+  @@index([status])
+  @@index([provider])
+  @@index([providerRef])
+  @@map("payment_intents")
+}
+
+model FundingSource {
+  id             String              @id @default(cuid())
+  walletId       String              @map("wallet_id")
+  userId         String?             @map("user_id")
+  organizationId String?             @map("organization_id")
+  status         FundingSourceStatus @default(PENDING)
+  provider       String
+  providerRef    String?             @map("provider_ref")
+  processor      String?
+  processorRef   String?             @map("processor_ref")
+  institutionName String?            @map("institution_name")
+  accountName    String?             @map("account_name")
+  accountMask    String?             @map("account_mask")
+  accountType    String?             @map("account_type")
+  accountSubtype String?             @map("account_subtype")
+  currency       String              @default("USD")
+  metadata       Json?
+  disabledAt     DateTime?           @map("disabled_at") @db.Timestamptz(6)
+
+  wallet       Wallet        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  paymentIntents PaymentIntent[]
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([provider])
+  @@index([providerRef])
+  @@index([processor])
+  @@map("funding_sources")
+}
+
+model WalletReceipt {
+  id              String            @id @default(cuid())
+  receiptNumber   String            @unique @map("receipt_number")
+  walletId        String            @map("wallet_id")
+  userId          String?           @map("user_id")
+  organizationId  String?           @map("organization_id")
+  ledgerEntryId   String?           @map("ledger_entry_id")
+  paymentIntentId String?           @map("payment_intent_id")
+  payoutId        String?           @map("payout_id")
+  type            WalletReceiptType
+  amount          Decimal           @db.Decimal(12, 2)
+  currency        String            @default("USD")
+  provider        String            @default("manual")
+  providerRef     String?           @map("provider_ref")
+  description     String?
+  metadata        Json?
+  issuedAt        DateTime          @default(now()) @map("issued_at") @db.Timestamptz(6)
+
+  wallet        Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user          User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization  Organization?  @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  ledgerEntry   LedgerEntry?   @relation(fields: [ledgerEntryId], references: [id], onDelete: SetNull)
+  paymentIntent PaymentIntent? @relation(fields: [paymentIntentId], references: [id], onDelete: SetNull)
+  payout        Payout?        @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([organizationId])
+  @@index([ledgerEntryId])
+  @@index([paymentIntentId])
+  @@index([payoutId])
+  @@index([type])
+  @@index([provider])
+  @@map("wallet_receipts")
 }
 
 // =========================

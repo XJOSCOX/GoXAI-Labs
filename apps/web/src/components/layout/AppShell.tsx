@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, ListChecks, LogOut, ShieldCheck, Star, UserRound } from "lucide-react";
+import { Activity, BarChart3, Bot, Building2, CheckCircle2, ClipboardList, Database, FolderKanban, ListChecks, LogOut, ShieldCheck, Star, UserRound, WalletCards } from "lucide-react";
 import { NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../auth";
 import goxaiLogo from "../../assets/goxailab-logo.png";
@@ -10,7 +10,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function AppShell() {
-  const { dbUser, logout, session } = useAuth();
+  const { dbUser, features, logout, session } = useAuth();
   const location = useLocation();
   const { loading: organizationsLoading, organizations } = useOrganizations(session);
   const topbarTitle = getTopbarTitle(location.pathname);
@@ -21,6 +21,7 @@ export function AppShell() {
   const canUseDatasetWorkspace =
     dbUser?.globalRole === "SUPER_ADMIN" ||
     organizations.some((organization) => ["OWNER", "ADMIN", "MANAGER"].includes(organization.role));
+  const aiEnabled = features.aiEnabled;
   const accountKind = organizations.length === 0 ? "Simple user" : ownsOrganization ? "Organization owner" : "Organization user";
   const onboardingOrganization = organizations.find(
     (organization) => organization.role === "OWNER" && organization.onboardingComplete === false
@@ -86,6 +87,16 @@ export function AppShell() {
             <ClipboardList size={18} />
             Tasks
           </NavLink>
+          <NavLink to="/wallet">
+            <WalletCards size={18} />
+            Wallet
+          </NavLink>
+          {canUseDatasetWorkspace && aiEnabled && (
+            <NavLink to="/ai">
+              <Bot size={18} />
+              AI
+            </NavLink>
+          )}
           {canUseDatasetWorkspace && (
             <NavLink to="/quality">
               <Star size={18} />
@@ -194,6 +205,14 @@ function getTopbarTitle(pathname: string) {
 
   if (normalizedPathname.startsWith("/tasks/")) {
     return { eyebrow: "Tasks", title: "Task workspace" };
+  }
+
+  if (normalizedPathname === "/wallet") {
+    return { eyebrow: "Wallet", title: "Wallet ledger" };
+  }
+
+  if (normalizedPathname === "/ai") {
+    return { eyebrow: "AI", title: "Pre-labeling" };
   }
 
   if (normalizedPathname === "/quality") {

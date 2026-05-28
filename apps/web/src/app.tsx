@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ComponentType } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
-import { AuthProvider } from "./auth";
+import { AuthProvider, useAuth } from "./auth";
 import { DatasetWorkspaceRoute } from "./components/auth/DatasetWorkspaceRoute";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 import { AppErrorBoundary } from "./components/layout/AppErrorBoundary";
@@ -9,6 +9,7 @@ import { LoadingScreen } from "./components/layout/LoadingScreen";
 
 const AccountPage = lazy(() => import("./pages/account/AccountPage").then((module) => toDefault(module.AccountPage)));
 const AdminPage = lazy(() => import("./pages/admin/AdminPage").then((module) => toDefault(module.AdminPage)));
+const AIPage = lazy(() => import("./pages/ai/AIPage").then((module) => toDefault(module.AIPage)));
 const AuditPage = lazy(() => import("./pages/audit/AuditPage").then((module) => toDefault(module.AuditPage)));
 const DashboardPage = lazy(() => import("./pages/dashboard/DashboardPage").then((module) => toDefault(module.DashboardPage)));
 const DatasetDetailPage = lazy(() => import("./pages/datasets/DatasetDetailPage").then((module) => toDefault(module.DatasetDetailPage)));
@@ -26,6 +27,7 @@ const QualityPage = lazy(() => import("./pages/quality/QualityPage").then((modul
 const RegisterPage = lazy(() => import("./pages/auth/RegisterPage").then((module) => toDefault(module.RegisterPage)));
 const TaskDetailPage = lazy(() => import("./pages/tasks/TaskDetailPage").then((module) => toDefault(module.TaskDetailPage)));
 const TasksPage = lazy(() => import("./pages/tasks/TasksPage").then((module) => toDefault(module.TasksPage)));
+const WalletPage = lazy(() => import("./pages/wallet/WalletPage").then((module) => toDefault(module.WalletPage)));
 
 function toDefault(component: ComponentType) {
   return { default: component };
@@ -95,13 +97,71 @@ function AppRoutes() {
             />
             <Route path="tasks" element={<TasksPage />} />
             <Route path="tasks/:taskId" element={<TaskDetailPage />} />
-            <Route path="quality" element={<QualityPage />} />
-            <Route path="audit" element={<AuditPage />} />
-            <Route path="label-templates" element={<LabelTemplatesPage />} />
-            <Route path="label-templates/manage" element={<LabelTemplateManagerPage />} />
-            <Route path="label-templates/categories/:categoryKey/templates/new" element={<LabelTemplateFormPage />} />
-            <Route path="label-templates/templates/new" element={<LabelTemplateFormPage />} />
-            <Route path="label-templates/templates/:templateId/edit" element={<LabelTemplateFormPage />} />
+            <Route path="wallet" element={<WalletPage />} />
+            <Route
+              path="ai"
+              element={
+                <DatasetWorkspaceRoute>
+                  <AIWorkspaceRoute />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="quality"
+              element={
+                <DatasetWorkspaceRoute>
+                  <QualityPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="audit"
+              element={
+                <DatasetWorkspaceRoute>
+                  <AuditPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="label-templates"
+              element={
+                <DatasetWorkspaceRoute>
+                  <LabelTemplatesPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="label-templates/manage"
+              element={
+                <DatasetWorkspaceRoute>
+                  <LabelTemplateManagerPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="label-templates/categories/:categoryKey/templates/new"
+              element={
+                <DatasetWorkspaceRoute>
+                  <LabelTemplateFormPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="label-templates/templates/new"
+              element={
+                <DatasetWorkspaceRoute>
+                  <LabelTemplateFormPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
+            <Route
+              path="label-templates/templates/:templateId/edit"
+              element={
+                <DatasetWorkspaceRoute>
+                  <LabelTemplateFormPage />
+                </DatasetWorkspaceRoute>
+              }
+            />
             <Route path="account" element={<AccountPage />} />
             <Route path="admin" element={<AdminPage />} />
           </Route>
@@ -109,4 +169,21 @@ function AppRoutes() {
       </Suspense>
     </AppErrorBoundary>
   );
+}
+
+function AIWorkspaceRoute() {
+  const { features } = useAuth();
+
+  if (!features.aiEnabled) {
+    return (
+      <section className="page-stack">
+        <section className="panel empty-state compact-empty">
+          <strong>AI workspace disabled</strong>
+          <span>Turn it on from Admin when the pre-labeling workflow is ready.</span>
+        </section>
+      </section>
+    );
+  }
+
+  return <AIPage />;
 }

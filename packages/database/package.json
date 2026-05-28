@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
+    "db:seed:wallet": "node scripts/seed-wallet-demo.mjs",
     "db:studio": "prisma studio",
     "db:validate": "prisma validate",
     "prebuild": "prisma generate",

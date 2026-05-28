@@ -10,11 +10,22 @@ import {
   useRef,
   useState
 } from "react";
-import { createSupabaseBrowserClient, resolveLoginEmail, syncAuthenticatedUser, updateUserProfile, type ApiUser } from "./api";
+import {
+  createSupabaseBrowserClient,
+  loadBackendConfig,
+  resolveLoginEmail,
+  syncAuthenticatedUser,
+  updateUserProfile,
+  type ApiUser,
+  type PlatformTaskEconomics,
+  type PlatformFeatures
+} from "./api";
 
 interface AuthContextValue {
   dbUser: ApiUser | null;
+  economics: PlatformTaskEconomics;
   error: string | null;
+  features: PlatformFeatures;
   initialized: boolean;
   loading: boolean;
   session: Session | null;
@@ -23,6 +34,7 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   register: (input: RegisterInput) => Promise<"signed-in" | "check-email">;
   refreshUser: () => Promise<void>;
+  setFeatures: (features: PlatformFeatures) => void;
   updateProfile: (input: { firstName?: string; lastName?: string; jobTitle?: string }) => Promise<void>;
 }
 
@@ -37,10 +49,24 @@ export interface RegisterInput {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const defaultPlatformFeatures: PlatformFeatures = {
+  aiEnabled: false,
+  payments: {
+    paypalEnabled: true,
+    plaidEnabled: false,
+    stripeEnabled: false
+  }
+};
+const defaultPlatformEconomics: PlatformTaskEconomics = {
+  freeTaskPostingFeeCredits: 0,
+  platformFeeRate: 0.3
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [dbUser, setDbUser] = useState<ApiUser | null>(null);
+  const [economics, setEconomics] = useState<PlatformTaskEconomics>(defaultPlatformEconomics);
   const [error, setError] = useState<string | null>(null);
+  const [features, setFeatures] = useState<PlatformFeatures>(defaultPlatformFeatures);
   const [initialized, setInitialized] = useState(false);
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
@@ -73,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       try {
+        const config = await loadBackendConfig();
         const client = await createSupabaseBrowserClient();
         const { data } = await client.auth.getSession();
 
@@ -80,6 +107,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        setEconomics(config.economics ?? defaultPlatformEconomics);
+        setFeatures(config.features ?? defaultPlatformFeatures);
         setSupabase(client);
         await syncSession(data.session);
 
@@ -115,7 +144,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(
     () => ({
       dbUser,
+      economics,
       error,
+      features,
       initialized,
       loading,
       session,
@@ -216,6 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const user = await syncAuthenticatedUser(session);
         setDbUser(user);
       },
+      setFeatures,
       updateProfile: async (input) => {
         if (!session) {
           throw new Error("Authentication is required.");
@@ -236,7 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     }),
-    [dbUser, error, initialized, loading, session, supabase, syncSession]
+    [dbUser, economics, error, features, initialized, loading, session, supabase, syncSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
