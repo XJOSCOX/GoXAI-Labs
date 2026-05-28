@@ -2,6 +2,7 @@ import {
   AIJobStatus,
   AnnotationStatus,
   getPrismaClient,
+  LedgerEntryType,
   MembershipRole,
   NotificationPreferenceEvent,
   NotificationType,
@@ -68,6 +69,7 @@ import {
   summarizeTaskQueueQualityCounts,
   summarizeTaskStatsForGroups,
 } from "./taskQueue.js";
+import { backfillReviewPaymentSettlements } from "./taskReviewPayment.js";
 import {
   buildDatasetTaskWorkflowUpdateData,
   countDatasetWorkflowAssignees,
@@ -175,6 +177,10 @@ export {
   getTaskActionUpdate,
   type TaskAction
 } from "./taskActions.js";
+
+export {
+  backfillReviewPaymentSettlements
+} from "./taskReviewPayment.js";
 
 export {
   getAnnotationApprovalCreditPoints,
@@ -2396,11 +2402,17 @@ router.get("/:taskId", async (request: AuthenticatedRequest, response) => {
     return;
   }
 
+  const settlementLedgerEntries = await getTaskSettlementLedgerEntries(access.task.id);
+  const reviews = backfillReviewPaymentSettlements(access.task.reviews, {
+    ledgerEntries: settlementLedgerEntries,
+    task: access.task
+  });
+
   response.status(200).json({
     annotation: serializeAnnotation(access.annotation),
     annotationHistory: access.task.annotations.map(serializeAnnotation),
     comments: access.task.comments.map(serializeComment),
-    reviews: access.task.reviews.map(serializeReview),
+    reviews: reviews.map(serializeReview),
     task: serializeTask(access.task, access.membership)
   });
 });
@@ -2408,6 +2420,24 @@ router.get("/:taskId", async (request: AuthenticatedRequest, response) => {
 router.post("/:taskId/annotation", async (request: AuthenticatedRequest, response) => {
   await saveTaskAnnotation(request, response, "draft");
 });
+
+async function getTaskSettlementLedgerEntries(taskId: string) {
+  const prisma = getPrismaClient();
+
+  return prisma.ledgerEntry.findMany({
+    where: {
+      referenceId: taskId,
+      type: {
+        in: [LedgerEntryType.RELEASE, LedgerEntryType.FEE, LedgerEntryType.REFUND]
+      }
+    },
+    select: {
+      currency: true,
+      metadata: true,
+      type: true
+    }
+  });
+}
 
 router.post("/:taskId/annotation/submit", async (request: AuthenticatedRequest, response) => {
   await saveTaskAnnotation(request, response, "submit");

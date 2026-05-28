@@ -2482,7 +2482,7 @@ textarea:focus {
 }
 
 .admin-payment-layout {
-  grid-template-columns: minmax(420px, 0.42fr) minmax(0, 1fr);
+  grid-template-columns: minmax(330px, 0.42fr) minmax(0, 1fr);
   align-items: start;
 }
 
@@ -2560,10 +2560,71 @@ textarea:focus {
   font-size: 12px;
 }
 
-.admin-webhook-disclosure p {
+.admin-webhook-detail {
+  display: grid;
+  gap: 10px;
   border-top: 1px solid var(--border);
-  margin: 0;
   padding: 10px 12px 12px 58px;
+}
+
+.admin-webhook-detail p {
+  margin: 0;
+}
+
+.admin-webhook-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.admin-webhook-metrics span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, #3c3c3c);
+  padding: 8px;
+}
+
+.admin-webhook-metrics small,
+.admin-webhook-events small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-webhook-metrics strong,
+.admin-webhook-events strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-webhook-events {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-webhook-events article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.55fr);
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 90%, #303030);
+  padding: 8px;
+}
+
+.admin-webhook-events span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .admin-webhook-card,
@@ -2611,7 +2672,85 @@ textarea:focus {
 }
 
 .admin-payment-row {
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.55fr) minmax(170px, 0.65fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(118px, 0.5fr) minmax(118px, 0.55fr) auto;
+  min-width: 0;
+}
+
+.admin-payment-row.needs-review {
+  border-color: color-mix(in srgb, #f59e0b 52%, var(--border));
+  background: color-mix(in srgb, var(--surface) 82%, #5a4322);
+}
+
+.admin-reconciliation-chip {
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, #34d399 36%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #065f46 34%, transparent);
+  color: #a7f3d0;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.admin-reconciliation-chip.warning {
+  border-color: color-mix(in srgb, #f59e0b 46%, transparent);
+  background: color-mix(in srgb, #7c2d12 38%, transparent);
+  color: #fde68a;
+}
+
+.admin-reconciliation-chip.blocked {
+  border-color: color-mix(in srgb, #fb7185 46%, transparent);
+  background: color-mix(in srgb, #7f1d1d 42%, transparent);
+  color: #fecdd3;
+}
+
+.admin-audit-trail-panel {
+  margin-top: 2px;
+}
+
+.admin-audit-trail-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.admin-audit-trail-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(170px, 0.36fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, var(--text) 10%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 84%, #4a4a4a);
+  padding: 10px;
+}
+
+.admin-audit-trail-main,
+.admin-audit-trail-meta {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-audit-trail-meta {
+  justify-items: end;
+  text-align: right;
+}
+
+.admin-audit-trail-row strong,
+.admin-audit-trail-row small {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-audit-trail-row small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .admin-topup-pagination {
@@ -2656,8 +2795,31 @@ textarea:focus {
   font-size: 12px;
 }
 
+.admin-payment-row .admin-reconciliation-chip {
+  color: #a7f3d0;
+  font-size: 11px;
+}
+
+.admin-payment-row .admin-reconciliation-chip.warning {
+  color: #fde68a;
+}
+
+.admin-payment-row .admin-reconciliation-chip.blocked {
+  color: #fecdd3;
+}
+
 .admin-payment-actions {
   justify-items: end;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .admin-page .feature-icon {
@@ -2743,7 +2905,21 @@ textarea:focus {
 }
 
 .admin-revenue-row {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(210px, 0.7fr);
+  grid-template-columns: minmax(0, 0.65fr) minmax(0, 0.85fr) minmax(190px, 0.65fr) minmax(210px, 0.8fr);
+}
+
+.admin-revenue-row a {
+  overflow: hidden;
+  color: var(--accent-deep);
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-revenue-row a:hover {
+  text-decoration: underline;
 }
 
 .feature-icon {
@@ -2937,6 +3113,12 @@ textarea:focus {
   width: min(1120px, 100%);
 }
 
+.payment-detail-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
 .payout-detail-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3030,6 +3212,205 @@ textarea:focus {
 .payout-audit-row small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.payment-readiness-note {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-soft));
+  padding: 12px;
+}
+
+.payment-readiness-note strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.payment-readiness-note span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.payment-reconciliation-note {
+  display: grid;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--success-text) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success-bg) 34%, var(--surface-soft));
+  padding: 12px;
+}
+
+.payment-reconciliation-note.warning {
+  border-color: color-mix(in srgb, #f59e0b 34%, var(--border));
+  background: color-mix(in srgb, #f59e0b 7%, var(--surface-soft));
+}
+
+.payment-reconciliation-note h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.payment-reconciliation-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.payment-reconciliation-metrics span,
+.payment-reconciliation-issues span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, #3c3c3c);
+  padding: 9px;
+}
+
+.payment-reconciliation-metrics small,
+.payment-reconciliation-issues small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-reconciliation-metrics strong,
+.payment-reconciliation-issues strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-reconciliation-issues {
+  display: grid;
+  gap: 8px;
+}
+
+.payment-reconciliation-issues span.warning {
+  border-color: color-mix(in srgb, #f59e0b 36%, var(--border));
+}
+
+.payment-reconciliation-issues span.blocked {
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
+}
+
+.payment-refund-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(140px, 0.36fr) minmax(190px, 0.5fr) minmax(220px, 0.6fr) auto;
+  align-items: end;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, #f59e0b 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #f59e0b 7%, var(--surface-soft));
+  padding: 12px;
+}
+
+.payment-refund-form h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.payment-refund-form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.payment-detail-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.payment-detail-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.payment-detail-list.compact {
+  max-height: 260px;
+}
+
+.payment-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 0.42fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.payment-detail-row > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.payment-detail-row > span:last-child {
+  justify-items: end;
+  text-align: right;
+}
+
+.payment-detail-row strong,
+.payment-detail-row small {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-detail-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.refund-readiness-pill {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 3px 9px;
+}
+
+.refund-readiness-pill.ready {
+  border-color: color-mix(in srgb, var(--success-text) 42%, var(--border));
+  background: color-mix(in srgb, var(--success-bg) 68%, transparent);
+  color: var(--success-text);
+}
+
+.refund-readiness-pill.warning {
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--border));
+  background: color-mix(in srgb, #f59e0b 12%, transparent);
+  color: #fbbf24;
+}
+
+.refund-readiness-pill.blocked {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
 }
 
 .organization-detail-frame {
@@ -6837,6 +7218,7 @@ textarea:focus {
   .admin-revenue-columns,
   .admin-revenue-row,
   .admin-payment-provider-grid,
+  .admin-audit-trail-row,
   .admin-topup-pagination,
   .ai-workspace-grid,
   .ai-provider-card,
@@ -6884,6 +7266,22 @@ textarea:focus {
 .task-timeline-item small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.task-timeline-money {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.task-timeline-money small {
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 7px;
 }
 
 .annotation-shortcuts {

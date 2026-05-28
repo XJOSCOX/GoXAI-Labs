@@ -1,12 +1,14 @@
-import { AnnotationRegionType, AnnotationStatus, ReviewStatus, TaskCreditEventType, TaskCreditStatus, TaskStatus } from "@goxai/database";
+import { AnnotationRegionType, AnnotationStatus, LedgerEntryType, ReviewStatus, TaskCreditEventType, TaskCreditStatus, TaskStatus, type Prisma } from "@goxai/database";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { settleTaskEscrowOnApproval } from "./taskCredits.js";
 import {
   buildTaskQualityFlags,
   buildTaskQueueFilterWhere,
   getDatasetGenerationConfigIssue,
   getAnnotationApprovalCreditPoints,
   getAnnotationSubmissionCreditPoints,
+  backfillReviewPaymentSettlements,
   getDatasetTaskCreditAllocation,
   getDatasetTaskEscrowEstimate,
   getDatasetWorkflowAssignments,
@@ -21,6 +23,92 @@ import {
   summarizeTaskConsensus,
   summarizeTaskStatsForGroups
 } from "./tasks.js";
+
+describe("backfillReviewPaymentSettlements", () => {
+  it("adds payment settlement metadata from existing task ledger entries", () => {
+    const reviews = backfillReviewPaymentSettlements([
+      {
+        id: "review-1",
+        metadata: {}
+      }
+    ], {
+      task: {
+        metadata: {
+          paymentCurrency: "USD"
+        }
+      },
+      ledgerEntries: [
+        {
+          currency: "USD",
+          metadata: {
+            approvedCredits: 28,
+            reviewId: "review-1"
+          },
+          type: LedgerEntryType.RELEASE
+        },
+        {
+          currency: "USD",
+          metadata: {
+            feeCredits: 12,
+            reviewId: "review-1"
+          },
+          type: LedgerEntryType.FEE
+        }
+      ]
+    });
+
+    assert.deepEqual(reviews[0]?.metadata, {
+      paymentSettlement: {
+        approvedCredits: 28,
+        currency: "USD",
+        escrowCredits: 40,
+        feeCredits: 12,
+        refundCredits: 0
+      }
+    });
+  });
+
+  it("keeps existing review payment settlement metadata", () => {
+    const reviews = backfillReviewPaymentSettlements([
+      {
+        id: "review-1",
+        metadata: {
+          paymentSettlement: {
+            approvedCredits: 1,
+            currency: "USD",
+            escrowCredits: 1,
+            feeCredits: 0,
+            refundCredits: 0
+          }
+        }
+      }
+    ], {
+      task: {
+        metadata: {}
+      },
+      ledgerEntries: [
+        {
+          currency: "USD",
+          metadata: {
+            approvedCredits: 28,
+            reviewId: "review-1"
+          },
+          type: LedgerEntryType.RELEASE
+        }
+      ]
+    });
+
+    assert.deepEqual(reviews[0]?.metadata, {
+      paymentSettlement: {
+        approvedCredits: 1,
+        currency: "USD",
+        escrowCredits: 1,
+        feeCredits: 0,
+        refundCredits: 0
+      }
+    });
+  });
+});
 
 describe("summarizeTaskStatsForGroups", () => {
   it("buckets pending, active, review, approved, rejected, total, and unassigned tasks", () => {
@@ -951,6 +1039,124 @@ describe("task credit estimates", () => {
   });
 });
 
+describe("settleTaskEscrowOnApproval", () => {
+  it("releases worker pay and platform fee when a submitted task is approved", async () => {
+    const fixture = createEscrowSettlementFixture();
+
+    const settlement = await settleTaskEscrowOnApproval(fixture.tx, {
+      paymentPolicy: createPaymentPolicy({ annotationCredits: 28, reviewCredits: 0 }),
+      reviewId: "review-1",
+      task: createSettlementTask({ escrowCredits: 40, platformFeeCredits: 12, reviewerId: null })
+    });
+
+    assert.deepEqual(settlement && {
+      approvedCredits: settlement.approvedCredits,
+      currency: settlement.currency,
+      escrowCredits: settlement.escrowCredits,
+      feeCredits: settlement.feeCredits,
+      refundCredits: settlement.refundCredits
+    }, {
+      approvedCredits: 28,
+      currency: "USD",
+      escrowCredits: 40,
+      feeCredits: 12,
+      refundCredits: 0
+    });
+    assert.deepEqual(fixture.ledgerEntries.map((entry) => [entry.type, entry.amount]), [
+      [LedgerEntryType.RELEASE, "0.28"],
+      [LedgerEntryType.FEE, "0.12"]
+    ]);
+    assert.equal(fixture.walletUpdates.length, 0);
+  });
+
+  it("refunds unused escrow back to the creator wallet", async () => {
+    const fixture = createEscrowSettlementFixture();
+
+    const settlement = await settleTaskEscrowOnApproval(fixture.tx, {
+      paymentPolicy: createPaymentPolicy({ annotationCredits: 28, reviewCredits: 0 }),
+      reviewId: "review-2",
+      task: createSettlementTask({ escrowCredits: 50, platformFeeCredits: 12, reviewerId: null })
+    });
+
+    assert.equal(settlement?.approvedCredits, 28);
+    assert.equal(settlement?.feeCredits, 12);
+    assert.equal(settlement?.refundCredits, 10);
+    assert.deepEqual(fixture.ledgerEntries.map((entry) => [entry.type, entry.amount]), [
+      [LedgerEntryType.RELEASE, "0.28"],
+      [LedgerEntryType.FEE, "0.12"],
+      [LedgerEntryType.REFUND, "0.10"]
+    ]);
+    assert.deepEqual(fixture.walletUpdates, [
+      {
+        data: {
+          balance: {
+            increment: "0.10"
+          }
+        },
+        where: {
+          id: "wallet-1"
+        }
+      }
+    ]);
+  });
+
+  it("includes reviewer pay in the approved worker pool when review work is configured", async () => {
+    const fixture = createEscrowSettlementFixture();
+
+    const settlement = await settleTaskEscrowOnApproval(fixture.tx, {
+      paymentPolicy: createPaymentPolicy({ annotationCredits: 30, reviewCredits: 10 }),
+      reviewId: "review-3",
+      task: createSettlementTask({ escrowCredits: 55, platformFeeCredits: 15, reviewerId: "reviewer-1" })
+    });
+
+    assert.equal(settlement?.approvedCredits, 40);
+    assert.equal(settlement?.feeCredits, 15);
+    assert.equal(settlement?.refundCredits, 0);
+    assert.deepEqual(fixture.ledgerEntries.map((entry) => [entry.type, entry.amount]), [
+      [LedgerEntryType.RELEASE, "0.40"],
+      [LedgerEntryType.FEE, "0.15"]
+    ]);
+  });
+
+  it("does not create duplicate release or refund entries for an already settled task", async () => {
+    const fixture = createEscrowSettlementFixture();
+    const input = {
+      paymentPolicy: createPaymentPolicy({ annotationCredits: 28, reviewCredits: 0 }),
+      reviewId: "review-4",
+      task: createSettlementTask({ escrowCredits: 50, platformFeeCredits: 12, reviewerId: null })
+    };
+
+    const firstSettlement = await settleTaskEscrowOnApproval(fixture.tx, input);
+    const secondSettlement = await settleTaskEscrowOnApproval(fixture.tx, input);
+
+    assert.ok(firstSettlement);
+    assert.equal(secondSettlement, null);
+    assert.deepEqual(fixture.ledgerEntries.map((entry) => entry.type), [
+      LedgerEntryType.RELEASE,
+      LedgerEntryType.FEE,
+      LedgerEntryType.REFUND
+    ]);
+    assert.equal(fixture.walletUpdates.length, 1);
+  });
+
+  it("skips settlement when the task has no escrow hold", async () => {
+    const fixture = createEscrowSettlementFixture();
+
+    const settlement = await settleTaskEscrowOnApproval(fixture.tx, {
+      paymentPolicy: createPaymentPolicy({ annotationCredits: 28, reviewCredits: 0 }),
+      reviewId: "review-5",
+      task: {
+        ...createSettlementTask({ escrowCredits: 40, platformFeeCredits: 12, reviewerId: null }),
+        metadata: {}
+      }
+    });
+
+    assert.equal(settlement, null);
+    assert.equal(fixture.ledgerEntries.length, 0);
+    assert.equal(fixture.walletUpdates.length, 0);
+  });
+});
+
 describe("parseTaskWorkflowBody", () => {
   it("normalizes manager queue updates", () => {
     const parsed = parseTaskWorkflowBody({
@@ -1125,3 +1331,111 @@ describe("parseAnnotationBody", () => {
     });
   });
 });
+
+function createPaymentPolicy(overrides: Partial<{
+  annotationCredits: number;
+  currency: string;
+  datasetBudgetCredits: number;
+  freeTaskPostingFeeCredits: number;
+  platformFeeRate: number;
+  reviewBudgetShare: number;
+  reviewCredits: number;
+  taskBudgetBasis: number;
+}> = {}) {
+  return {
+    annotationCredits: 28,
+    currency: "USD",
+    datasetBudgetCredits: 0,
+    freeTaskPostingFeeCredits: 0,
+    platformFeeRate: 0.3,
+    reviewBudgetShare: 0,
+    reviewCredits: 0,
+    taskBudgetBasis: 1,
+    ...overrides
+  };
+}
+
+function createSettlementTask(input: { escrowCredits: number; platformFeeCredits: number; reviewerId: string | null }) {
+  return {
+    id: "task-1",
+    metadata: {
+      paymentEscrowCredits: input.escrowCredits,
+      paymentEscrowLedgerEntryId: "hold-1",
+      paymentPlatformFeeCredits: input.platformFeeCredits
+    },
+    organizationId: "org-1",
+    project: {
+      organizationId: "org-1"
+    },
+    reviewerId: input.reviewerId
+  };
+}
+
+function createEscrowSettlementFixture() {
+  const ledgerEntries: Array<{
+    amount: string;
+    currency: string;
+    description: string;
+    id: string;
+    metadata: unknown;
+    referenceId: string;
+    type: LedgerEntryType;
+    walletId: string;
+  }> = [];
+  const walletUpdates: Array<{ data: unknown; where: unknown }> = [];
+  const tx = {
+    ledgerEntry: {
+      async findFirst() {
+        return ledgerEntries.find((entry) =>
+          entry.referenceId === "task-1" &&
+          (entry.type === LedgerEntryType.RELEASE || entry.type === LedgerEntryType.REFUND)
+        ) ?? null;
+      },
+      async findUnique(input: { where: { id: string } }) {
+        return input.where.id === "hold-1"
+          ? {
+              currency: "USD",
+              walletId: "wallet-1"
+            }
+          : null;
+      },
+      async create(input: {
+        data: {
+          amount: string;
+          currency: string;
+          description: string;
+          metadata: unknown;
+          referenceId: string;
+          type: LedgerEntryType;
+          walletId: string;
+        };
+      }) {
+        const entry = {
+          id: `ledger-${ledgerEntries.length + 1}`,
+          ...input.data
+        };
+        ledgerEntries.push(entry);
+
+        return {
+          id: entry.id,
+          type: entry.type
+        };
+      }
+    },
+    wallet: {
+      async update(input: { data: unknown; where: unknown }) {
+        walletUpdates.push(input);
+
+        return {
+          id: "wallet-1"
+        };
+      }
+    }
+  } as unknown as Prisma.TransactionClient;
+
+  return {
+    ledgerEntries,
+    tx,
+    walletUpdates
+  };
+}

@@ -16,21 +16,69 @@ import { notificationsRouter } from "../modules/notifications/notifications.js";
 import { organizationsRouter } from "../modules/organizations/organizations.js";
 import { getPlatformTaskEconomics } from "../shared/platformEconomics.js";
 import { getPlatformFeatures } from "../shared/platformFeatures.js";
+import {
+  createCorsOriginValidator,
+  createRateLimiter,
+  getAllowedWebOrigins,
+  getPositiveIntegerEnv,
+  getTrustProxySetting,
+  securityHeaders
+} from "../shared/security.js";
 import { projectsRouter } from "../modules/projects/projects.js";
 import { tasksRouter } from "../modules/tasks/tasks.js";
 
 export const app = express();
+const trustProxy = getTrustProxySetting();
 
+if (trustProxy !== false) {
+  app.set("trust proxy", trustProxy);
+}
+
+app.use(securityHeaders);
 app.use(
   cors({
-    origin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
+    origin: createCorsOriginValidator(getAllowedWebOrigins()),
     credentials: true
+  })
+);
+app.use(apiRequestLogger);
+app.use(
+  createRateLimiter({
+    keyPrefix: "api",
+    maxRequests: getPositiveIntegerEnv("API_RATE_LIMIT_PER_MINUTE", 600),
+    windowMs: 60_000
+  })
+);
+app.use(
+  "/api/auth",
+  createRateLimiter({
+    keyPrefix: "auth",
+    maxRequests: getPositiveIntegerEnv("AUTH_RATE_LIMIT_PER_MINUTE", 60),
+    message: "Too many authentication requests. Try again shortly.",
+    windowMs: 60_000
+  })
+);
+app.use(
+  "/api/billing",
+  createRateLimiter({
+    keyPrefix: "billing",
+    maxRequests: getPositiveIntegerEnv("BILLING_RATE_LIMIT_PER_MINUTE", 180),
+    message: "Too many billing requests. Try again shortly.",
+    windowMs: 60_000
+  })
+);
+app.use(
+  "/api/admin",
+  createRateLimiter({
+    keyPrefix: "admin",
+    maxRequests: getPositiveIntegerEnv("ADMIN_RATE_LIMIT_PER_MINUTE", 120),
+    message: "Too many admin requests. Try again shortly.",
+    windowMs: 60_000
   })
 );
 app.use("/api/billing", paypalWebhookRouter);
 app.use("/api/billing", stripeWebhookRouter);
-app.use(express.json());
-app.use(apiRequestLogger);
+app.use(express.json({ limit: process.env.API_JSON_BODY_LIMIT ?? "1mb" }));
 
 app.get("/health", (_request, response) => {
   response.status(200).json({

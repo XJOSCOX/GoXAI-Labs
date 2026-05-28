@@ -1368,6 +1368,7 @@ model PaymentIntent {
   status         PaymentIntentStatus @default(CREATED)
   provider       String              @default("manual")
   providerRef    String?             @map("provider_ref")
+  clientRequestId String?            @unique @map("client_request_id")
   purpose        String              @default("creator_wallet_top_up")
   description    String?
   metadata       Json?
@@ -1537,6 +1538,26 @@ model AuditLog {
   @@index([action])
   @@index([entityType, entityId])
   @@map("audit_logs")
+}
+
+model ProviderWebhookEvent {
+  id             String    @id @default(cuid())
+  provider       String
+  eventId        String    @map("event_id")
+  eventType      String?   @map("event_type")
+  action         String?
+  duplicateCount Int       @default(0) @map("duplicate_count")
+  lastDuplicateAt DateTime? @map("last_duplicate_at") @db.Timestamptz(6)
+  metadata       Json?
+
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([provider, eventId])
+  @@index([provider])
+  @@index([eventType])
+  @@index([receivedAt])
+  @@map("provider_webhook_events")
 }
 
 // =========================

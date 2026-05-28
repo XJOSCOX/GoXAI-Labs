@@ -11,9 +11,10 @@ import {
   WalletOwnerType
 } from "@goxai/database";
 import express, { Router } from "express";
+import type { Request } from "express";
 import type { IncomingHttpHeaders } from "node:http";
 import { requireAuthenticatedUser, type AuthenticatedRequest } from "../../shared/auth.js";
-import { getRequestId } from "../../shared/logging.js";
+import { getRequestId, saveAuditLog } from "../../shared/logging.js";
 import { getPlatformFeatures } from "../../shared/platformFeatures.js";
 import {
   capturePayPalOrder,
@@ -54,10 +55,16 @@ const WORKER_CREDIT_HOLD_DAYS = 7;
 const WORKER_EVENT_LIMIT = 12;
 const WORKER_PAYOUT_LIMIT = 8;
 
-paypalWebhookRouter.post("/paypal-webhook", express.raw({ type: "application/json" }), async (request, response) => {
+paypalWebhookRouter.post("/paypal-webhook", express.raw({ limit: process.env.WEBHOOK_BODY_LIMIT ?? "256kb", type: "application/json" }), async (request, response) => {
   const webhookEvent = parsePayPalWebhookBody(request.body);
 
   if (!webhookEvent) {
+    await logProviderWebhookRejection(request, {
+      error: "Webhook body must be valid JSON.",
+      provider: "paypal",
+      reason: "invalid_json",
+      statusCode: 400
+    });
     response.status(400).json({ error: "Webhook body must be valid JSON." });
     return;
   }
@@ -65,6 +72,13 @@ paypalWebhookRouter.post("/paypal-webhook", express.raw({ type: "application/jso
   const headers = parsePayPalWebhookHeaders(request.headers);
 
   if (!headers) {
+    await logProviderWebhookRejection(request, {
+      error: "PayPal webhook signature headers are required.",
+      event: webhookEvent,
+      provider: "paypal",
+      reason: "missing_signature_headers",
+      statusCode: 400
+    });
     response.status(400).json({ error: "PayPal webhook signature headers are required." });
     return;
   }
@@ -73,6 +87,14 @@ paypalWebhookRouter.post("/paypal-webhook", express.raw({ type: "application/jso
     const verified = await verifyPayPalWebhookSignature(headers, webhookEvent);
 
     if (!verified) {
+      await logProviderWebhookRejection(request, {
+        error: "PayPal webhook signature verification failed.",
+        event: webhookEvent,
+        provider: "paypal",
+        reason: "signature_verification_failed",
+        statusCode: 401,
+        transmissionId: headers.transmissionId
+      });
       response.status(401).json({ error: "PayPal webhook signature verification failed." });
       return;
     }
@@ -86,11 +108,27 @@ paypalWebhookRouter.post("/paypal-webhook", express.raw({ type: "application/jso
     }
 
     if (reason instanceof PayPalConfigurationError) {
+      await logProviderWebhookRejection(request, {
+        error: reason.message,
+        event: webhookEvent,
+        provider: "paypal",
+        reason: "configuration_error",
+        statusCode: 503,
+        transmissionId: headers.transmissionId
+      });
       response.status(503).json({ error: reason.message });
       return;
     }
 
     if (reason instanceof PayPalRequestError) {
+      await logProviderWebhookRejection(request, {
+        error: reason.message,
+        event: webhookEvent,
+        provider: "paypal",
+        reason: "provider_request_error",
+        statusCode: reason.status,
+        transmissionId: headers.transmissionId
+      });
       response.status(reason.status).json({ error: reason.message });
       return;
     }
@@ -99,8 +137,15 @@ paypalWebhookRouter.post("/paypal-webhook", express.raw({ type: "application/jso
   }
 });
 
-stripeWebhookRouter.post("/stripe-webhook", express.raw({ type: "application/json" }), async (request, response) => {
+stripeWebhookRouter.post("/stripe-webhook", express.raw({ limit: process.env.WEBHOOK_BODY_LIMIT ?? "256kb", type: "application/json" }), async (request, response) => {
   if (!Buffer.isBuffer(request.body)) {
+    await logProviderWebhookRejection(request, {
+      error: "Webhook body must be raw JSON.",
+      provider: "stripe",
+      reason: "invalid_raw_body",
+      signatureHeaderPresent: Boolean(request.header("stripe-signature")),
+      statusCode: 400
+    });
     response.status(400).json({ error: "Webhook body must be raw JSON." });
     return;
   }
@@ -117,16 +162,39 @@ stripeWebhookRouter.post("/stripe-webhook", express.raw({ type: "application/jso
     }
 
     if (reason instanceof StripeConfigurationError) {
+      await logProviderWebhookRejection(request, {
+        error: reason.message,
+        event: parseWebhookJsonForAudit(request.body),
+        provider: "stripe",
+        reason: "configuration_error",
+        signatureHeaderPresent: Boolean(request.header("stripe-signature")),
+        statusCode: 503
+      });
       response.status(503).json({ error: reason.message });
       return;
     }
 
     if (reason instanceof StripeRequestError) {
+      await logProviderWebhookRejection(request, {
+        error: reason.message,
+        event: parseWebhookJsonForAudit(request.body),
+        provider: "stripe",
+        reason: "signature_verification_failed",
+        signatureHeaderPresent: Boolean(request.header("stripe-signature")),
+        statusCode: reason.status
+      });
       response.status(reason.status).json({ error: reason.message });
       return;
     }
 
     if (reason instanceof SyntaxError) {
+      await logProviderWebhookRejection(request, {
+        error: "Webhook body must be valid JSON.",
+        provider: "stripe",
+        reason: "invalid_json",
+        signatureHeaderPresent: Boolean(request.header("stripe-signature")),
+        statusCode: 400
+      });
       response.status(400).json({ error: "Webhook body must be valid JSON." });
       return;
     }
@@ -692,6 +760,7 @@ router.post("/creator-top-up", async (request: AuthenticatedRequest, response) =
   const amount = normalizeMoneyAmount(request.body?.amount);
   const currency = normalizeCurrency(request.body?.currency ?? "USD");
   const requestedOrganizationId = normalizeId(request.body?.organizationId);
+  const clientRequestId = getPaymentClientRequestId(request);
 
   if (!amount) {
     response.status(400).json({ error: "Top-up amount must be greater than 0 and no more than 100,000." });
@@ -835,6 +904,7 @@ router.post("/creator-paypal-order", async (request: AuthenticatedRequest, respo
   const amount = normalizeMoneyAmount(request.body?.amount);
   const currency = normalizeCurrency(request.body?.currency ?? "USD");
   const requestedOrganizationId = normalizeId(request.body?.organizationId);
+  const clientRequestId = getPaymentClientRequestId(request);
 
   if (!amount) {
     response.status(400).json({ error: "Top-up amount must be greater than 0 and no more than 100,000." });
@@ -856,23 +926,74 @@ router.post("/creator-paypal-order", async (request: AuthenticatedRequest, respo
   }
 
   const wallet = await ensureOrganizationWallet(prisma, organizationId, currency);
-  const paymentIntent = await prisma.paymentIntent.create({
-    data: {
-      amount,
-      currency,
-      description: "PayPal creator wallet top-up.",
-      metadata: {
-        requestId: getRequestId(request),
-        source: "paypal_creator_top_up"
-      },
-      organizationId,
-      provider: "paypal",
-      purpose: "creator_wallet_top_up",
-      status: PaymentIntentStatus.CREATED,
-      walletId: wallet.id,
-      createdById: user.id
+  const existingTopUp = clientRequestId
+    ? await getReusableProviderTopUp(prisma, {
+        amount,
+        clientRequestId,
+        currency,
+        organizationId,
+        provider: "paypal",
+        userId: user.id
+      })
+    : null;
+
+  if (existingTopUp) {
+    if (!existingTopUp.ok) {
+      response.status(409).json({ error: existingTopUp.error });
+      return;
     }
-  });
+
+    response.status(200).json(existingTopUp.body);
+    return;
+  }
+
+  let paymentIntent: PaymentIntentRecord;
+
+  try {
+    paymentIntent = await prisma.paymentIntent.create({
+      data: {
+        amount,
+        clientRequestId,
+        currency,
+        description: "PayPal creator wallet top-up.",
+        metadata: {
+          clientRequestId,
+          requestId: getRequestId(request),
+          source: "paypal_creator_top_up"
+        },
+        organizationId,
+        provider: "paypal",
+        purpose: "creator_wallet_top_up",
+        status: PaymentIntentStatus.CREATED,
+        walletId: wallet.id,
+        createdById: user.id
+      },
+      select: paymentIntentSelect
+    });
+  } catch (reason) {
+    const duplicateTopUp = clientRequestId && isUniqueConstraintError(reason)
+      ? await getReusableProviderTopUp(prisma, {
+          amount,
+          clientRequestId,
+          currency,
+          organizationId,
+          provider: "paypal",
+          userId: user.id
+        })
+      : null;
+
+    if (duplicateTopUp) {
+      if (!duplicateTopUp.ok) {
+        response.status(409).json({ error: duplicateTopUp.error });
+        return;
+      }
+
+      response.status(200).json(duplicateTopUp.body);
+      return;
+    }
+
+    throw reason;
+  }
 
   try {
     const paypal = await createPayPalOrder({
@@ -1104,6 +1225,7 @@ router.post("/creator-stripe-checkout-session", async (request: AuthenticatedReq
   const amount = normalizeMoneyAmount(request.body?.amount);
   const currency = normalizeCurrency(request.body?.currency ?? "USD");
   const requestedOrganizationId = normalizeId(request.body?.organizationId);
+  const clientRequestId = getPaymentClientRequestId(request);
   const prisma = getPrismaClient();
   const organizationIds = await listCreatorOrganizationIds(prisma, user.id);
   const organizationId = requestedOrganizationId ?? organizationIds[0] ?? null;
@@ -1124,20 +1246,74 @@ router.post("/creator-stripe-checkout-session", async (request: AuthenticatedReq
   }
 
   const wallet = await ensureOrganizationWallet(prisma, organizationId, currency);
-  const paymentIntent = await prisma.paymentIntent.create({
-    data: {
-      amount,
-      createdById: user.id,
-      currency,
-      description: "Creator wallet Stripe checkout top-up.",
-      organizationId,
-      provider: "stripe",
-      purpose: "creator_wallet_top_up",
-      status: PaymentIntentStatus.CREATED,
-      walletId: wallet.id
-    },
-    select: paymentIntentSelect
-  });
+  const existingTopUp = clientRequestId
+    ? await getReusableProviderTopUp(prisma, {
+        amount,
+        clientRequestId,
+        currency,
+        organizationId,
+        provider: "stripe",
+        userId: user.id
+      })
+    : null;
+
+  if (existingTopUp) {
+    if (!existingTopUp.ok) {
+      response.status(409).json({ error: existingTopUp.error });
+      return;
+    }
+
+    response.status(200).json(existingTopUp.body);
+    return;
+  }
+
+  let paymentIntent: PaymentIntentRecord;
+
+  try {
+    paymentIntent = await prisma.paymentIntent.create({
+      data: {
+        amount,
+        clientRequestId,
+        createdById: user.id,
+        currency,
+        description: "Creator wallet Stripe checkout top-up.",
+        metadata: {
+          clientRequestId,
+          requestId: getRequestId(request),
+          source: "stripe_checkout_top_up"
+        },
+        organizationId,
+        provider: "stripe",
+        purpose: "creator_wallet_top_up",
+        status: PaymentIntentStatus.CREATED,
+        walletId: wallet.id
+      },
+      select: paymentIntentSelect
+    });
+  } catch (reason) {
+    const duplicateTopUp = clientRequestId && isUniqueConstraintError(reason)
+      ? await getReusableProviderTopUp(prisma, {
+          amount,
+          clientRequestId,
+          currency,
+          organizationId,
+          provider: "stripe",
+          userId: user.id
+        })
+      : null;
+
+    if (duplicateTopUp) {
+      if (!duplicateTopUp.ok) {
+        response.status(409).json({ error: duplicateTopUp.error });
+        return;
+      }
+
+      response.status(200).json(duplicateTopUp.body);
+      return;
+    }
+
+    throw reason;
+  }
 
   try {
     const session = await createStripeCheckoutSession({
@@ -1213,6 +1389,7 @@ router.post("/creator-stripe-ach-checkout-session", async (request: Authenticate
   const amount = normalizeMoneyAmount(request.body?.amount);
   const currency = normalizeCurrency(request.body?.currency ?? "USD");
   const fundingSourceId = normalizeId(request.body?.fundingSourceId);
+  const clientRequestId = getPaymentClientRequestId(request);
 
   if (!amount) {
     response.status(400).json({ error: "Top-up amount must be greater than 0 and no more than 100,000." });
@@ -1254,6 +1431,11 @@ router.post("/creator-stripe-ach-checkout-session", async (request: Authenticate
     return;
   }
 
+  if (!fundingSource.organizationId) {
+    response.status(409).json({ error: "This funding source is not attached to a creator organization." });
+    return;
+  }
+
   const stripeCustomerId = getJsonText(fundingSource.metadata, "stripeCustomerId");
 
   if (!stripeCustomerId) {
@@ -1268,25 +1450,78 @@ router.post("/creator-stripe-ach-checkout-session", async (request: Authenticate
     return;
   }
 
-  const paymentIntent = await prisma.paymentIntent.create({
-    data: {
-      amount,
-      createdById: user.id,
-      currency,
-      description: "Creator wallet Stripe ACH top-up.",
-      fundingSourceId: fundingSource.id,
-      metadata: {
+  const existingTopUp = clientRequestId
+    ? await getReusableProviderTopUp(prisma, {
+        amount,
+        clientRequestId,
+        currency,
         fundingSourceId: fundingSource.id,
-        source: "stripe_ach_top_up"
+        organizationId: fundingSource.organizationId,
+        provider: "stripe",
+        userId: user.id
+      })
+    : null;
+
+  if (existingTopUp) {
+    if (!existingTopUp.ok) {
+      response.status(409).json({ error: existingTopUp.error });
+      return;
+    }
+
+    response.status(200).json(existingTopUp.body);
+    return;
+  }
+
+  let paymentIntent: PaymentIntentRecord;
+
+  try {
+    paymentIntent = await prisma.paymentIntent.create({
+      data: {
+        amount,
+        clientRequestId,
+        createdById: user.id,
+        currency,
+        description: "Creator wallet Stripe ACH top-up.",
+        fundingSourceId: fundingSource.id,
+        metadata: {
+          clientRequestId,
+          fundingSourceId: fundingSource.id,
+          requestId: getRequestId(request),
+          source: "stripe_ach_top_up"
+        },
+        organizationId: fundingSource.organizationId,
+        provider: "stripe",
+        purpose: "creator_wallet_top_up",
+        status: PaymentIntentStatus.CREATED,
+        walletId: fundingSource.walletId
       },
-      organizationId: fundingSource.organizationId,
-      provider: "stripe",
-      purpose: "creator_wallet_top_up",
-      status: PaymentIntentStatus.CREATED,
-      walletId: fundingSource.walletId
-    },
-    select: paymentIntentSelect
-  });
+      select: paymentIntentSelect
+    });
+  } catch (reason) {
+    const duplicateTopUp = clientRequestId && isUniqueConstraintError(reason)
+      ? await getReusableProviderTopUp(prisma, {
+          amount,
+          clientRequestId,
+          currency,
+          fundingSourceId: fundingSource.id,
+          organizationId: fundingSource.organizationId,
+          provider: "stripe",
+          userId: user.id
+        })
+      : null;
+
+    if (duplicateTopUp) {
+      if (!duplicateTopUp.ok) {
+        response.status(409).json({ error: duplicateTopUp.error });
+        return;
+      }
+
+      response.status(200).json(duplicateTopUp.body);
+      return;
+    }
+
+    throw reason;
+  }
 
   try {
     const session = await createStripeCheckoutSession({
@@ -1675,20 +1910,25 @@ async function handlePayPalWebhookEvent(webhookEvent: unknown, transmissionId: s
   const event = isPlainJsonObject(webhookEvent) ? webhookEvent : {};
   const eventType = typeof event.event_type === "string" ? event.event_type : "";
   const eventId = typeof event.id === "string" ? event.id : null;
-  const prisma = getPrismaClient();
-
-  await prisma.auditLog.create({
-    data: {
-      action: "wallet.paypal_webhook.received",
-      entityId: eventId,
-      entityType: "paypal_webhook",
-      metadata: {
-        eventId,
-        eventType,
-        transmissionId
-      }
-    }
+  const idempotencyKey = getPayPalWebhookIdempotencyKey({ eventId, transmissionId });
+  const reservation = await reserveProviderWebhookEvent({
+    action: "wallet.paypal_webhook.received",
+    duplicateAction: "wallet.paypal_webhook.duplicate",
+    entityType: "paypal_webhook",
+    eventType,
+    idempotencyKey,
+    metadata: {
+      eventId,
+      eventType,
+      idempotencyKey,
+      transmissionId
+    },
+    provider: "paypal"
   });
+
+  if (reservation.duplicate) {
+    return;
+  }
 
   if (eventType !== "PAYMENT.CAPTURE.COMPLETED") {
     if (["PAYMENT.CAPTURE.DENIED", "PAYMENT.CAPTURE.DECLINED", "PAYMENT.CAPTURE.REVERSED"].includes(eventType)) {
@@ -1700,7 +1940,9 @@ async function handlePayPalWebhookEvent(webhookEvent: unknown, transmissionId: s
           captureStatus: summary?.status ?? null,
           eventId,
           eventType,
-          orderId: summary?.orderId ?? null
+          idempotencyKey,
+          orderId: summary?.orderId ?? null,
+          webhookEventId: idempotencyKey
         },
         paymentIntentId: summary?.paymentIntentId ?? null,
         provider: "paypal",
@@ -1729,7 +1971,8 @@ async function handlePayPalWebhookEvent(webhookEvent: unknown, transmissionId: s
     paymentIntentId: summary.paymentIntentId,
     requestId: transmissionId,
     source: "paypal_webhook",
-    userId: null
+    userId: null,
+    webhookEventId: idempotencyKey
   });
 }
 
@@ -1737,19 +1980,24 @@ async function handleStripeWebhookEvent(webhookEvent: unknown) {
   const event = isPlainJsonObject(webhookEvent) ? webhookEvent : {};
   const eventType = typeof event.type === "string" ? event.type : "";
   const eventId = typeof event.id === "string" ? event.id : null;
-  const prisma = getPrismaClient();
-
-  await prisma.auditLog.create({
-    data: {
-      action: "wallet.stripe_webhook.received",
-      entityId: eventId,
-      entityType: "stripe_webhook",
-      metadata: {
-        eventId,
-        eventType
-      }
-    }
+  const idempotencyKey = getStripeWebhookIdempotencyKey({ eventId });
+  const reservation = await reserveProviderWebhookEvent({
+    action: "wallet.stripe_webhook.received",
+    duplicateAction: "wallet.stripe_webhook.duplicate",
+    entityType: "stripe_webhook",
+    eventType,
+    idempotencyKey,
+    metadata: {
+      eventId,
+      eventType,
+      idempotencyKey
+    },
+    provider: "stripe"
   });
+
+  if (reservation.duplicate) {
+    return;
+  }
 
   const checkoutSession = getStripeWebhookCheckoutSession(webhookEvent);
 
@@ -1763,7 +2011,9 @@ async function handleStripeWebhookEvent(webhookEvent: unknown) {
         metadata: {
           eventId,
           eventType,
-          stripePaymentIntentId: typeof paymentIntent?.id === "string" ? paymentIntent.id : null
+          idempotencyKey,
+          stripePaymentIntentId: typeof paymentIntent?.id === "string" ? paymentIntent.id : null,
+          webhookEventId: idempotencyKey
         },
         paymentIntentId: typeof metadata.paymentIntentId === "string" ? metadata.paymentIntentId : null,
         provider: "stripe",
@@ -1784,8 +2034,10 @@ async function handleStripeWebhookEvent(webhookEvent: unknown) {
       metadata: {
         eventId,
         eventType,
+        idempotencyKey,
         stripePaymentIntentId: summary?.providerPaymentIntentId ?? null,
-        stripeSessionId: summary?.sessionId ?? null
+        stripeSessionId: summary?.sessionId ?? null,
+        webhookEventId: idempotencyKey
       },
       paymentIntentId: summary?.paymentIntentId ?? null,
       provider: "stripe",
@@ -1809,8 +2061,272 @@ async function handleStripeWebhookEvent(webhookEvent: unknown) {
     requestId: eventId ?? summary.sessionId,
     sessionId: summary.sessionId,
     source: "stripe_webhook",
-    userId: null
+    userId: null,
+    webhookEventId: idempotencyKey
   });
+}
+
+async function reserveProviderWebhookEvent(input: {
+  action: string;
+  duplicateAction: string;
+  entityType: "paypal_webhook" | "stripe_webhook";
+  eventType: string;
+  idempotencyKey: string | null;
+  metadata: Record<string, unknown>;
+  provider: "paypal" | "stripe";
+}) {
+  const prisma = getPrismaClient();
+
+  if (input.idempotencyKey) {
+    try {
+      await prisma.providerWebhookEvent.create({
+        data: {
+          action: input.action,
+          eventId: input.idempotencyKey,
+          eventType: input.eventType || null,
+          metadata: {
+            ...input.metadata,
+            duplicate: false
+          },
+          provider: input.provider
+        }
+      });
+    } catch (reason) {
+      if (!isUniqueConstraintError(reason)) {
+        throw reason;
+      }
+
+      const existing = await prisma.providerWebhookEvent.update({
+        where: {
+          provider_eventId: {
+            eventId: input.idempotencyKey,
+            provider: input.provider
+          }
+        },
+        data: {
+          duplicateCount: {
+            increment: 1
+          },
+          lastDuplicateAt: new Date()
+        },
+        select: {
+          id: true
+        }
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          action: input.duplicateAction,
+          entityId: input.idempotencyKey,
+          entityType: input.entityType,
+          metadata: {
+            ...input.metadata,
+            duplicate: true,
+            duplicateOfProviderWebhookEventId: existing.id
+          }
+        }
+      });
+
+      return {
+        duplicate: true
+      };
+    }
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      action: input.action,
+      entityId: input.idempotencyKey,
+      entityType: input.entityType,
+      metadata: {
+        ...input.metadata,
+        duplicate: false
+      }
+    }
+  });
+
+  return {
+    duplicate: false
+  };
+}
+
+type ProviderWebhookRejectionReason =
+  | "configuration_error"
+  | "invalid_json"
+  | "invalid_raw_body"
+  | "missing_signature_headers"
+  | "provider_request_error"
+  | "signature_verification_failed";
+
+export function buildProviderWebhookRejectionAudit(input: {
+  error: string;
+  event?: unknown;
+  provider: "paypal" | "stripe";
+  reason: ProviderWebhookRejectionReason;
+  requestId?: string | null;
+  signatureHeaderPresent?: boolean;
+  statusCode: number;
+  transmissionId?: string | null;
+}) {
+  const event = isPlainJsonObject(input.event) ? input.event : {};
+  const eventId = typeof event.id === "string" ? event.id : null;
+  const eventType = input.provider === "paypal"
+    ? (typeof event.event_type === "string" ? event.event_type : null)
+    : (typeof event.type === "string" ? event.type : null);
+  const idempotencyKey = input.provider === "paypal"
+    ? getPayPalWebhookIdempotencyKey({ eventId, transmissionId: input.transmissionId })
+    : getStripeWebhookIdempotencyKey({ eventId });
+
+  return {
+    action: `wallet.${input.provider}_webhook.rejected`,
+    entityId: idempotencyKey ?? eventId ?? input.transmissionId ?? `${input.provider}-webhook-rejected`,
+    entityType: `${input.provider}_webhook`,
+    metadata: {
+      error: input.error,
+      eventId,
+      eventType,
+      idempotencyKey,
+      provider: input.provider,
+      reason: input.reason,
+      requestId: input.requestId ?? null,
+      signatureHeaderPresent: input.signatureHeaderPresent ?? null,
+      statusCode: input.statusCode,
+      transmissionId: input.transmissionId ?? null
+    }
+  };
+}
+
+async function logProviderWebhookRejection(
+  request: Request,
+  input: Omit<Parameters<typeof buildProviderWebhookRejectionAudit>[0], "requestId">
+) {
+  const audit = buildProviderWebhookRejectionAudit({
+    ...input,
+    requestId: getRequestId(request)
+  });
+
+  await saveAuditLog({
+    action: audit.action,
+    entityId: audit.entityId,
+    entityType: audit.entityType,
+    ipAddress: request.ip,
+    metadata: {
+      ...audit.metadata,
+      path: request.path
+    },
+    userAgent: request.header("user-agent")
+  });
+}
+
+function parseWebhookJsonForAudit(body: Buffer) {
+  try {
+    return JSON.parse(body.toString("utf8")) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+async function getReusableProviderTopUp(
+  client: Prisma.TransactionClient,
+  input: {
+    amount: string;
+    clientRequestId: string;
+    currency: string;
+    fundingSourceId?: string | null;
+    organizationId: string;
+    provider: "paypal" | "stripe";
+    userId: string;
+  }
+): Promise<
+  | null
+  | {
+      ok: false;
+      error: string;
+    }
+  | {
+      ok: true;
+      body: Record<string, unknown>;
+    }
+> {
+  const existing = await client.paymentIntent.findUnique({
+    where: {
+      clientRequestId: input.clientRequestId
+    },
+    select: paymentIntentSelect
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  const existingAmount = normalizeMoneyAmount(existing.amount.toString());
+  const existingCurrency = normalizeCurrency(existing.currency);
+  const matchesTopUp =
+    existing.createdById === input.userId &&
+    existing.organizationId === input.organizationId &&
+    existing.provider === input.provider &&
+    existing.purpose === "creator_wallet_top_up" &&
+    existingAmount === input.amount &&
+    existingCurrency === input.currency &&
+    (input.fundingSourceId ?? null) === (existing.fundingSourceId ?? null);
+
+  if (!matchesTopUp) {
+    return {
+      ok: false,
+      error: "This checkout request key was already used for another wallet top-up."
+    };
+  }
+
+  if (existing.status === PaymentIntentStatus.SUCCEEDED) {
+    return {
+      ok: false,
+      error: "This checkout request was already completed."
+    };
+  }
+
+  if (existing.status === PaymentIntentStatus.CANCELLED || existing.status === PaymentIntentStatus.FAILED) {
+    return {
+      ok: false,
+      error: "This checkout request is closed. Start a new top-up."
+    };
+  }
+
+  if (input.provider === "paypal") {
+    const approvalUrl = getJsonText(existing.metadata, "approvalUrl");
+
+    if (approvalUrl && existing.providerRef) {
+      return {
+        ok: true,
+        body: {
+          approvalUrl,
+          orderId: existing.providerRef,
+          paymentIntentId: existing.id,
+          reused: true
+        }
+      };
+    }
+  }
+
+  if (input.provider === "stripe") {
+    const checkoutUrl = getJsonText(existing.metadata, "checkoutUrl");
+
+    if (checkoutUrl && existing.providerRef) {
+      return {
+        ok: true,
+        body: {
+          checkoutUrl,
+          paymentIntentId: existing.id,
+          reused: true,
+          sessionId: existing.providerRef
+        }
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    error: "This checkout request is still being prepared. Wait a moment and try again."
+  };
 }
 
 async function markProviderTopUpFailed(input: {
@@ -1901,6 +2417,7 @@ async function completePayPalCreatorTopUp(input: {
   requestId?: string;
   source: "paypal_return" | "paypal_webhook";
   userId: string | null;
+  webhookEventId?: string | null;
 }) {
   const amount = normalizeMoneyAmount(input.amount);
   const currency = normalizeCurrency(input.currency);
@@ -1955,7 +2472,8 @@ async function completePayPalCreatorTopUp(input: {
             mismatchAt: new Date().toISOString(),
             orderId: input.orderId,
             requestId: input.requestId,
-            source: input.source
+            source: input.source,
+            webhookEventId: input.webhookEventId
           }),
           status: PaymentIntentStatus.FAILED
         }
@@ -1985,7 +2503,8 @@ async function completePayPalCreatorTopUp(input: {
           captureStatus: input.captureStatus,
           orderId: input.orderId,
           requestId: input.requestId,
-          source: input.source
+          source: input.source,
+          webhookEventId: input.webhookEventId
         }),
         status: PaymentIntentStatus.SUCCEEDED
       }
@@ -2033,7 +2552,8 @@ async function completePayPalCreatorTopUp(input: {
           orderId: input.orderId,
           paymentIntentId: currentIntent.id,
           requestId: input.requestId,
-          source: input.source
+          source: input.source,
+          webhookEventId: input.webhookEventId
         },
         referenceId: currentIntent.id,
         type: LedgerEntryType.CREDIT,
@@ -2051,7 +2571,8 @@ async function completePayPalCreatorTopUp(input: {
           captureId: input.captureId,
           orderId: input.orderId,
           requestId: input.requestId,
-          source: input.source
+          source: input.source,
+          webhookEventId: input.webhookEventId
         },
         organizationId: currentIntent.organizationId,
         paymentIntentId: currentIntent.id,
@@ -2079,7 +2600,8 @@ async function completePayPalCreatorTopUp(input: {
           receiptId: receipt.id,
           receiptNumber: receipt.receiptNumber,
           requestId: input.requestId,
-          source: input.source
+          source: input.source,
+          webhookEventId: input.webhookEventId
         },
         organizationId: currentIntent.organizationId,
         userId: input.userId ?? currentIntent.createdById
@@ -2105,6 +2627,7 @@ async function completeStripeCreatorTopUp(input: {
   sessionId: string;
   source: "stripe_return" | "stripe_webhook";
   userId: string | null;
+  webhookEventId?: string | null;
 }) {
   const amount = normalizeMoneyAmount(input.amount);
   const currency = normalizeCurrency(input.currency);
@@ -2158,7 +2681,8 @@ async function completeStripeCreatorTopUp(input: {
             stripeAmount: amount,
             stripeCurrency: currency,
             stripePaymentIntentId: input.providerPaymentIntentId,
-            stripeSessionId: input.sessionId
+            stripeSessionId: input.sessionId,
+            webhookEventId: input.webhookEventId
           }),
           status: PaymentIntentStatus.FAILED
         }
@@ -2187,7 +2711,8 @@ async function completeStripeCreatorTopUp(input: {
           requestId: input.requestId,
           source: input.source,
           stripePaymentIntentId: input.providerPaymentIntentId,
-          stripeSessionId: input.sessionId
+          stripeSessionId: input.sessionId,
+          webhookEventId: input.webhookEventId
         }),
         status: PaymentIntentStatus.SUCCEEDED
       }
@@ -2235,7 +2760,8 @@ async function completeStripeCreatorTopUp(input: {
           requestId: input.requestId,
           source: input.source,
           stripePaymentIntentId: input.providerPaymentIntentId,
-          stripeSessionId: input.sessionId
+          stripeSessionId: input.sessionId,
+          webhookEventId: input.webhookEventId
         },
         referenceId: currentIntent.id,
         type: LedgerEntryType.CREDIT,
@@ -2254,7 +2780,8 @@ async function completeStripeCreatorTopUp(input: {
           requestId: input.requestId,
           source: input.source,
           stripePaymentIntentId: input.providerPaymentIntentId,
-          stripeSessionId: input.sessionId
+          stripeSessionId: input.sessionId,
+          webhookEventId: input.webhookEventId
         },
         organizationId: currentIntent.organizationId,
         paymentIntentId: currentIntent.id,
@@ -2282,7 +2809,8 @@ async function completeStripeCreatorTopUp(input: {
           requestId: input.requestId,
           source: input.source,
           stripePaymentIntentId: input.providerPaymentIntentId,
-          stripeSessionId: input.sessionId
+          stripeSessionId: input.sessionId,
+          webhookEventId: input.webhookEventId
         },
         organizationId: currentIntent.organizationId,
         userId: input.userId ?? currentIntent.createdById
@@ -2389,14 +2917,14 @@ async function summarizeCreatorWallet(
       return total + decimalToNumber(entry.amount);
     }
 
-    if (entry.type === LedgerEntryType.RELEASE || entry.type === LedgerEntryType.REFUND || entry.type === LedgerEntryType.FEE) {
+    if (entry.type === LedgerEntryType.RELEASE || entry.type === LedgerEntryType.FEE || isTaskEscrowRefundLedgerEntry(entry)) {
       return total - decimalToNumber(entry.amount);
     }
 
     return total;
   }, 0);
   const refundedBalance = ledgerEntries
-    .filter((entry) => entry.type === LedgerEntryType.REFUND)
+    .filter(isTaskEscrowRefundLedgerEntry)
     .reduce((total, entry) => total + decimalToNumber(entry.amount), 0);
   const paidToAnnotators = creditEvents
     .filter((event) =>
@@ -2479,6 +3007,10 @@ export function buildCreatorLedgerExportFile(input: {
     "section",
     "id",
     "type",
+    "refund_kind",
+    "payment_intent_id",
+    "provider_ref",
+    "original_payment_provider",
     "dataset_id",
     "dataset_name",
     "task_id",
@@ -2501,6 +3033,10 @@ export function buildCreatorLedgerExportFile(input: {
       "dataset",
       report.datasetId ?? "",
       "DATASET_TOTAL",
+      "",
+      "",
+      "",
+      "",
       report.datasetId ?? "",
       report.datasetName,
       "",
@@ -2521,6 +3057,10 @@ export function buildCreatorLedgerExportFile(input: {
       "ledger",
       entry.id,
       entry.type,
+      entry.refundKind ?? "",
+      entry.paymentIntentId ?? "",
+      entry.providerRef ?? "",
+      entry.originalPaymentProvider ?? "",
       entry.datasetId ?? "",
       entry.datasetName ?? "",
       entry.taskId ?? "",
@@ -2582,6 +3122,9 @@ async function summarizeWorkerWallet(client: Prisma.TransactionClient, userId: s
         },
         eventType: true,
         id: true,
+        annotationId: true,
+        reviewId: true,
+        referenceKey: true,
         project: {
           select: {
             name: true
@@ -2656,6 +3199,7 @@ async function summarizeWorkerWallet(client: Prisma.TransactionClient, userId: s
     })),
     recentEvents: recentEvents.map((event) => ({
       amount: decimalToNumber(event.amount),
+      annotationId: event.annotationId,
       approvedAt: event.approvedAt?.toISOString() ?? null,
       assetName: event.task?.asset?.fileName ?? null,
       availableAt: event.availableAt?.toISOString() ?? null,
@@ -2666,6 +3210,8 @@ async function summarizeWorkerWallet(client: Prisma.TransactionClient, userId: s
       eventType: event.eventType,
       id: event.id,
       projectName: event.project?.name ?? null,
+      referenceKey: event.referenceKey,
+      reviewId: event.reviewId,
       status: event.status,
       taskId: event.task?.id ?? null,
       withdrawnAt: event.withdrawnAt?.toISOString() ?? null
@@ -2911,6 +3457,10 @@ export function buildCreatorDatasetReports(
       continue;
     }
 
+    if (isTopUpRefundLedgerEntry(entry)) {
+      continue;
+    }
+
     const datasetId = getCreatorLedgerDatasetId(entry, holdById);
     const key = datasetId ?? "unassigned";
     const report =
@@ -2934,7 +3484,7 @@ export function buildCreatorDatasetReports(
       report.taskCount += getJsonNumber(entry.metadata, "taskCount");
     } else if (entry.type === LedgerEntryType.RELEASE) {
       report.paidBalance += amount;
-    } else if (entry.type === LedgerEntryType.REFUND) {
+    } else if (isTaskEscrowRefundLedgerEntry(entry)) {
       report.refundedBalance += amount;
     } else if (entry.type === LedgerEntryType.FEE) {
       report.feeBalance += amount;
@@ -2998,16 +3548,29 @@ export function serializeCreatorLedgerEntry(
 ) {
   const datasetId = getCreatorLedgerDatasetId(entry, holdById);
   const taskId = getJsonText(entry.metadata, "taskId");
+  const refundKind = getJsonText(entry.metadata, "refundKind");
 
   return {
+    approvedCredits: getJsonNumber(entry.metadata, "approvedCredits"),
     amount: decimalToNumber(entry.amount),
     createdAt: entry.createdAt.toISOString(),
     currency: entry.currency,
     datasetId,
     datasetName: datasetId ? datasetNameById.get(datasetId) ?? "Unknown dataset" : null,
     description: entry.description,
+    escrowCredits: getJsonNumber(entry.metadata, "escrowCredits"),
+    escrowLedgerEntryId: getJsonText(entry.metadata, "escrowLedgerEntryId"),
+    feeCredits: getJsonNumber(entry.metadata, "feeCredits"),
     id: entry.id,
+    isTopUpRefund: isTopUpRefundLedgerEntry(entry),
+    originalPaymentProvider: getJsonText(entry.metadata, "originalPaymentProvider"),
+    paymentIntentId: getJsonText(entry.metadata, "paymentIntentId"),
+    platformFeeRate: getJsonNumber(entry.metadata, "platformFeeRate"),
+    providerRef: getJsonText(entry.metadata, "providerRef"),
     referenceId: entry.referenceId,
+    refundCredits: getJsonNumber(entry.metadata, "refundCredits"),
+    refundKind,
+    reviewId: getJsonText(entry.metadata, "reviewId"),
     taskCount: getJsonNumber(entry.metadata, "taskCount"),
     taskId,
     type: entry.type
@@ -3044,7 +3607,10 @@ export function filterCreatorLedgerEntriesBySearch(
       entry.datasetName,
       entry.description,
       entry.id,
+      entry.paymentIntentId,
+      entry.providerRef,
       entry.referenceId,
+      entry.refundKind,
       entry.taskId,
       entry.type
     ].some((value) => value?.toLowerCase().includes(normalizedSearch))
@@ -3076,6 +3642,10 @@ function creatorLedgerFilterMatches(type: string, filter: CreatorLedgerFilter) {
 }
 
 function getCreatorLedgerDatasetId(entry: CreatorLedgerEntrySource, holdById: Map<string, CreatorLedgerEntrySource>) {
+  if (isTopUpRefundLedgerEntry(entry)) {
+    return null;
+  }
+
   if (entry.type === LedgerEntryType.HOLD) {
     return getJsonText(entry.metadata, "datasetId") ?? entry.referenceId;
   }
@@ -3084,6 +3654,14 @@ function getCreatorLedgerDatasetId(entry: CreatorLedgerEntrySource, holdById: Ma
   const hold = escrowLedgerEntryId ? holdById.get(escrowLedgerEntryId) : null;
 
   return hold ? getJsonText(hold.metadata, "datasetId") ?? hold.referenceId : null;
+}
+
+function isTaskEscrowRefundLedgerEntry(entry: CreatorLedgerEntrySource) {
+  return entry.type === LedgerEntryType.REFUND && !isTopUpRefundLedgerEntry(entry);
+}
+
+function isTopUpRefundLedgerEntry(entry: CreatorLedgerEntrySource) {
+  return entry.type === LedgerEntryType.REFUND && getJsonText(entry.metadata, "refundKind") === "top_up";
 }
 
 function decimalToNumber(value: Prisma.Decimal | number | string) {
@@ -3206,6 +3784,40 @@ function getHeaderValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
+function getPaymentClientRequestId(request: AuthenticatedRequest) {
+  return normalizePaymentClientRequestId(request.header("x-idempotency-key") ?? request.body?.clientRequestId);
+}
+
+export function normalizePaymentClientRequestId(value: unknown) {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized.length < 8 || normalized.length > 128 || !/^[a-zA-Z0-9._:-]+$/.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+export function getPayPalWebhookIdempotencyKey(input: { eventId?: string | null; transmissionId?: string | null }) {
+  return normalizeWebhookIdempotencyKey(input.eventId) ?? normalizeWebhookIdempotencyKey(input.transmissionId);
+}
+
+export function getStripeWebhookIdempotencyKey(input: { eventId?: string | null }) {
+  return normalizeWebhookIdempotencyKey(input.eventId);
+}
+
+function normalizeWebhookIdempotencyKey(value: string | null | undefined) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isUniqueConstraintError(reason: unknown) {
+  return reason instanceof Prisma.PrismaClientKnownRequestError && reason.code === "P2002";
+}
+
 function mergeJsonMetadata(current: Prisma.JsonValue | null, next: Record<string, unknown>) {
   const base = isPlainJsonObject(current) ? current : {};
 
@@ -3284,14 +3896,19 @@ type WalletReceiptRecord = Prisma.WalletReceiptGetPayload<{ select: typeof walle
 const paymentIntentSelect = {
   amount: true,
   cancelledAt: true,
+  clientRequestId: true,
   completedAt: true,
   createdAt: true,
+  createdById: true,
   currency: true,
   description: true,
+  fundingSourceId: true,
   id: true,
   metadata: true,
+  organizationId: true,
   provider: true,
   providerRef: true,
+  purpose: true,
   status: true,
   updatedAt: true
 } satisfies Prisma.PaymentIntentSelect;
@@ -3373,6 +3990,7 @@ function serializePaymentIntent(paymentIntent: PaymentIntentRecord) {
   return {
     amount: decimalToNumber(paymentIntent.amount),
     cancelledAt: paymentIntent.cancelledAt?.toISOString() ?? null,
+    clientRequestId: paymentIntent.clientRequestId,
     completedAt: paymentIntent.completedAt?.toISOString() ?? null,
     createdAt: paymentIntent.createdAt.toISOString(),
     currency: paymentIntent.currency,

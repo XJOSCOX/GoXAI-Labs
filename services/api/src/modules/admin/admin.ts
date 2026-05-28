@@ -7,6 +7,7 @@ import {
   LedgerEntryType,
   MembershipRole,
   MembershipStatus,
+  PaymentIntentStatus,
   PayoutStatus,
   Prisma,
   TaskCreditStatus,
@@ -23,6 +24,7 @@ import { getPlatformFeatures, updatePlatformFeatures } from "../../shared/platfo
 import { getPlatformTaskEconomics, updatePlatformTaskEconomics } from "../../shared/platformEconomics.js";
 
 const router = Router();
+const STALE_PAYMENT_INTENT_HOURS = 24;
 
 router.use(requireAuthenticatedUser);
 router.use(requireSuperAdmin);
@@ -42,10 +44,11 @@ router.get("/overview", async (_request: AuthenticatedRequest, response) => {
     taskEconomics,
     paymentIntents,
     fundingSources,
-    webhookLogs,
+    webhookEvents,
     paypalWebhookCount24h,
     stripeWebhookCount24h,
-    platformRevenue
+    platformRevenue,
+    paymentAuditTrail
   ] = await Promise.all([
     prisma.user.findMany({
       orderBy: {
@@ -130,23 +133,7 @@ router.get("/overview", async (_request: AuthenticatedRequest, response) => {
     getPlatformFeatures(),
     getPlatformTaskEconomics(),
     prisma.paymentIntent.findMany({
-      include: {
-        createdBy: {
-          select: userSelect
-        },
-        organization: {
-          select: {
-            id: true,
-            name: true,
-            slug: true
-          }
-        },
-        _count: {
-          select: {
-            receipts: true
-          }
-        }
-      },
+      include: adminPaymentIntentInclude,
       orderBy: {
         createdAt: "desc"
       },
@@ -170,38 +157,35 @@ router.get("/overview", async (_request: AuthenticatedRequest, response) => {
       },
       take: 40
     }),
-    prisma.auditLog.findMany({
-      where: {
-        action: {
-          in: ["wallet.paypal_webhook.received", "wallet.stripe_webhook.received"]
-        }
-      },
+    prisma.providerWebhookEvent.findMany({
       orderBy: {
-        createdAt: "desc"
+        receivedAt: "desc"
       },
-      take: 20
+      take: 40
     }),
-    prisma.auditLog.count({
+    prisma.providerWebhookEvent.count({
       where: {
-        action: "wallet.paypal_webhook.received",
-        createdAt: {
+        provider: "paypal",
+        receivedAt: {
           gte: webhookSince
         }
       }
     }),
-    prisma.auditLog.count({
+    prisma.providerWebhookEvent.count({
       where: {
-        action: "wallet.stripe_webhook.received",
-        createdAt: {
+        provider: "stripe",
+        receivedAt: {
           gte: webhookSince
         }
       }
     }),
-    buildAdminPlatformRevenueReport()
+    buildAdminPlatformRevenueReport(),
+    buildAdminPaymentAuditTrail()
   ]);
   const adminUserIds = new Set(superAdmins.map((user) => user.id));
   const annotatorUserIds = new Set<string>();
   const reviewerUserIds = new Set<string>();
+  const paymentReconciliationSummaries = await buildAdminPaymentIntentReconciliationSummaries(paymentIntents);
 
   for (const membership of peopleMemberships) {
     if (membership.role === MembershipRole.OWNER || membership.role === MembershipRole.ADMIN) {
@@ -246,13 +230,18 @@ router.get("/overview", async (_request: AuthenticatedRequest, response) => {
       paymentProviders: buildPaymentProviderSettings(platformFeatures)
     },
     payments: {
+      auditTrail: paymentAuditTrail,
       fundingSources: fundingSources.map(serializeAdminFundingSource),
-      paymentIntents: paymentIntents.map(serializeAdminPaymentIntent),
+      paymentIntents: paymentIntents.map((payment) => serializeAdminPaymentIntent(payment, paymentReconciliationSummaries.get(payment.id))),
       platformRevenue,
-      webhookHealth: buildWebhookHealth(webhookLogs, {
-        paypal: paypalWebhookCount24h,
-        stripe: stripeWebhookCount24h
-      })
+      webhookHealth: buildWebhookHealth(
+        webhookEvents,
+        {
+          paypal: paypalWebhookCount24h,
+          stripe: stripeWebhookCount24h
+        },
+        new Date()
+      )
     },
     users: users.map(serializeAdminUser),
     payouts: payouts.map(serializeAdminPayout),
@@ -406,6 +395,525 @@ router.patch("/users/:userId", async (request: AuthenticatedRequest, response) =
   response.status(200).json({
     user: serializeAdminUser(updated)
   });
+});
+
+router.post("/payment-intents/:paymentIntentId/cancel", async (request: AuthenticatedRequest, response) => {
+  const admin = request.currentUser;
+  const paymentIntentId = normalizeId(request.params.paymentIntentId);
+  const adminNotes = normalizeLimitedText(request.body?.adminNotes, 1_000) ?? null;
+
+  if (!admin) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  if (!paymentIntentId) {
+    response.status(400).json({ error: "Payment intent is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const existing = await prisma.paymentIntent.findUnique({
+    where: {
+      id: paymentIntentId
+    },
+    include: adminPaymentIntentInclude
+  });
+
+  if (!existing) {
+    response.status(404).json({ error: "Payment intent was not found." });
+    return;
+  }
+
+  const state = getAdminPaymentIntentState(existing, new Date());
+
+  if (!state.canCancel) {
+    response.status(409).json({ error: `Payment intents with status ${existing.status} cannot be cancelled.` });
+    return;
+  }
+
+  const cancelledAt = new Date();
+  const cancelled = await prisma.$transaction(async (tx) => {
+    const updated = await tx.paymentIntent.update({
+      where: {
+        id: existing.id
+      },
+      data: {
+        cancelledAt,
+        metadata: mergeJsonObject(existing.metadata, {
+          adminCancelledAt: cancelledAt.toISOString(),
+          adminCancelledById: admin.id,
+          adminNotes,
+          previousStatus: existing.status,
+          requestId: getRequestId(request)
+        }),
+        status: PaymentIntentStatus.CANCELLED
+      },
+      include: adminPaymentIntentInclude
+    });
+
+    await tx.auditLog.create({
+      data: {
+        action: "admin.payment_intent.cancelled",
+        entityId: updated.id,
+        entityType: "payment_intent",
+        metadata: {
+          adminNotes,
+          amount: updated.amount.toString(),
+          currency: updated.currency,
+          previousStatus: existing.status,
+          provider: updated.provider,
+          providerRef: updated.providerRef,
+          requestId: getRequestId(request)
+        },
+        organizationId: updated.organizationId,
+        userId: admin.id
+      }
+    });
+
+    return updated;
+  });
+
+  response.status(200).json({
+    paymentIntent: serializeAdminPaymentIntent(cancelled)
+  });
+});
+
+router.post("/payment-intents/:paymentIntentId/refund", async (request: AuthenticatedRequest, response) => {
+  const admin = request.currentUser;
+  const paymentIntentId = normalizeId(request.params.paymentIntentId);
+  const parsedRefund = parsePaymentRefundBody(request.body);
+
+  if (!admin) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  if (!paymentIntentId) {
+    response.status(400).json({ error: "Payment intent is required." });
+    return;
+  }
+
+  if (!parsedRefund.ok) {
+    response.status(400).json({ error: parsedRefund.error });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const paymentIntent = await tx.paymentIntent.findUnique({
+        where: {
+          id: paymentIntentId
+        },
+        include: {
+          ...adminPaymentIntentInclude,
+          wallet: {
+            select: {
+              balance: true,
+              id: true
+            }
+          }
+        }
+      });
+
+      if (!paymentIntent) {
+        throw new PaymentRefundError("Payment intent was not found.", 404);
+      }
+
+      if (paymentIntent.status !== PaymentIntentStatus.SUCCEEDED) {
+        throw new PaymentRefundError("Only settled payment intents can be refunded.", 409);
+      }
+
+      const previousRefunds = await tx.ledgerEntry.findMany({
+        where: {
+          metadata: {
+            path: ["paymentIntentId"],
+            equals: paymentIntent.id
+          },
+          type: LedgerEntryType.REFUND,
+          walletId: paymentIntent.walletId
+        },
+        select: {
+          amount: true
+        }
+      });
+      const refundPlan = getPaymentRefundPlan({
+        alreadyRefundedCents: previousRefunds.reduce((total, entry) => total + moneyToCents(entry.amount), 0),
+        originalAmount: paymentIntent.amount,
+        requestedAmountCents: parsedRefund.value.amountCents,
+        walletBalance: paymentIntent.wallet.balance
+      });
+
+      if (!refundPlan.ok) {
+        throw new PaymentRefundError(refundPlan.error, 409);
+      }
+
+      const originalCents = refundPlan.originalCents;
+      const refundedCents = refundPlan.alreadyRefundedCents;
+      const refundCents = refundPlan.refundCents;
+      const refundAmount = centsToMoney(refundCents);
+      const refundedAt = new Date();
+      const walletUpdate = await tx.wallet.updateMany({
+        where: {
+          balance: {
+            gte: refundAmount
+          },
+          id: paymentIntent.walletId
+        },
+        data: {
+          balance: {
+            decrement: refundAmount
+          }
+        }
+      });
+
+      if (walletUpdate.count !== 1) {
+        throw new PaymentRefundError("The creator wallet changed before the refund could be recorded.", 409);
+      }
+
+      const ledgerEntry = await tx.ledgerEntry.create({
+        data: {
+          amount: refundAmount,
+          currency: paymentIntent.currency,
+          description: "Refund creator wallet top-up.",
+          metadata: {
+            adminNotes: parsedRefund.value.adminNotes ?? null,
+            originalPaymentProvider: paymentIntent.provider,
+            paymentIntentId: paymentIntent.id,
+            providerRef: parsedRefund.value.providerRef,
+            refundKind: "top_up",
+            requestId: getRequestId(request)
+          },
+          referenceId: paymentIntent.id,
+          type: LedgerEntryType.REFUND,
+          walletId: paymentIntent.walletId
+        }
+      });
+
+      const receipt = await tx.walletReceipt.create({
+        data: {
+          amount: refundAmount,
+          currency: paymentIntent.currency,
+          description: "Creator wallet top-up refund receipt.",
+          ledgerEntryId: ledgerEntry.id,
+          metadata: {
+            adminNotes: parsedRefund.value.adminNotes ?? null,
+            originalPaymentProvider: paymentIntent.provider,
+            paymentIntentId: paymentIntent.id,
+            providerRef: parsedRefund.value.providerRef,
+            refundKind: "top_up",
+            requestId: getRequestId(request)
+          },
+          organizationId: paymentIntent.organizationId,
+          paymentIntentId: paymentIntent.id,
+          provider: paymentIntent.provider,
+          providerRef: parsedRefund.value.providerRef,
+          receiptNumber: buildWalletReceiptNumber("REF", refundedAt, ledgerEntry.id),
+          type: WalletReceiptType.REFUND,
+          userId: paymentIntent.createdById,
+          walletId: paymentIntent.walletId
+        }
+      });
+
+      const nextRefundedCents = refundedCents + refundCents;
+      await tx.paymentIntent.update({
+        where: {
+          id: paymentIntent.id
+        },
+        data: {
+          metadata: mergeJsonObject(paymentIntent.metadata, {
+            adminRefundedAmount: centsToMoney(nextRefundedCents),
+            adminRefundedAt: refundedAt.toISOString(),
+            adminRefundedById: admin.id,
+            adminRefundedLedgerEntryId: ledgerEntry.id,
+            adminRefundedReceiptId: receipt.id,
+            adminRefundedRemainingAmount: centsToMoney(Math.max(0, originalCents - nextRefundedCents)),
+            adminRefundProviderRef: parsedRefund.value.providerRef,
+            adminRefundRequestId: getRequestId(request)
+          })
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "admin.payment_intent.refund_recorded",
+          entityId: paymentIntent.id,
+          entityType: "payment_intent",
+          metadata: {
+            adminNotes: parsedRefund.value.adminNotes ?? null,
+            amount: refundAmount,
+            currency: paymentIntent.currency,
+            ledgerEntryId: ledgerEntry.id,
+            provider: paymentIntent.provider,
+            providerRef: parsedRefund.value.providerRef,
+            receiptId: receipt.id,
+            requestId: getRequestId(request)
+          },
+          organizationId: paymentIntent.organizationId,
+          userId: admin.id
+        }
+      });
+    });
+  } catch (reason) {
+    if (reason instanceof PaymentRefundError) {
+      response.status(reason.statusCode).json({ error: reason.message });
+      return;
+    }
+
+    throw reason;
+  }
+
+  const paymentIntent = await prisma.paymentIntent.findUnique({
+    where: {
+      id: paymentIntentId
+    },
+    include: adminPaymentIntentInclude
+  });
+
+  response.status(200).json({
+    paymentIntent: paymentIntent ? serializeAdminPaymentIntent(paymentIntent) : null
+  });
+});
+
+router.get("/payment-intents/:paymentIntentId", async (request: AuthenticatedRequest, response) => {
+  const paymentIntentId = normalizeId(request.params.paymentIntentId);
+
+  if (!paymentIntentId) {
+    response.status(400).json({ error: "Payment intent is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const paymentIntent = await prisma.paymentIntent.findUnique({
+    where: {
+      id: paymentIntentId
+    },
+    include: adminPaymentIntentInclude
+  });
+
+  if (!paymentIntent) {
+    response.status(404).json({ error: "Payment intent was not found." });
+    return;
+  }
+
+  const receipts = await prisma.walletReceipt.findMany({
+    where: {
+      paymentIntentId: paymentIntent.id
+    },
+    include: {
+      ledgerEntry: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      },
+      user: {
+        select: userSelect
+      }
+    },
+    orderBy: {
+      issuedAt: "desc"
+    }
+  });
+  const receiptLedgerEntryIds = receipts.map((receipt) => receipt.ledgerEntryId).filter((id): id is string => Boolean(id));
+  const ledgerWhere: Prisma.LedgerEntryWhereInput[] = [
+    {
+      referenceId: paymentIntent.id
+    },
+    {
+      metadata: {
+        path: ["paymentIntentId"],
+        equals: paymentIntent.id
+      }
+    }
+  ];
+
+  if (receiptLedgerEntryIds.length > 0) {
+    ledgerWhere.push({
+      id: {
+        in: receiptLedgerEntryIds
+      }
+    });
+  }
+
+  const webhookWhere: Prisma.ProviderWebhookEventWhereInput[] = [
+    {
+      metadata: {
+        path: ["paymentIntentId"],
+        equals: paymentIntent.id
+      }
+    }
+  ];
+
+  if (paymentIntent.providerRef) {
+    webhookWhere.push(
+      {
+        eventId: paymentIntent.providerRef
+      },
+      {
+        metadata: {
+          path: ["providerRef"],
+          equals: paymentIntent.providerRef
+        }
+      }
+    );
+  }
+
+  const [ledgerEntries, auditTrail, webhookEvents] = await Promise.all([
+    prisma.ledgerEntry.findMany({
+      where: {
+        OR: ledgerWhere
+      },
+      include: {
+        wallet: {
+          select: {
+            organization: {
+              select: {
+                id: true,
+                name: true,
+                slug: true
+              }
+            },
+            user: {
+              select: userSelect
+            }
+          }
+        }
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: 30
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        OR: [
+          {
+            entityId: paymentIntent.id,
+            entityType: "payment_intent"
+          },
+          {
+            metadata: {
+              path: ["paymentIntentId"],
+              equals: paymentIntent.id
+            }
+          }
+        ]
+      },
+      include: {
+        user: {
+          select: userSelect
+        }
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: 40
+    }),
+    prisma.providerWebhookEvent.findMany({
+      where: {
+        OR: webhookWhere,
+        provider: paymentIntent.provider
+      },
+      orderBy: {
+        updatedAt: "desc"
+      },
+      take: 20
+    })
+  ]);
+
+  response.status(200).json({
+    paymentIntent: serializeAdminPaymentIntentDetail(paymentIntent, receipts, ledgerEntries, auditTrail, webhookEvents)
+  });
+});
+
+router.get("/payment-intents/:paymentIntentId/receipts", async (request: AuthenticatedRequest, response) => {
+  const paymentIntentId = normalizeId(request.params.paymentIntentId);
+
+  if (!paymentIntentId) {
+    response.status(400).json({ error: "Payment intent is required." });
+    return;
+  }
+
+  const prisma = getPrismaClient();
+  const paymentIntent = await prisma.paymentIntent.findUnique({
+    where: {
+      id: paymentIntentId
+    },
+    include: adminPaymentIntentInclude
+  });
+
+  if (!paymentIntent) {
+    response.status(404).json({ error: "Payment intent was not found." });
+    return;
+  }
+
+  const receipts = await prisma.walletReceipt.findMany({
+    where: {
+      paymentIntentId
+    },
+    include: {
+      ledgerEntry: {
+        select: {
+          id: true,
+          referenceId: true,
+          type: true
+        }
+      },
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true
+        }
+      },
+      user: {
+        select: userSelect
+      }
+    },
+    orderBy: {
+      issuedAt: "asc"
+    }
+  });
+
+  if (receipts.length === 0) {
+    response.status(404).json({ error: "No receipts were found for this payment intent." });
+    return;
+  }
+
+  const fileName = `payment-${paymentIntent.id.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-receipts.json`;
+  const payload = {
+    exportedAt: new Date(),
+    paymentIntent: serializeAdminPaymentIntent(paymentIntent),
+    receipts: receipts.map((receipt) => ({
+      amount: Number(receipt.amount.toString()),
+      createdAt: receipt.createdAt,
+      currency: receipt.currency,
+      description: receipt.description,
+      id: receipt.id,
+      issuedAt: receipt.issuedAt,
+      ledgerEntry: receipt.ledgerEntry,
+      metadata: receipt.metadata,
+      organization: receipt.organization,
+      paymentIntentId: receipt.paymentIntentId,
+      provider: receipt.provider,
+      providerRef: receipt.providerRef,
+      receiptNumber: receipt.receiptNumber,
+      type: receipt.type,
+      user: receipt.user ? serializeAdminUser(receipt.user) : null
+    })),
+    totals: summarizeReceiptTotals(receipts)
+  };
+
+  response
+    .status(200)
+    .setHeader("Content-Type", "application/json")
+    .setHeader("Content-Disposition", `attachment; filename="${fileName}"`)
+    .send(JSON.stringify(payload, null, 2));
 });
 
 router.get("/payouts/:payoutId", async (request: AuthenticatedRequest, response) => {
@@ -927,6 +1435,34 @@ const userSelect = {
   updatedAt: true
 } as const;
 
+const adminPaymentIntentInclude = {
+  createdBy: {
+    select: userSelect
+  },
+  organization: {
+    select: {
+      id: true,
+      name: true,
+      slug: true
+    }
+  },
+  _count: {
+    select: {
+      receipts: true
+    }
+  }
+} satisfies Prisma.PaymentIntentInclude;
+
+type AdminPaymentIntentRecord = Prisma.PaymentIntentGetPayload<{ include: typeof adminPaymentIntentInclude }>;
+
+type AdminPaymentReconciliationSummary = {
+  issueCount: number;
+  netLedgerAmount: number;
+  netReceiptAmount: number;
+  severity: "blocked" | "none" | "warning";
+  status: "balanced" | "warning";
+};
+
 function parseBooleanSetting(value: unknown) {
   return typeof value === "boolean" ? value : null;
 }
@@ -1157,6 +1693,7 @@ async function buildAdminPlatformRevenueReport() {
         id: entry.id,
         project: task?.project ? { id: task.project.id, name: task.project.name } : null,
         referenceId: entry.referenceId,
+        reviewId: getJsonText(entry.metadata, "reviewId"),
         taskId: task?.id ?? getFeeEntryTaskId(entry)
       };
     }),
@@ -1181,6 +1718,169 @@ type RevenueBucket = {
   taskCount: number;
   totalAmount: number;
 };
+
+async function buildAdminPaymentAuditTrail() {
+  const prisma = getPrismaClient();
+  const [paymentIntents, receipts, ledgerEntries, webhookEvents, auditLogs] = await Promise.all([
+    prisma.paymentIntent.findMany({
+      include: {
+        createdBy: {
+          select: userSelect
+        },
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        }
+      },
+      orderBy: {
+        updatedAt: "desc"
+      },
+      take: 30
+    }),
+    prisma.walletReceipt.findMany({
+      include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true
+          }
+        },
+        user: {
+          select: userSelect
+        }
+      },
+      orderBy: {
+        issuedAt: "desc"
+      },
+      take: 30
+    }),
+    prisma.ledgerEntry.findMany({
+      include: {
+        wallet: {
+          select: {
+            organization: {
+              select: {
+                id: true,
+                name: true,
+                slug: true
+              }
+            },
+            user: {
+              select: userSelect
+            }
+          }
+        }
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: 30
+    }),
+    prisma.providerWebhookEvent.findMany({
+      orderBy: {
+        updatedAt: "desc"
+      },
+      take: 30
+    }),
+    prisma.auditLog.findMany({
+      include: {
+        user: {
+          select: userSelect
+        }
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      take: 40
+    })
+  ]);
+
+  return [
+    ...paymentIntents.map((payment) => ({
+      actor: payment.createdBy ? getAdminUserDisplayName(payment.createdBy) : null,
+      amount: Number(payment.amount.toString()),
+      createdAt: payment.updatedAt,
+      currency: payment.currency,
+      description: payment.description ?? `${formatPaymentProviderName(payment.provider)} checkout ${payment.status.toLowerCase()}.`,
+      id: `payment:${payment.id}`,
+      kind: "payment_intent",
+      organization: payment.organization?.name ?? null,
+      provider: payment.provider,
+      reference: payment.providerRef ?? payment.clientRequestId ?? payment.id,
+      sourceId: payment.id,
+      status: payment.status,
+      title: "Payment intent"
+    })),
+    ...receipts.map((receipt) => ({
+      actor: receipt.user ? getAdminUserDisplayName(receipt.user) : null,
+      amount: Number(receipt.amount.toString()),
+      createdAt: receipt.issuedAt,
+      currency: receipt.currency,
+      description: receipt.description ?? `${receipt.type} receipt issued.`,
+      id: `receipt:${receipt.id}`,
+      kind: "receipt",
+      organization: receipt.organization?.name ?? null,
+      provider: receipt.provider,
+      reference: receipt.receiptNumber,
+      sourceId: receipt.id,
+      status: receipt.type,
+      title: "Wallet receipt"
+    })),
+    ...ledgerEntries.map((entry) => ({
+      actor: entry.wallet.user ? getAdminUserDisplayName(entry.wallet.user) : null,
+      amount: Number(entry.amount.toString()),
+      createdAt: entry.createdAt,
+      currency: entry.currency,
+      description: entry.description ?? `${entry.type} ledger entry.`,
+      id: `ledger:${entry.id}`,
+      kind: "ledger_entry",
+      organization: entry.wallet.organization?.name ?? null,
+      provider: null,
+      reference: entry.referenceId ?? getJsonText(entry.metadata, "paymentIntentId") ?? entry.id,
+      sourceId: entry.id,
+      status: entry.type,
+      title: "Wallet ledger"
+    })),
+    ...webhookEvents.map((event) => ({
+      actor: null,
+      amount: null,
+      createdAt: event.updatedAt,
+      currency: null,
+      description: event.duplicateCount > 0
+        ? `${event.eventType ?? "Webhook event"} with ${event.duplicateCount} duplicate deliver${event.duplicateCount === 1 ? "y" : "ies"}.`
+        : `${event.eventType ?? "Webhook event"} received.`,
+      id: `webhook:${event.id}`,
+      kind: "webhook",
+      organization: null,
+      provider: event.provider,
+      reference: event.eventId,
+      sourceId: event.id,
+      status: event.duplicateCount > 0 ? "RETRIED" : "RECEIVED",
+      title: "Provider webhook"
+    })),
+    ...auditLogs.map((entry) => ({
+      actor: entry.user ? getAdminUserDisplayName(entry.user) : null,
+      amount: null,
+      createdAt: entry.createdAt,
+      currency: null,
+      description: getAuditTrailDescription(entry),
+      id: `audit:${entry.id}`,
+      kind: "audit_log",
+      organization: null,
+      provider: getJsonText(entry.metadata, "provider"),
+      reference: entry.entityId ?? getJsonText(entry.metadata, "requestId") ?? entry.id,
+      sourceId: entry.id,
+      status: entry.entityType ?? "audit",
+      title: entry.action
+    }))
+  ]
+    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+    .slice(0, 50);
+}
 
 function addRevenueTotal(
   totals: Map<string, { collectedAmount: number; currency: string; pendingAmount: number; totalAmount: number }>,
@@ -1417,6 +2117,28 @@ function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+function decimalToNumber(value: Prisma.Decimal | number | string) {
+  return typeof value === "number" ? value : Number(value.toString());
+}
+
+function moneyToCents(value: Prisma.Decimal | number | string) {
+  return Math.round(decimalToNumber(value) * 100);
+}
+
+function centsToMoney(cents: number) {
+  return (Math.max(0, cents) / 100).toFixed(2);
+}
+
+function normalizeMoneyCents(value: unknown) {
+  const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+
+  if (!Number.isFinite(numberValue) || numberValue <= 0 || numberValue > 100_000) {
+    return null;
+  }
+
+  return Math.round(numberValue * 100);
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -1435,6 +2157,50 @@ function getCurrency(value: unknown) {
   const currency = typeof value === "string" ? value.trim().toUpperCase() : "USD";
 
   return /^[A-Z]{3}$/.test(currency) ? currency : "USD";
+}
+
+function getAdminUserDisplayName(user: Parameters<typeof serializeAdminUser>[0]) {
+  return [user.firstName, user.lastName].filter(Boolean).join(" ") || user.email;
+}
+
+function formatPaymentProviderName(provider: string) {
+  const normalized = provider.trim().toLowerCase();
+
+  if (normalized === "paypal") {
+    return "PayPal";
+  }
+
+  if (normalized === "stripe") {
+    return "Stripe";
+  }
+
+  if (normalized === "plaid") {
+    return "Plaid";
+  }
+
+  return provider || "Manual";
+}
+
+function getAuditTrailDescription(entry: { action: string; entityType: string | null; metadata: Prisma.JsonValue | null }) {
+  const previousStatus = getJsonText(entry.metadata, "previousStatus");
+  const nextStatus = getJsonText(entry.metadata, "nextStatus") ?? getJsonText(entry.metadata, "status");
+  const requestId = getJsonText(entry.metadata, "requestId");
+  const reason = getJsonText(entry.metadata, "reason");
+  const error = getJsonText(entry.metadata, "error");
+
+  if (entry.action.endsWith("_webhook.rejected")) {
+    return error ?? `Provider webhook rejected${reason ? `: ${reason}` : ""}.`;
+  }
+
+  if (previousStatus && nextStatus) {
+    return `${entry.entityType ?? "Record"} moved from ${previousStatus} to ${nextStatus}.`;
+  }
+
+  if (requestId) {
+    return `${entry.entityType ?? "Record"} audit event for request ${requestId}.`;
+  }
+
+  return `${entry.entityType ?? "Record"} audit event.`;
 }
 
 function buildPaymentProviderSettings(features: Awaited<ReturnType<typeof getPlatformFeatures>>) {
@@ -1633,18 +2399,156 @@ function serializeAdminPayoutDetail(
   };
 }
 
+async function buildAdminPaymentIntentReconciliationSummaries(payments: AdminPaymentIntentRecord[]): Promise<Map<string, AdminPaymentReconciliationSummary>> {
+  const paymentIds = payments.map((payment) => payment.id);
+
+  if (paymentIds.length === 0) {
+    return new Map<string, AdminPaymentReconciliationSummary>();
+  }
+
+  const prisma = getPrismaClient();
+  const paymentIdSet = new Set(paymentIds);
+  const receipts = await prisma.walletReceipt.findMany({
+    where: {
+      paymentIntentId: {
+        in: paymentIds
+      }
+    },
+    select: {
+      amount: true,
+      currency: true,
+      id: true,
+      ledgerEntryId: true,
+      paymentIntentId: true,
+      type: true
+    }
+  });
+  const receiptLedgerEntryIds = receipts.map((receipt) => receipt.ledgerEntryId).filter((id): id is string => Boolean(id));
+  const ledgerWhere: Prisma.LedgerEntryWhereInput[] = [
+    {
+      referenceId: {
+        in: paymentIds
+      }
+    },
+    ...paymentIds.map((id) => ({
+      metadata: {
+        path: ["paymentIntentId"],
+        equals: id
+      }
+    }))
+  ];
+
+  if (receiptLedgerEntryIds.length > 0) {
+    ledgerWhere.push({
+      id: {
+        in: receiptLedgerEntryIds
+      }
+    });
+  }
+
+  const ledgerEntries = await prisma.ledgerEntry.findMany({
+    where: {
+      OR: ledgerWhere
+    },
+    select: {
+      amount: true,
+      currency: true,
+      id: true,
+      metadata: true,
+      referenceId: true,
+      type: true
+    }
+  });
+  const receiptsByPayment = new Map<string, typeof receipts>();
+  const receiptPaymentByLedgerEntry = new Map<string, string>();
+  const ledgerEntriesByPayment = new Map<string, Map<string, typeof ledgerEntries[number]>>();
+
+  for (const receipt of receipts) {
+    if (!receipt.paymentIntentId) {
+      continue;
+    }
+
+    const paymentReceipts = receiptsByPayment.get(receipt.paymentIntentId) ?? [];
+    paymentReceipts.push(receipt);
+    receiptsByPayment.set(receipt.paymentIntentId, paymentReceipts);
+
+    if (receipt.ledgerEntryId) {
+      receiptPaymentByLedgerEntry.set(receipt.ledgerEntryId, receipt.paymentIntentId);
+    }
+  }
+
+  for (const entry of ledgerEntries) {
+    const linkedPaymentIds = new Set<string>();
+    const metadataPaymentId = getJsonText(entry.metadata, "paymentIntentId");
+    const receiptPaymentId = receiptPaymentByLedgerEntry.get(entry.id);
+
+    if (entry.referenceId && paymentIdSet.has(entry.referenceId)) {
+      linkedPaymentIds.add(entry.referenceId);
+    }
+
+    if (metadataPaymentId && paymentIdSet.has(metadataPaymentId)) {
+      linkedPaymentIds.add(metadataPaymentId);
+    }
+
+    if (receiptPaymentId) {
+      linkedPaymentIds.add(receiptPaymentId);
+    }
+
+    for (const paymentId of linkedPaymentIds) {
+      const paymentLedgerEntries = ledgerEntriesByPayment.get(paymentId) ?? new Map<string, typeof entry>();
+      paymentLedgerEntries.set(entry.id, entry);
+      ledgerEntriesByPayment.set(paymentId, paymentLedgerEntries);
+    }
+  }
+
+  return new Map(paymentIds.map((paymentId) => {
+    const payment = payments.find((candidate) => candidate.id === paymentId);
+
+    if (!payment) {
+      return [paymentId, {
+        issueCount: 0,
+        netLedgerAmount: 0,
+        netReceiptAmount: 0,
+        severity: "none" as const,
+        status: "balanced" as const
+      }];
+    }
+
+    const reconciliation = buildAdminPaymentReconciliation(
+      payment,
+      receiptsByPayment.get(paymentId) ?? [],
+      [...(ledgerEntriesByPayment.get(paymentId)?.values() ?? [])]
+    );
+    const severity = reconciliation.issues.some((issue) => issue.severity === "blocked")
+      ? "blocked"
+      : reconciliation.issues.length > 0
+        ? "warning"
+        : "none";
+
+    return [paymentId, {
+      issueCount: reconciliation.issueCount,
+      netLedgerAmount: reconciliation.netLedgerAmount,
+      netReceiptAmount: reconciliation.netReceiptAmount,
+      severity,
+      status: reconciliation.status as AdminPaymentReconciliationSummary["status"]
+    } satisfies AdminPaymentReconciliationSummary];
+  }));
+}
+
 function serializeAdminPaymentIntent(payment: {
   id: string;
   walletId: string;
   createdById: string | null;
   organizationId: string | null;
+  clientRequestId: string | null;
   amount: Prisma.Decimal;
   currency: string;
-  status: string;
+  status: PaymentIntentStatus;
   provider: string;
   providerRef: string | null;
   purpose: string;
   description: string | null;
+  metadata: Prisma.JsonValue | null;
   completedAt: Date | null;
   cancelledAt: Date | null;
   createdAt: Date;
@@ -1652,10 +2556,14 @@ function serializeAdminPaymentIntent(payment: {
   createdBy?: Parameters<typeof serializeAdminUser>[0] | null;
   organization?: { id: string; name: string; slug: string } | null;
   _count: { receipts: number };
-}) {
+}, reconciliationSummary?: AdminPaymentReconciliationSummary) {
+  const state = getAdminPaymentIntentState(payment, new Date());
+
   return {
     amount: Number(payment.amount.toString()),
+    canCancel: state.canCancel,
     cancelledAt: payment.cancelledAt,
+    clientRequestId: payment.clientRequestId,
     completedAt: payment.completedAt,
     createdAt: payment.createdAt,
     createdBy: payment.createdBy ? serializeAdminUser(payment.createdBy) : null,
@@ -1668,10 +2576,334 @@ function serializeAdminPaymentIntent(payment: {
     provider: payment.provider,
     providerRef: payment.providerRef,
     purpose: payment.purpose,
+    reconciliationSummary: reconciliationSummary ?? {
+      issueCount: 0,
+      netLedgerAmount: 0,
+      netReceiptAmount: 0,
+      severity: "none",
+      status: "balanced"
+    },
     receiptCount: payment._count.receipts,
+    staleAgeMinutes: state.staleAgeMinutes,
+    staleReason: state.staleReason,
     status: payment.status,
+    statusGroup: state.statusGroup,
     updatedAt: payment.updatedAt,
     walletId: payment.walletId
+  };
+}
+
+function serializeAdminPaymentIntentDetail(
+  payment: Parameters<typeof serializeAdminPaymentIntent>[0],
+  receipts: Array<{
+    amount: Prisma.Decimal;
+    createdAt: Date;
+    currency: string;
+    description: string | null;
+    id: string;
+    issuedAt: Date;
+    ledgerEntryId: string | null;
+    paymentIntentId: string | null;
+    provider: string;
+    providerRef: string | null;
+    receiptNumber: string;
+    type: WalletReceiptType;
+    organization?: { id: string; name: string; slug: string } | null;
+    user?: Parameters<typeof serializeAdminUser>[0] | null;
+  }>,
+  ledgerEntries: Array<{
+    amount: Prisma.Decimal;
+    createdAt: Date;
+    currency: string;
+    description: string | null;
+    id: string;
+    metadata: Prisma.JsonValue | null;
+    referenceId: string | null;
+    type: LedgerEntryType;
+    walletId: string;
+    wallet: {
+      organization?: { id: string; name: string; slug: string } | null;
+      user?: Parameters<typeof serializeAdminUser>[0] | null;
+    };
+  }>,
+  auditTrail: Array<{
+    action: string;
+    createdAt: Date;
+    entityId: string | null;
+    entityType: string | null;
+    id: string;
+    metadata: Prisma.JsonValue | null;
+    user?: Parameters<typeof serializeAdminUser>[0] | null;
+  }>,
+  webhookEvents: Array<{
+    action: string | null;
+    duplicateCount: number;
+    eventId: string;
+    eventType: string | null;
+    id: string;
+    lastDuplicateAt: Date | null;
+    metadata: Prisma.JsonValue | null;
+    provider: string;
+    receivedAt: Date;
+    updatedAt: Date;
+  }>
+) {
+  const reconciliation = buildAdminPaymentReconciliation(payment, receipts, ledgerEntries);
+
+  return {
+    ...serializeAdminPaymentIntent(payment),
+    auditTrail: auditTrail.map((entry) => ({
+      action: entry.action,
+      actor: entry.user ? serializeAdminUser(entry.user) : null,
+      createdAt: entry.createdAt,
+      description: getAuditTrailDescription(entry),
+      entityId: entry.entityId,
+      entityType: entry.entityType,
+      id: entry.id,
+      metadata: entry.metadata
+    })),
+    ledgerEntries: ledgerEntries.map((entry) => ({
+      amount: Number(entry.amount.toString()),
+      createdAt: entry.createdAt,
+      currency: entry.currency,
+      description: entry.description,
+      id: entry.id,
+      organization: entry.wallet.organization ?? null,
+      referenceId: entry.referenceId,
+      type: entry.type,
+      user: entry.wallet.user ? serializeAdminUser(entry.wallet.user) : null,
+      walletId: entry.walletId
+    })),
+    receipts: receipts.map((receipt) => ({
+      amount: Number(receipt.amount.toString()),
+      createdAt: receipt.createdAt,
+      currency: receipt.currency,
+      description: receipt.description,
+      id: receipt.id,
+      issuedAt: receipt.issuedAt,
+      ledgerEntryId: receipt.ledgerEntryId,
+      organization: receipt.organization ?? null,
+      paymentIntentId: receipt.paymentIntentId,
+      provider: receipt.provider,
+      providerRef: receipt.providerRef,
+      receiptNumber: receipt.receiptNumber,
+      type: receipt.type,
+      user: receipt.user ? serializeAdminUser(receipt.user) : null
+    })),
+    reconciliation,
+    refundReadiness: getPaymentRefundReadiness(payment, reconciliation, ledgerEntries),
+    webhookEvents: webhookEvents.map((event) => ({
+      action: event.action,
+      duplicateCount: event.duplicateCount,
+      eventId: event.eventId,
+      eventType: event.eventType,
+      id: event.id,
+      lastDuplicateAt: event.lastDuplicateAt,
+      metadata: event.metadata,
+      provider: event.provider,
+      receivedAt: event.receivedAt,
+      updatedAt: event.updatedAt
+    }))
+  };
+}
+
+export function buildAdminPaymentReconciliation(
+  payment: Pick<Parameters<typeof serializeAdminPaymentIntent>[0], "amount" | "currency" | "status">,
+  receipts: Array<{
+    amount: Prisma.Decimal | number | string;
+    currency: string;
+    type: WalletReceiptType;
+  }>,
+  ledgerEntries: Array<{
+    amount: Prisma.Decimal | number | string;
+    currency: string;
+    type: LedgerEntryType;
+  }>
+) {
+  const paymentAmount = roundMoney(decimalToNumber(payment.amount));
+  const topUpLedgerAmount = sumMoney(ledgerEntries.filter((entry) => entry.type === LedgerEntryType.CREDIT));
+  const refundLedgerAmount = sumMoney(ledgerEntries.filter((entry) => entry.type === LedgerEntryType.REFUND));
+  const topUpReceiptAmount = sumMoney(receipts.filter((receipt) => receipt.type === WalletReceiptType.TOP_UP));
+  const refundReceiptAmount = sumMoney(receipts.filter((receipt) => receipt.type === WalletReceiptType.REFUND));
+  const netLedgerAmount = roundMoney(topUpLedgerAmount - refundLedgerAmount);
+  const netReceiptAmount = roundMoney(topUpReceiptAmount - refundReceiptAmount);
+  const issues: Array<{ code: string; message: string; severity: "blocked" | "warning" }> = [];
+  const currencies = new Set([
+    payment.currency,
+    ...ledgerEntries.map((entry) => entry.currency),
+    ...receipts.map((receipt) => receipt.currency)
+  ]);
+
+  if (currencies.size > 1) {
+    issues.push({
+      code: "currency_mismatch",
+      message: "Payment, ledger, and receipt rows do not all use the same currency.",
+      severity: "blocked"
+    });
+  }
+
+  if (payment.status === PaymentIntentStatus.SUCCEEDED) {
+    if (!moneyMatches(topUpLedgerAmount, paymentAmount)) {
+      issues.push({
+        code: "credit_ledger_mismatch",
+        message: "Settled payment amount does not match the wallet credit ledger total.",
+        severity: "blocked"
+      });
+    }
+
+    if (!moneyMatches(topUpReceiptAmount, paymentAmount)) {
+      issues.push({
+        code: "top_up_receipt_mismatch",
+        message: "Settled payment amount does not match issued top-up receipts.",
+        severity: "warning"
+      });
+    }
+  } else if (topUpLedgerAmount > 0 || topUpReceiptAmount > 0) {
+    issues.push({
+      code: "unsettled_local_credit",
+      message: "This payment is not settled but local wallet credit or receipts exist.",
+      severity: "blocked"
+    });
+  }
+
+  if (refundLedgerAmount > paymentAmount) {
+    issues.push({
+      code: "refund_over_payment",
+      message: "Recorded refunds exceed the original payment amount.",
+      severity: "blocked"
+    });
+  }
+
+  if (!moneyMatches(refundLedgerAmount, refundReceiptAmount)) {
+    issues.push({
+      code: "refund_receipt_mismatch",
+      message: "Refund ledger entries and refund receipts do not match.",
+      severity: "warning"
+    });
+  }
+
+  return {
+    expectedTopUpAmount: payment.status === PaymentIntentStatus.SUCCEEDED ? paymentAmount : 0,
+    issueCount: issues.length,
+    issues,
+    netLedgerAmount,
+    netReceiptAmount,
+    paymentAmount,
+    refundLedgerAmount,
+    refundReceiptAmount,
+    status: issues.length > 0 ? "warning" : "balanced",
+    topUpLedgerAmount,
+    topUpReceiptAmount
+  };
+}
+
+function sumMoney(items: Array<{ amount: Prisma.Decimal | number | string }>) {
+  return roundMoney(items.reduce((total, item) => total + decimalToNumber(item.amount), 0));
+}
+
+function moneyMatches(left: number, right: number) {
+  return Math.abs(roundMoney(left) - roundMoney(right)) <= 0.01;
+}
+
+function summarizeReceiptTotals(
+  receipts: Array<{
+    amount: Prisma.Decimal;
+    currency: string;
+    type: WalletReceiptType;
+  }>
+) {
+  const byCurrency = new Map<string, { count: number; currency: string; refundAmount: number; topUpAmount: number; totalAmount: number }>();
+
+  for (const receipt of receipts) {
+    const amount = decimalToNumber(receipt.amount);
+    const current = byCurrency.get(receipt.currency) ?? {
+      count: 0,
+      currency: receipt.currency,
+      refundAmount: 0,
+      topUpAmount: 0,
+      totalAmount: 0
+    };
+
+    current.count += 1;
+    current.totalAmount += amount;
+
+    if (receipt.type === WalletReceiptType.REFUND) {
+      current.refundAmount += amount;
+    } else if (receipt.type === WalletReceiptType.TOP_UP) {
+      current.topUpAmount += amount;
+    }
+
+    byCurrency.set(receipt.currency, current);
+  }
+
+  return {
+    byCurrency: [...byCurrency.values()].map((total) => ({
+      ...total,
+      refundAmount: roundMoney(total.refundAmount),
+      topUpAmount: roundMoney(total.topUpAmount),
+      totalAmount: roundMoney(total.totalAmount)
+    })),
+    count: receipts.length
+  };
+}
+
+function getPaymentRefundReadiness(
+  payment: Pick<Parameters<typeof serializeAdminPaymentIntent>[0], "amount" | "providerRef" | "status">,
+  reconciliation: ReturnType<typeof buildAdminPaymentReconciliation>,
+  ledgerEntries: Array<{
+    amount: Prisma.Decimal;
+    type: LedgerEntryType;
+  }>
+) {
+  const refundedAmount = roundMoney(
+    ledgerEntries
+      .filter((entry) => entry.type === LedgerEntryType.REFUND)
+      .reduce((total, entry) => total + decimalToNumber(entry.amount), 0)
+  );
+  const originalAmount = decimalToNumber(payment.amount);
+  const refundableAmount = roundMoney(Math.max(0, originalAmount - refundedAmount));
+
+  if (payment.status !== PaymentIntentStatus.SUCCEEDED) {
+    return {
+      refundableAmount,
+      refundedAmount,
+      reason: "Only settled top-ups can be refunded or reversed safely.",
+      status: "not_refundable"
+    };
+  }
+
+  if (refundableAmount <= 0) {
+    return {
+      refundableAmount,
+      refundedAmount,
+      reason: "The full top-up amount has already been marked as refunded.",
+      status: "fully_refunded"
+    };
+  }
+
+  if (!payment.providerRef) {
+    return {
+      refundableAmount,
+      refundedAmount,
+      reason: "The provider reference is missing, so an external refund cannot be matched yet.",
+      status: "needs_provider_reference"
+    };
+  }
+
+  if (reconciliation.status === "warning") {
+    return {
+      refundableAmount,
+      refundedAmount,
+      reason: "The top-up has payment, ledger, or receipt mismatches that should be reviewed first.",
+      status: "needs_reconciliation"
+    };
+  }
+
+  return {
+    refundableAmount,
+    refundedAmount,
+    reason: "Provider reference, receipt, and wallet ledger entry are present.",
+    status: "ready"
   };
 }
 
@@ -1799,26 +3031,55 @@ async function updateAdminFundingSourceStatus(
   });
 }
 
-function buildWebhookHealth(
-  logs: Array<{
-    action: string;
-    createdAt: Date;
+export function buildWebhookHealth(
+  events: Array<{
+    action: string | null;
+    duplicateCount: number;
+    eventId: string;
+    eventType: string | null;
     id: string;
+    lastDuplicateAt: Date | null;
     metadata: Prisma.JsonValue | null;
+    provider: string;
+    receivedAt: Date;
+    updatedAt: Date;
   }>,
-  counts24h: Record<"paypal" | "stripe", number>
+  counts24h: Record<"paypal" | "stripe", number>,
+  now = new Date()
 ) {
   return (["paypal", "stripe"] as const).map((provider) => {
-    const action = provider === "paypal" ? "wallet.paypal_webhook.received" : "wallet.stripe_webhook.received";
-    const latest = logs.find((entry) => entry.action === action) ?? null;
+    const providerEvents = events.filter((entry) => entry.provider === provider);
+    const latest = providerEvents[0] ?? null;
+    const duplicateCount = providerEvents.reduce((total, event) => total + event.duplicateCount, 0);
+    const lastEventAgeMinutes = latest ? Math.max(0, Math.floor((now.getTime() - latest.receivedAt.getTime()) / 60_000)) : null;
+    const status = duplicateCount > 0 ? "retrying" : latest ? "receiving" : "quiet";
 
     return {
       count24h: counts24h[provider],
-      lastEventId: latest ? getJsonText(latest.metadata, "eventId") : null,
-      lastEventType: latest ? getJsonText(latest.metadata, "eventType") : null,
-      lastReceivedAt: latest?.createdAt ?? null,
+      duplicateCount,
+      lastEventAgeMinutes,
+      lastDuplicateAt: latest?.lastDuplicateAt ?? null,
+      lastEventId: latest?.eventId ?? null,
+      lastEventType: latest?.eventType ?? null,
+      lastReceivedAt: latest?.receivedAt ?? null,
       lastTransmissionId: latest ? getJsonText(latest.metadata, "transmissionId") : null,
-      provider
+      provider,
+      status,
+      statusLabel: status === "retrying" ? "Retries seen" : status === "receiving" ? "Receiving" : "No events",
+      recentEvents: providerEvents.slice(0, 6).map((event) => ({
+        action: event.action,
+        duplicateCount: event.duplicateCount,
+        eventId: event.eventId,
+        eventType: event.eventType,
+        id: event.id,
+        idempotencyKey: getJsonText(event.metadata, "idempotencyKey"),
+        lastDuplicateAt: event.lastDuplicateAt,
+        paymentIntentId: getJsonText(event.metadata, "paymentIntentId"),
+        providerRef: getJsonText(event.metadata, "providerRef"),
+        receivedAt: event.receivedAt,
+        transmissionId: getJsonText(event.metadata, "transmissionId"),
+        updatedAt: event.updatedAt
+      }))
     };
   });
 }
@@ -1872,6 +3133,83 @@ export interface PayoutReviewDetails {
   adminNotes?: string;
   provider?: string;
   providerRef?: string;
+}
+
+class PaymentRefundError extends Error {
+  constructor(message: string, readonly statusCode: number) {
+    super(message);
+  }
+}
+
+export interface PaymentRefundDetails {
+  adminNotes?: string;
+  amountCents?: number;
+  providerRef: string;
+}
+
+export function getPaymentRefundPlan(input: {
+  alreadyRefundedCents: number;
+  originalAmount: Prisma.Decimal | number | string;
+  requestedAmountCents?: number;
+  walletBalance: Prisma.Decimal | number | string;
+}): {
+  ok: true;
+  alreadyRefundedCents: number;
+  originalCents: number;
+  refundCents: number;
+  remainingCents: number;
+} | { ok: false; error: string } {
+  const originalCents = moneyToCents(input.originalAmount);
+  const alreadyRefundedCents = input.alreadyRefundedCents;
+  const remainingCents = Math.max(0, originalCents - alreadyRefundedCents);
+  const refundCents = input.requestedAmountCents ?? remainingCents;
+  const walletCents = moneyToCents(input.walletBalance);
+
+  if (remainingCents <= 0) {
+    return { ok: false, error: "This payment intent is already fully refunded." };
+  }
+
+  if (refundCents > remainingCents) {
+    return { ok: false, error: "Refund amount cannot exceed the remaining refundable balance." };
+  }
+
+  if (refundCents > walletCents) {
+    return { ok: false, error: "The creator wallet does not have enough available balance for this refund." };
+  }
+
+  return {
+    ok: true,
+    alreadyRefundedCents,
+    originalCents,
+    refundCents,
+    remainingCents
+  };
+}
+
+export function parsePaymentRefundBody(body: unknown): { ok: true; value: PaymentRefundDetails } | { ok: false; error: string } {
+  const value = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const adminNotes = normalizeLimitedText(value.adminNotes, 1_000);
+  const providerRef = normalizeLimitedText(value.providerRef, 160);
+  const amountCents = value.amount === undefined || value.amount === null || value.amount === ""
+    ? undefined
+    : normalizeMoneyCents(value.amount);
+
+  if (!providerRef) {
+    return { ok: false, error: "Refund reference is required before recording a refund." };
+  }
+
+  if (amountCents === null) {
+    return { ok: false, error: "Refund amount must be greater than 0 and no more than 100,000." };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...(adminNotes ? { adminNotes } : {}),
+      ...(amountCents ? { amountCents } : {}),
+      providerRef
+    }
+  };
 }
 
 export function parsePayoutReviewBody(
@@ -1936,6 +3274,45 @@ function mergePayoutMetadata(current: Prisma.JsonValue | null, next: Record<stri
     ...base,
     ...next
   } as Prisma.InputJsonObject;
+}
+
+function mergeJsonObject(current: Prisma.JsonValue | null, next: Record<string, unknown>) {
+  const base = isPlainJsonObject(current) ? current : {};
+
+  return {
+    ...base,
+    ...next
+  } as Prisma.InputJsonObject;
+}
+
+export function getAdminPaymentIntentState(
+  payment: {
+    cancelledAt: Date | null;
+    completedAt: Date | null;
+    createdAt: Date;
+    status: PaymentIntentStatus;
+    updatedAt: Date;
+  },
+  now = new Date()
+) {
+  const isOpen = payment.status === PaymentIntentStatus.CREATED || payment.status === PaymentIntentStatus.PROCESSING;
+  const ageMinutes = Math.max(0, Math.floor((now.getTime() - payment.updatedAt.getTime()) / 60_000));
+  const staleAgeMinutes = STALE_PAYMENT_INTENT_HOURS * 60;
+  const isStale = isOpen && ageMinutes >= staleAgeMinutes;
+
+  return {
+    canCancel: isOpen,
+    isOpen,
+    staleAgeMinutes: isStale ? ageMinutes : 0,
+    staleReason: isStale ? `Open for ${Math.floor(ageMinutes / 60)}h ${ageMinutes % 60}m without completion.` : null,
+    statusGroup: payment.status === PaymentIntentStatus.SUCCEEDED
+      ? "settled"
+      : payment.status === PaymentIntentStatus.CANCELLED || payment.status === PaymentIntentStatus.FAILED
+        ? "closed"
+        : isStale
+          ? "stale"
+          : "open"
+  };
 }
 
 function getPayoutTaskCreditEventIds(metadata: Prisma.JsonValue | null) {

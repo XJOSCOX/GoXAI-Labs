@@ -1,9 +1,14 @@
-import { Ban, Bot, CheckCircle2, CircleDollarSign, CreditCard, Download, Eye, Loader2, Radio, ShieldCheck, X, XCircle } from "lucide-react";
+import { Ban, Bot, CheckCircle2, CircleDollarSign, Clock3, CreditCard, Download, Eye, Loader2, Radio, ShieldCheck, X, XCircle } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
+  cancelAdminPaymentIntent,
+  downloadAdminPaymentReceipts,
+  getAdminPaymentIntentDetail,
   getAdminPayoutDetail,
   getAdminOverview,
   downloadAdminPayoutReceipt,
+  recordAdminPaymentRefund,
   reviewAdminPayout,
   reviewAdminApplication,
   updateAdminEconomics,
@@ -11,6 +16,7 @@ import {
   updateAdminFeatures,
   type AdminApplicationSummary,
   type AdminOverview,
+  type AdminPaymentIntentDetail,
   type AdminPaymentIntentSummary,
   type AdminPayoutDetail,
   type AdminPayoutSummary,
@@ -25,6 +31,11 @@ type PayoutReviewInput = {
   adminNotes?: string;
   provider?: string;
   providerRef?: string;
+};
+type PaymentRefundInput = {
+  adminNotes?: string;
+  amount?: number;
+  providerRef: string;
 };
 type PayoutStatusFilter = "all" | "requested" | "processing" | "paid" | "failed" | "cancelled";
 type AdminTab = "platform" | "payments" | "revenue" | "requests" | "users";
@@ -53,9 +64,14 @@ export function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [featureSaving, setFeatureSaving] = useState<string | null>(null);
+  const [selectedPaymentIntent, setSelectedPaymentIntent] = useState<AdminPaymentIntentDetail | null>(null);
+  const [paymentDetailLoadingId, setPaymentDetailLoadingId] = useState<string | null>(null);
   const [selectedPayout, setSelectedPayout] = useState<AdminPayoutDetail | null>(null);
   const [payoutDetailLoadingId, setPayoutDetailLoadingId] = useState<string | null>(null);
   const [downloadingPayoutId, setDownloadingPayoutId] = useState<string | null>(null);
+  const [paymentActionId, setPaymentActionId] = useState<string | null>(null);
+  const [paymentRefundingId, setPaymentRefundingId] = useState<string | null>(null);
+  const [paymentReceiptDownloadId, setPaymentReceiptDownloadId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("platform");
 
   async function reload() {
@@ -247,6 +263,93 @@ export function AdminPage() {
     }
   }
 
+  async function handleCancelPaymentIntent(payment: AdminPaymentIntentSummary) {
+    if (!session) {
+      return;
+    }
+
+    setPaymentActionId(payment.id);
+    setMessage(null);
+    setError(null);
+
+    try {
+      await cancelAdminPaymentIntent(session, payment.id, {
+        adminNotes: payment.staleReason ?? "Cancelled from admin payment operations."
+      });
+      setMessage("Payment intent cancelled.");
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to cancel payment intent.");
+    } finally {
+      setPaymentActionId(null);
+    }
+  }
+
+  async function handleOpenPaymentIntentDetail(payment: AdminPaymentIntentSummary) {
+    if (!session) {
+      return;
+    }
+
+    setError(null);
+    setPaymentDetailLoadingId(payment.id);
+
+    try {
+      setSelectedPaymentIntent(await getAdminPaymentIntentDetail(session, payment.id));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load payment detail.");
+    } finally {
+      setPaymentDetailLoadingId(null);
+    }
+  }
+
+  async function handleRecordPaymentRefund(payment: AdminPaymentIntentDetail, input: PaymentRefundInput) {
+    if (!session) {
+      return;
+    }
+
+    setPaymentRefundingId(payment.id);
+    setMessage(null);
+    setError(null);
+
+    try {
+      await recordAdminPaymentRefund(session, payment.id, input);
+      setSelectedPaymentIntent(await getAdminPaymentIntentDetail(session, payment.id));
+      setMessage("Payment refund recorded.");
+      await reload();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to record payment refund.");
+    } finally {
+      setPaymentRefundingId(null);
+    }
+  }
+
+  async function handleDownloadPaymentReceipts(payment: AdminPaymentIntentDetail) {
+    if (!session) {
+      return;
+    }
+
+    setPaymentReceiptDownloadId(payment.id);
+    setMessage(null);
+    setError(null);
+
+    try {
+      const result = await downloadAdminPaymentReceipts(session, payment.id);
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setMessage("Payment receipts downloaded.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to download payment receipts.");
+    } finally {
+      setPaymentReceiptDownloadId(null);
+    }
+  }
+
   async function handleDownloadPayoutReceipt(payout: AdminPayoutSummary) {
     setError(null);
     setMessage(null);
@@ -320,6 +423,11 @@ export function AdminPage() {
 
                 {activeTab === "payments" ? (
                   <PaymentOperationsPanel
+                    auditTrail={overview.payments.auditTrail}
+                    cancellingPaymentId={paymentActionId}
+                    detailLoadingPaymentId={paymentDetailLoadingId}
+                    onCancelPaymentIntent={(payment) => void handleCancelPaymentIntent(payment)}
+                    onOpenPaymentDetail={(payment) => void handleOpenPaymentIntentDetail(payment)}
                     paymentIntents={overview.payments.paymentIntents}
                     webhookHealth={overview.payments.webhookHealth}
                   />
@@ -358,6 +466,16 @@ export function AdminPage() {
               onClose={() => setSelectedPayout(null)}
               onDownloadReceipt={handleDownloadPayoutReceipt}
               payout={selectedPayout}
+            />
+          ) : null}
+          {selectedPaymentIntent ? (
+            <PaymentIntentDetailModal
+              downloadingReceipts={paymentReceiptDownloadId === selectedPaymentIntent.id}
+              onClose={() => setSelectedPaymentIntent(null)}
+              onDownloadReceipts={handleDownloadPaymentReceipts}
+              onRecordRefund={handleRecordPaymentRefund}
+              payment={selectedPaymentIntent}
+              refunding={paymentRefundingId === selectedPaymentIntent.id}
             />
           ) : null}
         </>
@@ -715,10 +833,51 @@ function formatPaymentProviderName(provider: "paypal" | "plaid" | "stripe") {
   return provider === "paypal" ? "PayPal" : provider === "plaid" ? "Plaid" : "Stripe";
 }
 
+function formatWebhookEventCount(count: number) {
+  return `${count} event${count === 1 ? "" : "s"}`;
+}
+
+function formatWebhookAge(minutes: number) {
+  if (minutes < 1) {
+    return "just now";
+  }
+
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+}
+
+function getWebhookStatusClass(status: AdminOverview["payments"]["webhookHealth"][number]["status"]) {
+  if (status === "receiving") {
+    return "status-pill compact ready";
+  }
+
+  if (status === "retrying") {
+    return "status-pill compact warning";
+  }
+
+  return "status-pill compact";
+}
+
 function PaymentOperationsPanel({
+  auditTrail,
+  cancellingPaymentId,
+  detailLoadingPaymentId,
+  onCancelPaymentIntent,
+  onOpenPaymentDetail,
   paymentIntents,
   webhookHealth
 }: {
+  auditTrail: AdminOverview["payments"]["auditTrail"];
+  cancellingPaymentId: string | null;
+  detailLoadingPaymentId: string | null;
+  onCancelPaymentIntent: (payment: AdminPaymentIntentSummary) => void;
+  onOpenPaymentDetail: (payment: AdminPaymentIntentSummary) => void;
   paymentIntents: AdminPaymentIntentSummary[];
   webhookHealth: AdminOverview["payments"]["webhookHealth"];
 }) {
@@ -757,15 +916,49 @@ function PaymentOperationsPanel({
                   </span>
                   <span>
                     <strong>{formatPaymentProviderName(webhook.provider)}</strong>
-                    <small>{webhook.count24h} event{webhook.count24h === 1 ? "" : "s"} in the last 24h</small>
+                    <small>{formatWebhookEventCount(webhook.count24h)} received in 24h</small>
                   </span>
-                  <span className={webhook.lastReceivedAt ? "status-pill compact ready" : "status-pill compact warning"}>
-                    {webhook.lastReceivedAt ? "Receiving" : "No events"}
+                  <span className={getWebhookStatusClass(webhook.status)}>
+                    {webhook.statusLabel}
                   </span>
                 </summary>
-                <p className="muted-copy">
-                  {webhook.lastReceivedAt ? `${webhook.lastEventType ?? "Webhook event"} received ${formatDate(webhook.lastReceivedAt)}` : "Waiting for the first webhook event."}
-                </p>
+                <div className="admin-webhook-detail">
+                  <p className="muted-copy">
+                    {webhook.lastReceivedAt
+                      ? `${webhook.lastEventType ?? "Webhook event"} received ${formatDate(webhook.lastReceivedAt)}${webhook.lastEventAgeMinutes !== null ? ` (${formatWebhookAge(webhook.lastEventAgeMinutes)} ago)` : ""}`
+                      : "Waiting for the first webhook event."}
+                  </p>
+                  <div className="admin-webhook-metrics">
+                    <span>
+                      <small>Retries</small>
+                      <strong>{webhook.duplicateCount}</strong>
+                    </span>
+                    <span>
+                      <small>Last duplicate</small>
+                      <strong>{webhook.lastDuplicateAt ? formatDate(webhook.lastDuplicateAt) : "None"}</strong>
+                    </span>
+                  </div>
+                  {webhook.recentEvents.length > 0 ? (
+                    <div className="admin-webhook-events">
+                      {webhook.recentEvents.map((event) => (
+                        <article key={event.id}>
+                          <span>
+                            <strong>{event.eventType ?? "Webhook event"}</strong>
+                            <small>{event.idempotencyKey ?? event.eventId}</small>
+                            {event.paymentIntentId || event.providerRef ? (
+                              <small>{[event.paymentIntentId ? `Payment ${shortId(event.paymentIntentId)}` : null, event.providerRef ? `Provider ${shortId(event.providerRef)}` : null].filter(Boolean).join(" - ")}</small>
+                            ) : null}
+                          </span>
+                          <span>
+                            <strong>{formatDate(event.receivedAt)}</strong>
+                            <small>{event.duplicateCount} duplicate{event.duplicateCount === 1 ? "" : "s"}</small>
+                            {event.transmissionId ? <small>Transmission {shortId(event.transmissionId)}</small> : null}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </details>
             ))}
           </div>
@@ -778,7 +971,16 @@ function PaymentOperationsPanel({
           </div>
           <div className="admin-payment-list">
             {paymentIntents.length > 0 ? (
-              visibleTopUps.map((payment) => <AdminPaymentRow key={payment.id} payment={payment} />)
+              visibleTopUps.map((payment) => (
+                <AdminPaymentRow
+                  cancelling={cancellingPaymentId === payment.id}
+                  detailLoading={detailLoadingPaymentId === payment.id}
+                  key={payment.id}
+                  onCancel={() => onCancelPaymentIntent(payment)}
+                  onOpenDetail={() => onOpenPaymentDetail(payment)}
+                  payment={payment}
+                />
+              ))
             ) : (
               <p className="muted-copy">No payment intents yet.</p>
             )}
@@ -811,26 +1013,94 @@ function PaymentOperationsPanel({
           ) : null}
         </section>
       </div>
+
+      <AdminPaymentAuditTrail auditTrail={auditTrail} />
     </section>
   );
 }
 
-function AdminPaymentRow({ payment }: { payment: AdminPaymentIntentSummary }) {
+function AdminPaymentRow({
+  cancelling,
+  detailLoading,
+  onCancel,
+  onOpenDetail,
+  payment
+}: {
+  cancelling: boolean;
+  detailLoading: boolean;
+  onCancel: () => void;
+  onOpenDetail: () => void;
+  payment: AdminPaymentIntentSummary;
+}) {
+  const hasReconciliationWarning = payment.reconciliationSummary.status === "warning";
+
   return (
-    <article className="admin-payment-row">
+    <article className={`admin-payment-row ${payment.statusGroup === "stale" || hasReconciliationWarning ? "needs-review" : ""}`}>
       <span>
         <strong>{formatMoney(payment.amount, payment.currency)}</strong>
         <small>{formatPaymentProviderLabel(payment.provider)} - {payment.organization?.name ?? "No organization"}</small>
       </span>
       <span>
-        <strong>{formatEnum(payment.status)}</strong>
+        <strong>{payment.statusGroup === "stale" ? "Needs review" : formatEnum(payment.status)}</strong>
         <small>{payment.receiptCount} receipts - {formatDate(payment.createdAt)}</small>
+        {payment.staleReason ? <small>{payment.staleReason}</small> : null}
       </span>
       <span>
         <strong>{payment.createdBy?.name ?? "System"}</strong>
         <small>{payment.providerRef ?? payment.id}</small>
+        <small className={`admin-reconciliation-chip ${hasReconciliationWarning ? payment.reconciliationSummary.severity : "balanced"}`}>
+          {hasReconciliationWarning ? `${payment.reconciliationSummary.issueCount} reconciliation issue${payment.reconciliationSummary.issueCount === 1 ? "" : "s"}` : "Balanced"}
+        </small>
+      </span>
+      <span className="admin-payment-actions">
+        <button className="ghost-button compact-button" disabled={detailLoading} onClick={onOpenDetail} type="button">
+          {detailLoading ? <Loader2 className="spin" size={14} /> : <Eye size={14} />}
+          Details
+        </button>
+        {payment.canCancel ? (
+          <button className="ghost-button danger-button compact-button" disabled={cancelling} onClick={onCancel} type="button">
+            {cancelling ? <Loader2 className="spin" size={14} /> : <X size={14} />}
+            Cancel
+          </button>
+        ) : (
+          <small>{payment.statusGroup === "settled" ? "Settled" : "Closed"}</small>
+        )}
       </span>
     </article>
+  );
+}
+
+function AdminPaymentAuditTrail({ auditTrail }: { auditTrail: AdminOverview["payments"]["auditTrail"] }) {
+  return (
+    <section className="admin-payment-module admin-audit-trail-panel">
+      <div className="section-heading-inline">
+        <h3>Operations timeline</h3>
+        <span>{auditTrail.length}</span>
+      </div>
+      <div className="admin-audit-trail-list">
+        {auditTrail.length > 0 ? (
+          auditTrail.slice(0, 18).map((item) => (
+            <article className="admin-audit-trail-row" key={item.id}>
+              <span className="feature-icon">
+                <Clock3 size={18} />
+              </span>
+              <span className="admin-audit-trail-main">
+                <strong>{formatAdminAuditTitle(item.title)}</strong>
+                <small>{item.description}</small>
+                <small>{[item.organization, item.actor, item.provider ? formatPaymentProviderLabel(item.provider) : null].filter(Boolean).join(" - ") || "Platform event"}</small>
+              </span>
+              <span className="admin-audit-trail-meta">
+                <strong>{item.amount !== null && item.currency ? formatMoney(item.amount, item.currency) : formatEnum(item.status)}</strong>
+                <small>{formatDate(item.createdAt)}</small>
+                <small>{item.reference}</small>
+              </span>
+            </article>
+          ))
+        ) : (
+          <p className="muted-copy">No payment audit events yet.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -897,12 +1167,16 @@ function PlatformRevenuePanel({ revenue }: { revenue: AdminOverview["payments"][
                   <small>{fee.creator?.name ?? "Unknown creator"}</small>
                 </span>
                 <span>
-                  <strong>{fee.dataset?.name ?? "No dataset"}</strong>
+                  {fee.dataset ? <Link to={`/datasets/${fee.dataset.id}`}>{fee.dataset.name}</Link> : <strong>No dataset</strong>}
                   <small>{fee.project?.name ?? "No project"}</small>
                 </span>
                 <span>
                   <strong>{formatDate(fee.createdAt)}</strong>
-                  <small>{fee.taskId ?? fee.referenceId ?? fee.id}</small>
+                  <small>{fee.reviewId ? `Review ${shortId(fee.reviewId)}` : "No review reference"}</small>
+                </span>
+                <span>
+                  {fee.taskId ? <Link to={`/tasks/${fee.taskId}`}>Task {shortId(fee.taskId)}</Link> : <strong>{shortId(fee.referenceId ?? fee.id)}</strong>}
+                  <small>{fee.description ?? "Platform fee ledger entry"}</small>
                 </span>
               </article>
             ))
@@ -963,6 +1237,10 @@ function RevenueAmountStack({
 
 function formatPaymentProviderLabel(provider: string) {
   return provider.toLowerCase() === "paypal" ? "PayPal" : provider.charAt(0).toUpperCase() + provider.slice(1);
+}
+
+function formatAdminAuditTitle(value: string) {
+  return value.includes(".") ? formatEnum(value.split(".").pop() ?? value) : formatEnum(value);
 }
 
 function PayoutPanel({
@@ -1223,6 +1501,336 @@ function ActivePayoutRow({
   );
 }
 
+function PaymentIntentDetailModal({
+  downloadingReceipts,
+  onClose,
+  onDownloadReceipts,
+  onRecordRefund,
+  payment,
+  refunding
+}: {
+  downloadingReceipts: boolean;
+  onClose: () => void;
+  onDownloadReceipts: (payment: AdminPaymentIntentDetail) => Promise<void>;
+  onRecordRefund: (payment: AdminPaymentIntentDetail, input: PaymentRefundInput) => Promise<void>;
+  payment: AdminPaymentIntentDetail;
+  refunding: boolean;
+}) {
+  const [refundAmount, setRefundAmount] = useState(() => formatMoneyDraft(payment.refundReadiness.refundableAmount));
+  const [refundProviderRef, setRefundProviderRef] = useState("");
+  const [refundNotes, setRefundNotes] = useState("");
+  const canRecordRefund = payment.refundReadiness.status === "ready" && payment.refundReadiness.refundableAmount > 0;
+
+  useEffect(() => {
+    setRefundAmount(formatMoneyDraft(payment.refundReadiness.refundableAmount));
+    setRefundProviderRef("");
+    setRefundNotes("");
+  }, [payment.id, payment.refundReadiness.refundableAmount]);
+
+  function handleRefundSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const amount = Number(refundAmount);
+
+    if (!canRecordRefund || !Number.isFinite(amount) || amount <= 0 || !refundProviderRef.trim()) {
+      return;
+    }
+
+    void onRecordRefund(payment, {
+      amount,
+      ...(refundNotes.trim() ? { adminNotes: refundNotes.trim() } : {}),
+      providerRef: refundProviderRef.trim()
+    });
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel payment-detail-modal" role="dialog" aria-modal="true" aria-label="Payment detail">
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Payment detail</p>
+            <h2>{formatMoney(payment.amount, payment.currency)}</h2>
+            <p className="muted-copy">
+              {formatPaymentProviderLabel(payment.provider)} - {formatEnum(payment.status)} - {payment.organization?.name ?? "No organization"}
+            </p>
+          </div>
+          <div className="modal-head-actions">
+            {payment.receipts.length > 0 ? (
+              <button
+                className="secondary-button compact-button"
+                disabled={downloadingReceipts}
+                onClick={() => void onDownloadReceipts(payment)}
+                type="button"
+              >
+                <Download size={16} />
+                {downloadingReceipts ? "Downloading" : "Receipts"}
+              </button>
+            ) : null}
+            <button className="icon-button" type="button" onClick={onClose} aria-label="Close payment detail">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        <dl className="payout-detail-grid payment-detail-grid">
+          <div className="highlight">
+            <dt>Amount</dt>
+            <dd>{formatMoney(payment.amount, payment.currency)}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd><span className={`payout-status-pill ${getPaymentStatusClass(payment.statusGroup)}`}>{formatEnum(payment.status)}</span></dd>
+          </div>
+          <div>
+            <dt>Refund readiness</dt>
+            <dd>
+              <span className={`refund-readiness-pill ${getRefundReadinessClass(payment.refundReadiness.status)}`}>
+                {formatRefundReadiness(payment.refundReadiness.status)}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Reconciliation</dt>
+            <dd>
+              <span className={`refund-readiness-pill ${payment.reconciliation.status === "balanced" ? "ready" : "warning"}`}>
+                {payment.reconciliation.status === "balanced" ? "Balanced" : "Needs review"}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>Provider</dt>
+            <dd>{formatPaymentProviderLabel(payment.provider)}</dd>
+          </div>
+          <div>
+            <dt>Provider reference</dt>
+            <dd>{payment.providerRef ?? "Not set"}</dd>
+          </div>
+          <div>
+            <dt>Client request</dt>
+            <dd>{payment.clientRequestId ?? "No idempotency key"}</dd>
+          </div>
+          <div>
+            <dt>Created by</dt>
+            <dd>{payment.createdBy?.email ?? payment.createdBy?.name ?? "System"}</dd>
+          </div>
+          <div>
+            <dt>Created</dt>
+            <dd>{formatDate(payment.createdAt)}</dd>
+          </div>
+          <div>
+            <dt>Completed</dt>
+            <dd>{formatOptionalDate(payment.completedAt)}</dd>
+          </div>
+          <div>
+            <dt>Cancelled</dt>
+            <dd>{formatOptionalDate(payment.cancelledAt)}</dd>
+          </div>
+          <div>
+            <dt>Receipts</dt>
+            <dd>{payment.receipts.length}</dd>
+          </div>
+          <div>
+            <dt>Ledger entries</dt>
+            <dd>{payment.ledgerEntries.length}</dd>
+          </div>
+        </dl>
+
+        <section className="payment-readiness-note">
+          <strong>{formatRefundReadiness(payment.refundReadiness.status)}</strong>
+          <span>
+            {payment.refundReadiness.reason} {formatMoney(payment.refundReadiness.refundedAmount, payment.currency)} refunded,
+            {" "}{formatMoney(payment.refundReadiness.refundableAmount, payment.currency)} remaining.
+          </span>
+        </section>
+
+        <section className={`payment-reconciliation-note ${payment.reconciliation.status}`}>
+          <div>
+            <p className="eyebrow">Reconciliation</p>
+            <h3>{payment.reconciliation.status === "balanced" ? "Payment rows are balanced" : "Payment needs review"}</h3>
+          </div>
+          <div className="payment-reconciliation-metrics">
+            <span>
+              <small>Payment</small>
+              <strong>{formatMoney(payment.reconciliation.paymentAmount, payment.currency)}</strong>
+            </span>
+            <span>
+              <small>Ledger net</small>
+              <strong>{formatMoney(payment.reconciliation.netLedgerAmount, payment.currency)}</strong>
+            </span>
+            <span>
+              <small>Receipt net</small>
+              <strong>{formatMoney(payment.reconciliation.netReceiptAmount, payment.currency)}</strong>
+            </span>
+            <span>
+              <small>Refunds</small>
+              <strong>{formatMoney(payment.reconciliation.refundLedgerAmount, payment.currency)}</strong>
+            </span>
+          </div>
+          {payment.reconciliation.issues.length > 0 ? (
+            <div className="payment-reconciliation-issues">
+              {payment.reconciliation.issues.map((issue) => (
+                <span className={issue.severity} key={issue.code}>
+                  <strong>{formatEnum(issue.code)}</strong>
+                  <small>{issue.message}</small>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-copy">Payment amount, wallet ledger entries, receipts, and refund rows currently agree.</p>
+          )}
+        </section>
+
+        <form className="payment-refund-form" onSubmit={handleRefundSubmit}>
+          <div>
+            <p className="eyebrow">Refund tracking</p>
+            <h3>Record external refund</h3>
+            <p className="muted-copy">Use this after the refund is created in PayPal, Stripe, or the provider dashboard.</p>
+          </div>
+          <label>
+            Amount
+            <input
+              disabled={!canRecordRefund || refunding}
+              max={payment.refundReadiness.refundableAmount}
+              min="0.01"
+              onChange={(event) => setRefundAmount(event.currentTarget.value)}
+              step="0.01"
+              type="number"
+              value={refundAmount}
+            />
+          </label>
+          <label>
+            Refund reference
+            <input
+              disabled={!canRecordRefund || refunding}
+              onChange={(event) => setRefundProviderRef(event.currentTarget.value)}
+              placeholder="Provider refund ID"
+              value={refundProviderRef}
+            />
+          </label>
+          <label>
+            Admin note
+            <input
+              disabled={!canRecordRefund || refunding}
+              onChange={(event) => setRefundNotes(event.currentTarget.value)}
+              placeholder="Optional internal note"
+              value={refundNotes}
+            />
+          </label>
+          <button className="primary-button compact-button" disabled={!canRecordRefund || refunding || !refundProviderRef.trim()} type="submit">
+            {refunding ? <Loader2 className="spin" size={14} /> : <CircleDollarSign size={14} />}
+            Record refund
+          </button>
+        </form>
+
+        <div className="payment-detail-columns">
+          <section className="payout-detail-section">
+            <div>
+              <p className="eyebrow">Receipts</p>
+              <h3>Wallet receipts</h3>
+            </div>
+            <div className="payment-detail-list">
+              {payment.receipts.length > 0 ? (
+                payment.receipts.map((receipt) => (
+                  <article className="payment-detail-row" key={receipt.id}>
+                    <span>
+                      <strong>{receipt.receiptNumber}</strong>
+                      <small>{receipt.description ?? formatEnum(receipt.type)}</small>
+                      <small>{formatDate(receipt.issuedAt)}</small>
+                    </span>
+                    <span>
+                      <strong>{formatMoney(receipt.amount, receipt.currency)}</strong>
+                      <small>{receipt.providerRef ?? receipt.id}</small>
+                    </span>
+                  </article>
+                ))
+              ) : (
+                <p className="muted-copy">No wallet receipts have been issued for this payment.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="payout-detail-section">
+            <div>
+              <p className="eyebrow">Ledger</p>
+              <h3>Wallet ledger entries</h3>
+            </div>
+            <div className="payment-detail-list">
+              {payment.ledgerEntries.length > 0 ? (
+                payment.ledgerEntries.map((entry) => (
+                  <article className="payment-detail-row" key={entry.id}>
+                    <span>
+                      <strong>{formatEnum(entry.type)}</strong>
+                      <small>{entry.description ?? entry.referenceId ?? entry.id}</small>
+                      <small>{formatDate(entry.createdAt)}</small>
+                    </span>
+                    <span>
+                      <strong>{formatMoney(entry.amount, entry.currency)}</strong>
+                      <small>{entry.organization?.name ?? entry.user?.name ?? entry.walletId}</small>
+                    </span>
+                  </article>
+                ))
+              ) : (
+                <p className="muted-copy">No wallet ledger entries are linked to this payment.</p>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <div className="payment-detail-columns">
+          <section className="payout-detail-section">
+            <div>
+              <p className="eyebrow">Audit</p>
+              <h3>Admin and system events</h3>
+            </div>
+            <div className="payment-detail-list compact">
+              {payment.auditTrail.length > 0 ? (
+                payment.auditTrail.map((entry) => (
+                  <article className="payment-detail-row" key={entry.id}>
+                    <span>
+                      <strong>{formatAdminAuditTitle(entry.action)}</strong>
+                      <small>{entry.description}</small>
+                    </span>
+                    <span>
+                      <strong>{formatDate(entry.createdAt)}</strong>
+                      <small>{entry.actor?.name ?? "System"}</small>
+                    </span>
+                  </article>
+                ))
+              ) : (
+                <p className="muted-copy">No audit events are linked to this payment.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="payout-detail-section">
+            <div>
+              <p className="eyebrow">Provider</p>
+              <h3>Webhook context</h3>
+            </div>
+            <div className="payment-detail-list compact">
+              {payment.webhookEvents.length > 0 ? (
+                payment.webhookEvents.map((event) => (
+                  <article className="payment-detail-row" key={event.id}>
+                    <span>
+                      <strong>{event.eventType ?? "Webhook event"}</strong>
+                      <small>{event.eventId}</small>
+                    </span>
+                    <span>
+                      <strong>{formatDate(event.receivedAt)}</strong>
+                      <small>{event.duplicateCount} duplicate{event.duplicateCount === 1 ? "" : "s"}</small>
+                    </span>
+                  </article>
+                ))
+              ) : (
+                <p className="muted-copy">No matching provider webhook events were found.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PayoutDetailModal({
   downloading,
   onClose,
@@ -1427,6 +2035,10 @@ function formatMoneyDraft(value: number) {
   return Number.isFinite(value) ? value.toFixed(2) : "0.00";
 }
 
+function shortId(value: string) {
+  return value.length > 13 ? `${value.slice(0, 7)}...${value.slice(-4)}` : value;
+}
+
 function formatOptionalDate(value: string | null) {
   return value ? formatDate(value) : "Not reviewed";
 }
@@ -1474,6 +2086,54 @@ function getPayoutStatusClass(status: string) {
   }
 
   return "requested";
+}
+
+function getPaymentStatusClass(statusGroup: AdminPaymentIntentSummary["statusGroup"]) {
+  if (statusGroup === "settled") {
+    return "paid";
+  }
+
+  if (statusGroup === "open" || statusGroup === "stale") {
+    return "processing";
+  }
+
+  return "failed";
+}
+
+function getRefundReadinessClass(status: AdminPaymentIntentDetail["refundReadiness"]["status"]) {
+  if (status === "ready") {
+    return "ready";
+  }
+
+  if (status === "fully_refunded") {
+    return "ready";
+  }
+
+  if (status === "needs_provider_reference" || status === "needs_reconciliation") {
+    return "warning";
+  }
+
+  return "blocked";
+}
+
+function formatRefundReadiness(status: AdminPaymentIntentDetail["refundReadiness"]["status"]) {
+  if (status === "ready") {
+    return "Refund trackable";
+  }
+
+  if (status === "needs_provider_reference") {
+    return "Needs provider ref";
+  }
+
+  if (status === "needs_reconciliation") {
+    return "Needs reconciliation";
+  }
+
+  if (status === "fully_refunded") {
+    return "Fully refunded";
+  }
+
+  return "Not refundable";
 }
 
 function payoutStatusMatches(status: string, filter: PayoutStatusFilter) {

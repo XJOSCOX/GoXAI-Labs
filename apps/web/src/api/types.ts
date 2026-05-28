@@ -151,7 +151,9 @@ export interface AdminPayoutDetail extends AdminPayoutSummary {
 
 export interface AdminPaymentIntentSummary {
   amount: number;
+  canCancel: boolean;
   cancelledAt: string | null;
+  clientRequestId: string | null;
   completedAt: string | null;
   createdAt: string;
   createdBy: AdminUserSummary | null;
@@ -168,10 +170,99 @@ export interface AdminPaymentIntentSummary {
   provider: string;
   providerRef: string | null;
   purpose: string;
+  reconciliationSummary: {
+    issueCount: number;
+    netLedgerAmount: number;
+    netReceiptAmount: number;
+    severity: "blocked" | "none" | "warning";
+    status: "balanced" | "warning";
+  };
   receiptCount: number;
+  staleAgeMinutes: number;
+  staleReason: string | null;
   status: string;
+  statusGroup: "closed" | "open" | "settled" | "stale";
   updatedAt: string;
   walletId: string;
+}
+
+export interface AdminPaymentReceiptSummary {
+  amount: number;
+  createdAt: string;
+  currency: string;
+  description: string | null;
+  id: string;
+  issuedAt: string;
+  ledgerEntryId: string | null;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  paymentIntentId: string | null;
+  provider: string;
+  providerRef: string | null;
+  receiptNumber: string;
+  type: string;
+  user: AdminUserSummary | null;
+}
+
+export interface AdminPaymentLedgerEntrySummary {
+  amount: number;
+  createdAt: string;
+  currency: string;
+  description: string | null;
+  id: string;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  referenceId: string | null;
+  type: string;
+  user: AdminUserSummary | null;
+  walletId: string;
+}
+
+export interface AdminPaymentIntentAuditEntry {
+  action: string;
+  actor: AdminUserSummary | null;
+  createdAt: string;
+  description: string;
+  entityId: string | null;
+  entityType: string | null;
+  id: string;
+  metadata: Record<string, unknown> | null;
+}
+
+export interface AdminPaymentIntentDetail extends AdminPaymentIntentSummary {
+  auditTrail: AdminPaymentIntentAuditEntry[];
+  ledgerEntries: AdminPaymentLedgerEntrySummary[];
+  receipts: AdminPaymentReceiptSummary[];
+  reconciliation: {
+    expectedTopUpAmount: number;
+    issueCount: number;
+    issues: Array<{
+      code: string;
+      message: string;
+      severity: "blocked" | "warning";
+    }>;
+    netLedgerAmount: number;
+    netReceiptAmount: number;
+    paymentAmount: number;
+    refundLedgerAmount: number;
+    refundReceiptAmount: number;
+    status: "balanced" | "warning";
+    topUpLedgerAmount: number;
+    topUpReceiptAmount: number;
+  };
+  refundReadiness: {
+    refundableAmount: number;
+    refundedAmount: number;
+    reason: string;
+    status: "fully_refunded" | "needs_provider_reference" | "needs_reconciliation" | "not_refundable" | "ready";
+  };
+  webhookEvents: AdminProviderWebhookEventSummary[];
 }
 
 export interface AdminFundingSourceSummary {
@@ -203,11 +294,32 @@ export interface AdminFundingSourceSummary {
 
 export interface AdminWebhookHealthSummary {
   count24h: number;
+  duplicateCount: number;
+  lastEventAgeMinutes: number | null;
+  lastDuplicateAt: string | null;
   lastEventId: string | null;
   lastEventType: string | null;
   lastReceivedAt: string | null;
   lastTransmissionId: string | null;
   provider: "paypal" | "stripe";
+  recentEvents: AdminProviderWebhookEventSummary[];
+  status: "quiet" | "receiving" | "retrying";
+  statusLabel: string;
+}
+
+export interface AdminProviderWebhookEventSummary {
+  action: string | null;
+  duplicateCount: number;
+  eventId: string;
+  eventType: string | null;
+  id: string;
+  idempotencyKey: string | null;
+  lastDuplicateAt: string | null;
+  paymentIntentId: string | null;
+  providerRef: string | null;
+  receivedAt: string;
+  transmissionId: string | null;
+  updatedAt: string;
 }
 
 export interface AdminPlatformRevenueTotal {
@@ -248,6 +360,7 @@ export interface AdminPlatformRevenueFee {
     name: string;
   } | null;
   referenceId: string | null;
+  reviewId: string | null;
   taskId: string | null;
 }
 
@@ -257,6 +370,22 @@ export interface AdminPlatformRevenueSummary {
   byProject: AdminPlatformRevenueBucket[];
   recentFees: AdminPlatformRevenueFee[];
   totals: AdminPlatformRevenueTotal[];
+}
+
+export interface AdminPaymentAuditItem {
+  actor: string | null;
+  amount: number | null;
+  createdAt: string;
+  currency: string | null;
+  description: string;
+  id: string;
+  kind: "audit_log" | "ledger_entry" | "payment_intent" | "receipt" | "webhook";
+  organization: string | null;
+  provider: string | null;
+  reference: string;
+  sourceId: string;
+  status: string;
+  title: string;
 }
 
 export interface AdminOverview {
@@ -283,6 +412,7 @@ export interface AdminOverview {
     pendingVerification: number;
   };
   payments: {
+    auditTrail: AdminPaymentAuditItem[];
     fundingSources: AdminFundingSourceSummary[];
     paymentIntents: AdminPaymentIntentSummary[];
     platformRevenue: AdminPlatformRevenueSummary;
@@ -338,14 +468,26 @@ export interface CreatorWalletDatasetReport {
 }
 
 export interface CreatorWalletLedgerEntry {
+  approvedCredits: number;
   amount: number;
   createdAt: string;
   currency: string;
   datasetId: string | null;
   datasetName: string | null;
   description: string | null;
+  escrowCredits: number;
+  escrowLedgerEntryId: string | null;
+  feeCredits: number;
   id: string;
+  isTopUpRefund: boolean;
+  originalPaymentProvider: string | null;
+  paymentIntentId: string | null;
+  platformFeeRate: number;
+  providerRef: string | null;
   referenceId: string | null;
+  refundCredits: number;
+  refundKind: string | null;
+  reviewId: string | null;
   taskCount: number;
   taskId: string | null;
   type: string;
@@ -363,6 +505,7 @@ export interface CreatorWalletPayPalOrderResult {
   approvalUrl: string;
   orderId: string;
   paymentIntentId: string;
+  reused?: boolean;
 }
 
 export interface CreatorWalletPayPalCaptureResult {
@@ -375,6 +518,7 @@ export interface CreatorWalletPayPalCaptureResult {
 export interface CreatorWalletStripeCheckoutResult {
   checkoutUrl: string;
   paymentIntentId: string;
+  reused?: boolean;
   sessionId: string;
 }
 
@@ -433,6 +577,7 @@ export interface CreatorWalletFundingSourceDetail {
 export interface CreatorWalletPaymentIntentSummary {
   amount: number;
   cancelledAt: string | null;
+  clientRequestId: string | null;
   completedAt: string | null;
   createdAt: string;
   currency: string;
@@ -487,6 +632,7 @@ export interface CreatorLedgerPageResult {
 
 export interface WorkerCreditEventSummary {
   amount: number;
+  annotationId: string | null;
   approvedAt: string | null;
   assetName: string | null;
   availableAt: string | null;
@@ -497,6 +643,8 @@ export interface WorkerCreditEventSummary {
   eventType: string;
   id: string;
   projectName: string | null;
+  referenceKey: string;
+  reviewId: string | null;
   status: string;
   taskId: string | null;
   withdrawnAt: string | null;

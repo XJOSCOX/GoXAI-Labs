@@ -44,11 +44,13 @@ export async function topUpCreatorWallet(
 
 export async function createCreatorPayPalOrder(
   session: Session,
-  input: { amount: number; currency?: string; organizationId?: string }
+  input: { amount: number; clientRequestId?: string; currency?: string; organizationId?: string }
 ) {
+  const { clientRequestId, ...body } = input;
   const response = await authenticatedFetch(session, "/api/billing/creator-paypal-order", {
     method: "POST",
-    body: JSON.stringify(removeEmptyValues(input))
+    headers: clientRequestId ? { "X-Idempotency-Key": clientRequestId } : undefined,
+    body: JSON.stringify(removeEmptyValues(body))
   });
 
   await ensureOk(response, "Unable to start PayPal checkout.");
@@ -83,11 +85,13 @@ export async function cancelCreatorPayPalOrder(session: Session, input: { paymen
 
 export async function createCreatorStripeCheckoutSession(
   session: Session,
-  input: { amount: number; currency?: string; organizationId?: string }
+  input: { amount: number; clientRequestId?: string; currency?: string; organizationId?: string }
 ) {
+  const { clientRequestId, ...body } = input;
   const response = await authenticatedFetch(session, "/api/billing/creator-stripe-checkout-session", {
     method: "POST",
-    body: JSON.stringify(removeEmptyValues(input))
+    headers: clientRequestId ? { "X-Idempotency-Key": clientRequestId } : undefined,
+    body: JSON.stringify(removeEmptyValues(body))
   });
 
   await ensureOk(response, "Unable to start Stripe checkout.");
@@ -97,11 +101,13 @@ export async function createCreatorStripeCheckoutSession(
 
 export async function createCreatorStripeAchCheckoutSession(
   session: Session,
-  input: { amount: number; currency?: string; fundingSourceId: string }
+  input: { amount: number; clientRequestId?: string; currency?: string; fundingSourceId: string }
 ) {
+  const { clientRequestId, ...body } = input;
   const response = await authenticatedFetch(session, "/api/billing/creator-stripe-ach-checkout-session", {
     method: "POST",
-    body: JSON.stringify(removeEmptyValues(input))
+    headers: clientRequestId ? { "X-Idempotency-Key": clientRequestId } : undefined,
+    body: JSON.stringify(removeEmptyValues(body))
   });
 
   await ensureOk(response, "Unable to start ACH checkout.");

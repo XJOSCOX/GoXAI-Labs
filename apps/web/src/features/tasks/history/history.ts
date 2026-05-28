@@ -6,6 +6,7 @@ export interface TaskHistoryItem {
   body: string;
   id: string;
   meta: string;
+  paymentLines?: string[];
   timestamp: string;
   title: string;
 }
@@ -30,11 +31,16 @@ export function buildTaskHistoryItems(annotationHistory: AnnotationSummary[], re
     const settlement = getReviewPaymentSettlement(review);
 
     return {
-      body: settlement
-        ? `${review.feedback?.trim() || `Reviewed by ${review.reviewer.name}`} - Worker ${formatTaskCredits(settlement.approvedCredits, settlement.currency)}, platform ${formatTaskCredits(settlement.feeCredits, settlement.currency)}, refund ${formatTaskCredits(settlement.refundCredits, settlement.currency)}`
-        : review.feedback?.trim() || `Reviewed by ${review.reviewer.name}`,
+      body: review.feedback?.trim() || `Reviewed by ${review.reviewer.name}`,
       id: `review-${review.id}`,
       meta: `Annotation v${review.annotation.version}`,
+      paymentLines: settlement
+        ? [
+            `Worker pay ${formatTaskCredits(settlement.approvedCredits, settlement.currency)}`,
+            `Platform fee ${formatTaskCredits(settlement.feeCredits, settlement.currency)}`,
+            `Creator refund ${formatTaskCredits(settlement.refundCredits, settlement.currency)}`
+          ]
+        : undefined,
       timestamp: review.createdAt,
       title: formatEnum(review.status)
     };

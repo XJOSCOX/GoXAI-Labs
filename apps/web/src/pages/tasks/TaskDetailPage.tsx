@@ -9,11 +9,9 @@ import {
   importAIPredictions,
   listAIJobs,
   reviewTask,
-  saveTaskAnnotation,
   startTask,
   submitTaskAnnotation,
   type AIJobSummary,
-  type SaveAnnotationInput,
   type TaskReviewPaymentSettlement,
   type TaskSummary
 } from "../../api";
@@ -28,10 +26,7 @@ import {
   defaultLabel,
   findEditHandleAtPoint,
   findShapeAtPoint,
-  getLabelOptions,
   getPointDistance,
-  getRegionBorderWidth,
-  getToolOptions,
   movePolygonPoint,
   resizeBoxShape,
   serializeAnnotationPayload,
@@ -48,32 +43,19 @@ import {
   annotationToScalarResponses,
   annotationToTemporalResponses,
   annotationToTextResponses,
-  dedupeDrawingTools,
   formResponsesToResults,
-  formatControlName,
-  getConfigString,
   isTextLikeAsset,
-  parseChoiceControls,
-  parseDateTimeControls,
-  parseNumberControls,
-  parseRatingControls,
-  parseRegionDrawingTools,
-  parseTemplateSources,
-  parseTemporalLabelControls,
-  parseTextAreaControls,
   type TemporalRegionResponse,
 } from "../../features/tasks/annotation/templateForm";
 import { cacheAssetAccessUrl, getAssetAccessCacheKey, getCachedAssetAccessUrl } from "../../features/tasks/assets/accessCache";
 import { getAnnotationCanvasWidth, getPdfCanvasWidth } from "../../features/tasks/assets/canvasSizing";
-import { extractOcrBlocks, type OcrBlock, type PdfPageInfo } from "../../features/tasks/assets/ocr";
+import { type OcrBlock, type PdfPageInfo } from "../../features/tasks/assets/ocr";
 import { buildAIReviewGuidance, buildTaskAIAssistanceSummary } from "../../features/tasks/ai/aiAssistance";
 import { AnnotationLabelControls, TaskInlineActions } from "../../features/tasks/detail/TaskAnnotationControls";
 import { TaskAssetWorkspace } from "../../features/tasks/detail/TaskAssetWorkspace";
 import { CreatedRegionsPanel, TaskContextPanel } from "../../features/tasks/detail/TaskContextPanels";
 import { AnnotationVersionPanel, TaskAIPredictionsPanel, TaskAIReviewPanel, TaskCommentsPanel, TaskHistoryPanel, TaskReviewPanel, TaskRevisionPanel } from "../../features/tasks/detail/TaskSidebarPanels";
 import {
-  autoSaveDelayMs,
-  autoSaveRetryDelayMs,
   clampZoom,
   getPredictionPreviewShapeId,
   getShapeBounds,
@@ -85,7 +67,6 @@ import {
   type PanDrag,
   type PredictionPreviewState,
   type RegionEdit,
-  type SaveStatus,
   type ShapeHistoryEntry,
   type ZoomAnchor
 } from "../../features/tasks/detail/taskDetailCanvas";
@@ -97,12 +78,13 @@ import {
   formatPrelabelCount,
   parsePredictionImportText
 } from "../../features/tasks/detail/taskPredictionImports";
+import { useTaskAnnotationConfig } from "../../features/tasks/detail/useTaskAnnotationConfig";
+import { useTaskAnnotationDraft } from "../../features/tasks/detail/useTaskAnnotationDraft";
 import { buildAnnotationVersionDiff, buildTaskHistoryItems } from "../../features/tasks/history/history";
 import { formatReviewSettlementMessage, formatTaskCredits, getTaskPaymentDisplay, getTaskReviewSettlementDisplay } from "../../features/tasks/payment/payment";
 import { getQueueFilters, getTaskDetailSearch, getTaskQueueLink } from "../../features/tasks/queue/navigation";
 import { buildReviewGuidance } from "../../features/tasks/review/reviewGuidance";
 import { useTask } from "../../hooks/useResources";
-import { formatEnum } from "../../utils/format";
 
 export function TaskDetailPage() {
   const { taskId = "" } = useParams();
@@ -154,9 +136,7 @@ export function TaskDetailPage() {
   const [panMode, setPanMode] = useState(false);
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [commentBody, setCommentBody] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
   const [nextTask, setNextTask] = useState<TaskSummary | null>(null);
@@ -184,16 +164,11 @@ export function TaskDetailPage() {
   const drawStartRef = useRef<{ x: number; y: number } | null>(null);
   const annotationCanvasRef = useRef<HTMLDivElement | null>(null);
   const annotationStageRef = useRef<HTMLDivElement | null>(null);
-  const autoSaveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const accessUrlAssetIdRef = useRef<string | null>(null);
   const editRegionRef = useRef<RegionEdit | null>(null);
   const editShapeHistoryRef = useRef<ShapeHistoryEntry | null>(null);
-  const latestPayloadTextRef = useRef("");
-  const lastSavedPayloadTextRef = useRef("");
   const panDragRef = useRef<PanDrag | null>(null);
   const pendingZoomAnchorRef = useRef<ZoomAnchor | null>(null);
-  const saveRequestIdRef = useRef(0);
   const selectedShapeIdRef = useRef<string | null>(null);
   const shapesRef = useRef<AnnotationShape[]>([]);
   const isImage = task?.asset?.mimeType.startsWith("image/") ?? false;
@@ -206,45 +181,29 @@ export function TaskDetailPage() {
   const canReviewTask = Boolean(task?.canReview && (task.status === "SUBMITTED" || task.status === "REVIEWING"));
   const taskPayment = task ? getTaskPaymentDisplay(task, queueMode === "review" ? "review" : "work") : null;
   const reviewSettlement = useMemo(() => task ? getTaskReviewSettlementDisplay(task) : null, [task]);
-  const configCode = getConfigString(task?.dataset?.labelingConfig, "configCode") ?? "";
-  const templateSources = useMemo(() => parseTemplateSources(configCode), [configCode]);
-  const choiceControls = useMemo(() => parseChoiceControls(configCode), [configCode]);
-  const dateTimeControls = useMemo(() => parseDateTimeControls(configCode), [configCode]);
-  const numberControls = useMemo(() => parseNumberControls(configCode), [configCode]);
-  const ratingControls = useMemo(() => parseRatingControls(configCode), [configCode]);
-  const temporalControls = useMemo(() => parseTemporalLabelControls(configCode), [configCode]);
-  const textAreaControls = useMemo(() => parseTextAreaControls(configCode), [configCode]);
-  const templateSourceByName = useMemo(() => new Map(templateSources.map((source) => [source.name, source])), [templateSources]);
-  const labelOptions = useMemo(() => getLabelOptions(task?.dataset?.labels, task?.dataset?.labelingConfig), [task?.dataset?.labels, task?.dataset?.labelingConfig]);
-  const toolOptions = useMemo(() => getToolOptions(task?.dataset?.tools), [task?.dataset?.tools]);
-  const regionBorderWidth = useMemo(() => getRegionBorderWidth(task?.dataset?.labelingConfig), [task?.dataset?.labelingConfig]);
-  const configDrawingToolOptions = useMemo(() => parseRegionDrawingTools(configCode), [configCode]);
-  const drawingToolOptions = useMemo(
-    () => dedupeDrawingTools([
-      ...toolOptions.filter((tool): tool is "BBOX" | "POLYGON" => tool === "BBOX" || tool === "POLYGON"),
-      ...configDrawingToolOptions
-    ]),
-    [configDrawingToolOptions, toolOptions]
-  );
-  const supportsBbox = drawingToolOptions.includes("BBOX");
-  const supportsPolygon = drawingToolOptions.includes("POLYGON");
-  const supportsRegionDrawing = supportsBbox || supportsPolygon;
-  const pdfSource = useMemo(() => templateSources.find((source) => source.type === "PDF") ?? null, [templateSources]);
+  const {
+    choiceControls,
+    dateTimeControls,
+    drawingToolOptions,
+    formControls,
+    formToolLabels,
+    labelOptions,
+    numberControls,
+    ocrBlocks,
+    pdfSource,
+    ratingControls,
+    regionBorderWidth,
+    supportsBbox,
+    supportsPolygon,
+    supportsRegionDrawing,
+    temporalControls,
+    templateSourceByName,
+    templateSources,
+    textAreaControls,
+    usesTemplateForm
+  } = useTaskAnnotationConfig({ pdfPageInfo, task });
   const isPdfRegionWorkspace = Boolean(supportsRegionDrawing && accessUrl && !isImage && (isPdf || pdfSource));
   const canDrawOnRegionSource = isImage || isPdfRegionWorkspace;
-  const ocrBlocks = useMemo(
-    () => extractOcrBlocks(task, pdfPageInfo, pdfSource?.name ?? "pdf"),
-    [pdfPageInfo, pdfSource?.name, task]
-  );
-  const formControls = useMemo(
-    () => [...choiceControls, ...textAreaControls, ...numberControls, ...ratingControls, ...dateTimeControls, ...temporalControls],
-    [choiceControls, dateTimeControls, numberControls, ratingControls, temporalControls, textAreaControls]
-  );
-  const formToolLabels = useMemo(
-    () => formControls.length > 0 ? formControls.map((control) => formatControlName(control.name)) : toolOptions.filter((tool) => !["BBOX", "POLYGON"].includes(tool)).map(formatEnum),
-    [formControls, toolOptions]
-  );
-  const usesTemplateForm = !supportsRegionDrawing && (formControls.length > 0 || templateSources.some((source) => source.type !== "UNKNOWN"));
   const visibleShapes = useMemo(
     () => isPdfRegionWorkspace ? shapes.filter((shape) => (shape.page ?? 1) === activePdfPage) : shapes,
     [activePdfPage, isPdfRegionWorkspace, shapes]
@@ -315,23 +274,6 @@ export function TaskDetailPage() {
     const nextRatingResponses = annotationToRatingResponses(annotation);
     const nextTemporalResponses = annotationToTemporalResponses(annotation);
     const nextTextResponses = annotationToTextResponses(annotation);
-    const nextPayloadText = serializeAnnotationPayload({
-      ...shapesToAnnotationPayload(nextShapes),
-      results: formResponsesToResults({
-        choiceControls,
-        choiceResponses: nextChoiceResponses,
-        dateTimeControls,
-        dateTimeResponses: nextDateTimeResponses,
-        numberControls,
-        numberResponses: nextNumberResponses,
-        ratingControls,
-        ratingResponses: nextRatingResponses,
-        temporalControls,
-        temporalResponses: nextTemporalResponses,
-        textControls: textAreaControls,
-        textResponses: nextTextResponses
-      })
-    });
 
     setShapes(nextShapes);
     setChoiceResponses(nextChoiceResponses);
@@ -343,9 +285,7 @@ export function TaskDetailPage() {
     setSelectedShapeId(null);
     setShapeRedoStack([]);
     setShapeUndoStack([]);
-    latestPayloadTextRef.current = nextPayloadText;
-    lastSavedPayloadTextRef.current = nextPayloadText;
-  }, [annotation?.id, annotation?.updatedAt, choiceControls, dateTimeControls, numberControls, ratingControls, temporalControls, textAreaControls]);
+  }, [annotation?.id, annotation?.updatedAt]);
 
   useEffect(() => {
     shapesRef.current = shapes;
@@ -406,9 +346,7 @@ export function TaskDetailPage() {
   }, [isPdfRegionWorkspace, pdfPageInfo]);
 
   useEffect(() => {
-    setSaveErrorMessage(null);
     setSavedMessage(null);
-    setSaveStatus("idle");
     setNextTask(null);
     setNextTaskError(null);
     setAiImportError(null);
@@ -506,7 +444,6 @@ export function TaskDetailPage() {
 
     const timer = window.setTimeout(() => {
       setSavedMessage(null);
-      setSaveStatus((current) => (current === "saved" ? "idle" : current));
     }, 5000);
 
     return () => window.clearTimeout(timer);
@@ -872,80 +809,58 @@ export function TaskDetailPage() {
     [choiceControls, choiceResponses, dateTimeControls, dateTimeResponses, numberControls, numberResponses, ratingControls, ratingResponses, shapes, temporalControls, temporalResponses, textAreaControls, textResponses]
   );
   const annotationPayloadText = useMemo(() => serializeAnnotationPayload(annotationPayload), [annotationPayload]);
+  const savedAnnotationPayloadText = useMemo(() => {
+    const savedShapes = annotationToShapes(annotation);
+    const savedChoiceResponses = annotationToChoiceResponses(annotation);
+    const savedDateTimeResponses = annotationToScalarResponses(annotation, "datetime");
+    const savedNumberResponses = annotationToScalarResponses(annotation, "number");
+    const savedRatingResponses = annotationToRatingResponses(annotation);
+    const savedTemporalResponses = annotationToTemporalResponses(annotation);
+    const savedTextResponses = annotationToTextResponses(annotation);
 
-  useEffect(() => {
-    latestPayloadTextRef.current = annotationPayloadText;
-
-    if (!canAnnotate) {
-      return;
-    }
-
-    if (annotationPayloadText === lastSavedPayloadTextRef.current) {
-      setSaveStatus((current) => (current === "dirty" || current === "error" ? "idle" : current));
-      return;
-    }
-
-    setSaveErrorMessage(null);
-    setSaveStatus((current) => (current === "saving" ? current : "dirty"));
-  }, [annotationPayloadText, canAnnotate]);
-
-  useEffect(() => {
-    if (!session || !task || !canAnnotate || loading) {
-      return;
-    }
-
-    if (annotationPayloadText === lastSavedPayloadTextRef.current) {
-      return;
-    }
-
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
-
-    if (autoSaveRetryTimerRef.current) {
-      clearTimeout(autoSaveRetryTimerRef.current);
-      autoSaveRetryTimerRef.current = null;
-    }
-
-    autoSaveTimerRef.current = setTimeout(() => {
-      autoSaveTimerRef.current = null;
-      void saveDraft(annotationPayload, { auto: true });
-    }, autoSaveDelayMs);
-
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-      }
-    };
-  }, [annotationPayload, annotationPayloadText, canAnnotate, loading, session, task?.id]);
-
-  useEffect(
-    () => () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-      if (autoSaveRetryTimerRef.current) {
-        clearTimeout(autoSaveRetryTimerRef.current);
-      }
+    return serializeAnnotationPayload({
+      ...shapesToAnnotationPayload(savedShapes),
+      results: formResponsesToResults({
+        choiceControls,
+        choiceResponses: savedChoiceResponses,
+        dateTimeControls,
+        dateTimeResponses: savedDateTimeResponses,
+        numberControls,
+        numberResponses: savedNumberResponses,
+        ratingControls,
+        ratingResponses: savedRatingResponses,
+        temporalControls,
+        temporalResponses: savedTemporalResponses,
+        textControls: textAreaControls,
+        textResponses: savedTextResponses
+      })
+    });
+  }, [annotation, choiceControls, dateTimeControls, numberControls, ratingControls, temporalControls, textAreaControls]);
+  const {
+    clearPendingSave,
+    draftSaving,
+    hasUnsavedChanges,
+    saveDraft,
+    saveErrorMessage,
+    saveStatus,
+    setLatestPayloadText
+  } = useTaskAnnotationDraft({
+    annotationPayload,
+    annotationPayloadText,
+    canAnnotate,
+    loading,
+    onError: setError,
+    onSaved: (result) => {
+      setAnnotation(result.annotation);
+      setTask(result.task);
     },
-    []
-  );
-
-  useEffect(() => {
-    function handleBeforeUnload(event: BeforeUnloadEvent) {
-      if (!canAnnotate || latestPayloadTextRef.current === lastSavedPayloadTextRef.current) {
-        return;
-      }
-
-      event.preventDefault();
-      event.returnValue = "";
-    }
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [canAnnotate]);
+    onSavedMessage: setSavedMessage,
+    savedPayloadKey: `${task?.id ?? "new"}:${annotation?.id ?? "none"}:${annotation?.updatedAt ?? "none"}`,
+    savedPayloadText: savedAnnotationPayloadText,
+    session,
+    task
+  });
+  const savingInProgress = saving || draftSaving;
 
   function getPoint(event: PointerEvent<HTMLDivElement>) {
     const frame = annotationCanvasRef.current;
@@ -1266,7 +1181,7 @@ export function TaskDetailPage() {
   }
 
   async function handleSaveDraft() {
-    clearAutoSaveTimers();
+    clearPendingSave();
     await saveDraft(annotationPayload, { auto: false });
   }
 
@@ -1351,10 +1266,10 @@ export function TaskDetailPage() {
     const { nextPayload, nextShapes } = buildPredictionSavePayload(shapesRef.current, predictionShapes, annotationPayload.results);
     const nextPayloadText = serializeAnnotationPayload(nextPayload);
 
-    latestPayloadTextRef.current = nextPayloadText;
+    setLatestPayloadText(nextPayloadText);
     commitShapeEdit("Added prelabels", () => nextShapes, predictionShapes[0]?.id ?? null);
     setSavedMessage(`${formatPrelabelCount(predictionShapes.length)} added.`);
-    clearAutoSaveTimers();
+    clearPendingSave();
     const saved = await saveDraft(nextPayload, { auto: false });
 
     if (saved) {
@@ -1369,8 +1284,8 @@ export function TaskDetailPage() {
       return;
     }
 
-    if (canAnnotate && latestPayloadTextRef.current !== lastSavedPayloadTextRef.current) {
-      clearAutoSaveTimers();
+    if (canAnnotate && hasUnsavedChanges()) {
+      clearPendingSave();
       const saved = await saveDraft(annotationPayload, { auto: false });
 
       if (!saved) {
@@ -1386,98 +1301,12 @@ export function TaskDetailPage() {
     );
   }
 
-  function clearAutoSaveTimers() {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
-
-    if (autoSaveRetryTimerRef.current) {
-      clearTimeout(autoSaveRetryTimerRef.current);
-      autoSaveRetryTimerRef.current = null;
-    }
-  }
-
-  function scheduleAutoSaveRetry(payload: SaveAnnotationInput) {
-    if (autoSaveRetryTimerRef.current) {
-      clearTimeout(autoSaveRetryTimerRef.current);
-    }
-
-    autoSaveRetryTimerRef.current = setTimeout(() => {
-      autoSaveRetryTimerRef.current = null;
-      void saveDraft(payload, { auto: true });
-    }, autoSaveRetryDelayMs);
-  }
-
-  async function saveDraft(payload: SaveAnnotationInput, options: { auto: boolean }) {
-    if (!session || !task) {
-      return false;
-    }
-
-    const payloadText = serializeAnnotationPayload(payload);
-
-    if (payloadText === lastSavedPayloadTextRef.current && options.auto) {
-      return true;
-    }
-
-    const requestId = saveRequestIdRef.current + 1;
-    saveRequestIdRef.current = requestId;
-    setSaving(true);
-    setSaveStatus("saving");
-    setSaveErrorMessage(null);
-    if (!options.auto) {
-      setSavedMessage(null);
-    }
-    setError(null);
-
-    try {
-      const result = await saveTaskAnnotation(session, task.id, payload);
-
-      if (requestId !== saveRequestIdRef.current) {
-        return;
-      }
-
-      if (latestPayloadTextRef.current === payloadText) {
-        lastSavedPayloadTextRef.current = payloadText;
-        setAnnotation(result.annotation);
-        setTask(result.task);
-        setSaveStatus("saved");
-        setSaveErrorMessage(null);
-        setSavedMessage(options.auto ? "Autosaved." : "Annotation draft saved.");
-      } else {
-        setSaveStatus("dirty");
-      }
-      return true;
-    } catch (reason) {
-      if (requestId !== saveRequestIdRef.current) {
-        return;
-      }
-
-      const message = reason instanceof Error ? reason.message : options.auto ? "Unable to autosave annotation." : "Unable to save annotation.";
-
-      setSaveStatus("error");
-      setSaveErrorMessage(options.auto ? "Autosave failed. Retrying..." : message);
-
-      if (options.auto) {
-        scheduleAutoSaveRetry(payload);
-      } else {
-        setError(message);
-      }
-      return false;
-    } finally {
-      if (requestId === saveRequestIdRef.current) {
-        setSaving(false);
-      }
-    }
-  }
-
   async function handleSubmitAnnotation() {
     if (!session || !task) {
       return;
     }
 
-    clearAutoSaveTimers();
-    saveRequestIdRef.current += 1;
+    clearPendingSave({ cancelInFlight: true });
 
     const hasTextResults = (annotationPayload.results ?? []).length > 0;
 
@@ -1811,7 +1640,7 @@ export function TaskDetailPage() {
                   onSaveDraft={() => void handleSaveDraft()}
                   onSubmitAnnotation={() => void handleSubmitAnnotation()}
                   onTaskAction={() => void handleTaskAction()}
-                  saving={saving}
+                  saving={savingInProgress}
                 />
               </TaskAssetWorkspace>
             </section>

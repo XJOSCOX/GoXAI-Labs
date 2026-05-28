@@ -878,6 +878,77 @@
   text-transform: uppercase;
 }
 
+.wallet-payment-trace {
+  display: grid;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, #f59e0b 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #f59e0b 8%, var(--surface));
+  padding: 12px;
+}
+
+.wallet-payment-trace > span {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wallet-payment-trace > span strong {
+  color: var(--text);
+}
+
+.wallet-payment-trace > span small {
+  color: #d97706;
+  font-weight: 900;
+}
+
+:root[data-theme="dark"] .wallet-payment-trace > span small {
+  color: #fbbf24;
+}
+
+.wallet-payment-trace-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.wallet-payment-trace-grid span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  padding: 8px;
+}
+
+.wallet-payment-trace-grid small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.wallet-payment-trace-grid strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.wallet-payment-trace-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wallet-payment-trace-ids code {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 7px;
+}
+
 .wallet-ledger-total strong {
   color: var(--text);
   font-size: 28px;
@@ -990,6 +1061,7 @@
 .wallet-receipt-row,
 .wallet-report-row,
 .wallet-transaction-grid,
+.wallet-payment-trace-grid,
 .wallet-support-grid,
 .wallet-worker-grid {
     grid-template-columns: 1fr;

@@ -574,9 +574,12 @@ export function WalletPage() {
     setToppingUp(true);
 
     try {
+      const clientRequestId = createTopUpClientRequestId(topUpProvider);
+
       if (topUpProvider === "ach") {
         const result = await createCreatorStripeAchCheckoutSession(session, {
           amount,
+          clientRequestId,
           currency: wallet?.currency ?? "USD",
           fundingSourceId: selectedFundingSourceId
         });
@@ -585,6 +588,7 @@ export function WalletPage() {
       } else if (topUpProvider === "stripe") {
         const result = await createCreatorStripeCheckoutSession(session, {
           amount,
+          clientRequestId,
           currency: wallet?.currency ?? "USD"
         });
         setMessage("Opening Stripe checkout.");
@@ -592,6 +596,7 @@ export function WalletPage() {
       } else {
         const result = await createCreatorPayPalOrder(session, {
           amount,
+          clientRequestId,
           currency: wallet?.currency ?? "USD"
         });
         setMessage("Opening PayPal checkout.");
@@ -757,6 +762,12 @@ export function WalletPage() {
       )}
     </section>
   );
+}
+
+function createTopUpClientRequestId(provider: CreatorTopUpProvider) {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `wallet:${provider}:${random}`;
 }
 
 function loadPlaidScript() {

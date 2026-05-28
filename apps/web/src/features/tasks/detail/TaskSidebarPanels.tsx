@@ -500,6 +500,13 @@ export function TaskHistoryPanel({ taskHistoryItems }: { taskHistoryItems: TaskH
           <article className="task-timeline-item" key={item.id}>
             <strong>{item.title}</strong>
             <span>{item.body}</span>
+            {item.paymentLines && item.paymentLines.length > 0 ? (
+              <div className="task-timeline-money">
+                {item.paymentLines.map((line) => (
+                  <small key={line}>{line}</small>
+                ))}
+              </div>
+            ) : null}
             <small>{item.meta}</small>
             <small>{formatDateTime(item.timestamp)}</small>
           </article>

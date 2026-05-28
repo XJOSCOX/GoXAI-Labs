@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { type WorkerCreditEventSummary } from "../../api";
 import { formatDate, formatEnumText, formatMoney, shortId } from "./walletUtils";
@@ -35,10 +36,18 @@ export function WorkerCreditDetailModal({ event, onClose }: WorkerCreditDetailMo
         </div>
 
         <div className="wallet-transaction-grid">
-          <DetailItem label="Task" value={event.taskId ? shortId(event.taskId) : "No task reference"} monoValue={event.taskId} />
+          <DetailItem
+            label="Task"
+            value={event.taskId ? shortId(event.taskId) : "No task reference"}
+            linkTo={event.taskId ? `/tasks/${event.taskId}` : undefined}
+            monoValue={event.taskId}
+          />
           <DetailItem label="Project" value={event.projectName ?? "Project"} />
           <DetailItem label="Dataset" value={event.datasetName ?? "Dataset"} />
           <DetailItem label="Event" value={formatEnumText(event.eventType)} />
+          <DetailItem label="Review" value={event.reviewId ? shortId(event.reviewId) : "No review reference"} monoValue={event.reviewId} />
+          <DetailItem label="Annotation" value={event.annotationId ? shortId(event.annotationId) : "No annotation reference"} monoValue={event.annotationId} />
+          <DetailItem label="Reference key" value={shortId(event.referenceKey)} monoValue={event.referenceKey} />
           <DetailItem label="Created" value={formatDate(event.createdAt)} />
           <DetailItem label="Approved" value={event.approvedAt ? formatDate(event.approvedAt) : "Waiting"} />
           <DetailItem label="Available" value={event.availableAt ? formatDate(event.availableAt) : "Waiting"} />
@@ -54,17 +63,27 @@ export function WorkerCreditDetailModal({ event, onClose }: WorkerCreditDetailMo
   );
 }
 
-function DetailItem({ label, monoValue, value }: { label: string; monoValue?: string | null; value: string }) {
+function DetailItem({ label, linkTo, monoValue, value }: { label: string; linkTo?: string; monoValue?: string | null; value: string }) {
   return (
     <div className="wallet-transaction-detail-item">
       <span>{label}</span>
-      <strong>{value}</strong>
+      {linkTo ? <Link to={linkTo}>{value}</Link> : <strong>{value}</strong>}
       {monoValue && monoValue !== value ? <code>{monoValue}</code> : null}
     </div>
   );
 }
 
 function getCreditStory(event: WorkerCreditEventSummary) {
+  if (event.eventType === "ANNOTATION_APPROVED") {
+    return event.reviewId
+      ? "This annotation credit was approved by review and can be traced back to the task approval."
+      : "This annotation credit was approved after task review.";
+  }
+
+  if (event.eventType === "REVIEW_COMPLETED") {
+    return "This review credit was created when the reviewer completed the task approval.";
+  }
+
   if (event.status === "AVAILABLE") {
     return "This approved credit has finished its hold period and can be included in a withdrawal request.";
   }

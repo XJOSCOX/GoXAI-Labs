@@ -1,4 +1,9 @@
-import { type CreatorLedgerFilter, type CreatorLedgerPageResult, type WorkerWalletSummary } from "../../api";
+import {
+  type CreatorLedgerFilter,
+  type CreatorLedgerPageResult,
+  type CreatorWalletLedgerEntry,
+  type WorkerWalletSummary
+} from "../../api";
 
 export const walletPageSize = 8;
 
@@ -57,6 +62,14 @@ export function formatCreatorLedgerType(type: string) {
   }
 
   return formatEnumText(type);
+}
+
+export function formatCreatorLedgerEntryType(entry: CreatorWalletLedgerEntry) {
+  if (entry.isTopUpRefund || entry.refundKind === "top_up") {
+    return "Top-up refund";
+  }
+
+  return formatCreatorLedgerType(entry.type);
 }
 
 export function formatMoney(value: number, currency: string) {

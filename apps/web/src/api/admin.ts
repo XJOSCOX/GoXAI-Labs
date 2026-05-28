@@ -3,6 +3,8 @@ import { authenticatedFetch, getApiError, getDownloadFileName, removeEmptyValues
 import type {
   AdminApplicationSummary,
   AdminFundingSourceSummary,
+  AdminPaymentIntentDetail,
+  AdminPaymentIntentSummary,
   AdminOverview,
   AdminPayoutDetail,
   AdminPayoutSummary,
@@ -127,6 +129,67 @@ export async function enableAdminFundingSource(session: Session, fundingSourceId
   }
 
   return ((await response.json()) as { fundingSource: AdminFundingSourceSummary }).fundingSource;
+}
+
+export async function cancelAdminPaymentIntent(
+  session: Session,
+  paymentIntentId: string,
+  input: { adminNotes?: string } = {}
+) {
+  const response = await authenticatedFetch(session, `/api/admin/payment-intents/${encodeURIComponent(paymentIntentId)}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to cancel payment intent."));
+  }
+
+  return ((await response.json()) as { paymentIntent: AdminPaymentIntentSummary }).paymentIntent;
+}
+
+export async function getAdminPaymentIntentDetail(session: Session, paymentIntentId: string) {
+  const response = await authenticatedFetch(session, `/api/admin/payment-intents/${encodeURIComponent(paymentIntentId)}`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to load payment detail."));
+  }
+
+  return ((await response.json()) as { paymentIntent: AdminPaymentIntentDetail }).paymentIntent;
+}
+
+export async function recordAdminPaymentRefund(
+  session: Session,
+  paymentIntentId: string,
+  input: {
+    adminNotes?: string;
+    amount?: number;
+    providerRef: string;
+  }
+) {
+  const response = await authenticatedFetch(session, `/api/admin/payment-intents/${encodeURIComponent(paymentIntentId)}/refund`, {
+    method: "POST",
+    body: JSON.stringify(removeEmptyValues(input))
+  });
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to record payment refund."));
+  }
+
+  return ((await response.json()) as { paymentIntent: AdminPaymentIntentSummary }).paymentIntent;
+}
+
+export async function downloadAdminPaymentReceipts(session: Session, paymentIntentId: string): Promise<DownloadFileResult> {
+  const response = await authenticatedFetch(session, `/api/admin/payment-intents/${encodeURIComponent(paymentIntentId)}/receipts`);
+
+  if (!response.ok) {
+    throw new Error(await getApiError(response, "Unable to download payment receipts."));
+  }
+
+  return {
+    blob: await response.blob(),
+    fileName: getDownloadFileName(response.headers.get("content-disposition")) ?? `payment-receipts-${paymentIntentId}.json`
+  };
 }
 
 export async function reviewAdminPayout(

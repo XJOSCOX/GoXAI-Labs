@@ -6,11 +6,15 @@ import {
   buildCreatorDatasetReports,
   buildCreatorLedgerExportFile,
   buildCreatorLedgerFilterCounts,
+  buildProviderWebhookRejectionAudit,
   buildWalletReceiptDownloadFile,
   buildWalletReceiptNumber,
   filterCreatorLedgerEntriesBySearch,
   getFundingReconciliationDelta,
   getFundingReconciliationStatus,
+  normalizePaymentClientRequestId,
+  getPayPalWebhookIdempotencyKey,
+  getStripeWebhookIdempotencyKey,
   getWithdrawalLockError,
   serializeCreatorLedgerEntry
 } from "./billing.js";
@@ -70,6 +74,45 @@ describe("creator wallet reporting", () => {
     ]);
   });
 
+  it("keeps top-up refunds out of dataset escrow reporting", () => {
+    const hold = ledgerEntry({
+      amount: "10.00",
+      id: "hold-1",
+      metadata: {
+        datasetId: "dataset-1",
+        taskCount: 5
+      },
+      referenceId: "dataset-1",
+      type: LedgerEntryType.HOLD
+    });
+    const topUpRefund = ledgerEntry({
+      amount: "4.00",
+      id: "refund-top-up-1",
+      metadata: {
+        paymentIntentId: "payment-1",
+        refundKind: "top_up"
+      },
+      referenceId: "payment-1",
+      type: LedgerEntryType.REFUND
+    });
+
+    assert.deepEqual(buildCreatorDatasetReports([topUpRefund, hold], new Map([[hold.id, hold]]), new Map([["dataset-1", "Training V1"]])), [
+      {
+        currency: "USD",
+        datasetId: "dataset-1",
+        datasetName: "Training V1",
+        heldBalance: 10,
+        lastActivityAt: now.toISOString(),
+        paidBalance: 0,
+        reconciliationDelta: 0,
+        reconciliationStatus: "balanced",
+        refundedBalance: 0,
+        reservedBalance: 10,
+        taskCount: 5
+      }
+    ]);
+  });
+
   it("attaches dataset and task context to recent creator ledger rows", () => {
     const hold = ledgerEntry({
       amount: "10.00",
@@ -93,17 +136,70 @@ describe("creator wallet reporting", () => {
     });
 
     assert.deepEqual(serializeCreatorLedgerEntry(release, new Map([[hold.id, hold]]), new Map([["dataset-1", "Training V1"]])), {
+      approvedCredits: 0,
       amount: 7,
       createdAt: now.toISOString(),
       currency: "USD",
       datasetId: "dataset-1",
       datasetName: "Training V1",
       description: "Test entry",
+      escrowCredits: 0,
+      escrowLedgerEntryId: "hold-1",
+      feeCredits: 0,
       id: "release-1",
+      isTopUpRefund: false,
+      originalPaymentProvider: null,
+      paymentIntentId: null,
+      platformFeeRate: 0,
+      providerRef: null,
       referenceId: "task-1",
+      refundCredits: 0,
+      refundKind: null,
+      reviewId: null,
       taskCount: 0,
       taskId: "task-1",
       type: LedgerEntryType.RELEASE
+    });
+  });
+
+  it("exposes top-up refund trace fields on creator ledger rows", () => {
+    const refund = ledgerEntry({
+      amount: "4.00",
+      id: "refund-top-up-1",
+      metadata: {
+        originalPaymentProvider: "PAYPAL",
+        paymentIntentId: "payment-1",
+        providerRef: "refund-provider-1",
+        refundKind: "top_up"
+      },
+      referenceId: "payment-1",
+      type: LedgerEntryType.REFUND
+    });
+
+    assert.deepEqual(serializeCreatorLedgerEntry(refund, new Map(), new Map()), {
+      approvedCredits: 0,
+      amount: 4,
+      createdAt: now.toISOString(),
+      currency: "USD",
+      datasetId: null,
+      datasetName: null,
+      description: "Test entry",
+      escrowCredits: 0,
+      escrowLedgerEntryId: null,
+      feeCredits: 0,
+      id: "refund-top-up-1",
+      isTopUpRefund: true,
+      originalPaymentProvider: "PAYPAL",
+      paymentIntentId: "payment-1",
+      platformFeeRate: 0,
+      providerRef: "refund-provider-1",
+      referenceId: "payment-1",
+      refundCredits: 0,
+      refundKind: "top_up",
+      reviewId: null,
+      taskCount: 0,
+      taskId: null,
+      type: LedgerEntryType.REFUND
     });
   });
 
@@ -142,9 +238,9 @@ describe("creator wallet reporting", () => {
 
     assert.equal(file.fileName, "creator-wallet-ledger-2026-05-26.csv");
     assert.equal(file.mimeType, "text/csv");
-    assert.match(csv, /^section,id,type,dataset_id,dataset_name/);
-    assert.match(csv, /dataset,dataset-1,DATASET_TOTAL,dataset-1,"Training, ""Vision"""/);
-    assert.match(csv, /ledger,release-1,RELEASE,dataset-1,"Training, ""Vision""",task-1/);
+    assert.match(csv, /^section,id,type,refund_kind,payment_intent_id,provider_ref,original_payment_provider,dataset_id,dataset_name/);
+    assert.match(csv, /dataset,dataset-1,DATASET_TOTAL,,,,,dataset-1,"Training, ""Vision"""/);
+    assert.match(csv, /ledger,release-1,RELEASE,,,,,dataset-1,"Training, ""Vision""",task-1/);
   });
 
   it("counts creator ledger filters for wallet drill-downs", () => {
@@ -361,6 +457,79 @@ describe("creator wallet reporting", () => {
       }
     }
   });
+
+  it("builds stable provider webhook idempotency keys", () => {
+    assert.equal(getPayPalWebhookIdempotencyKey({ eventId: " WH-123 ", transmissionId: "TRANS-123" }), "WH-123");
+    assert.equal(getPayPalWebhookIdempotencyKey({ eventId: "", transmissionId: " TRANS-123 " }), "TRANS-123");
+    assert.equal(getPayPalWebhookIdempotencyKey({ eventId: null, transmissionId: null }), null);
+    assert.equal(getStripeWebhookIdempotencyKey({ eventId: " evt_123 " }), "evt_123");
+    assert.equal(getStripeWebhookIdempotencyKey({ eventId: " " }), null);
+  });
+
+  it("builds webhook rejection audit metadata without raw payloads", () => {
+    assert.deepEqual(buildProviderWebhookRejectionAudit({
+      error: "PayPal webhook signature verification failed.",
+      event: {
+        event_type: "PAYMENT.CAPTURE.COMPLETED",
+        id: "WH-123"
+      },
+      provider: "paypal",
+      reason: "signature_verification_failed",
+      requestId: "request-1",
+      statusCode: 401,
+      transmissionId: "TRANS-123"
+    }), {
+      action: "wallet.paypal_webhook.rejected",
+      entityId: "WH-123",
+      entityType: "paypal_webhook",
+      metadata: {
+        error: "PayPal webhook signature verification failed.",
+        eventId: "WH-123",
+        eventType: "PAYMENT.CAPTURE.COMPLETED",
+        idempotencyKey: "WH-123",
+        provider: "paypal",
+        reason: "signature_verification_failed",
+        requestId: "request-1",
+        signatureHeaderPresent: null,
+        statusCode: 401,
+        transmissionId: "TRANS-123"
+      }
+    });
+  });
+
+  it("falls back to provider rejection ids when webhook payloads are unusable", () => {
+    assert.deepEqual(buildProviderWebhookRejectionAudit({
+      error: "Webhook body must be raw JSON.",
+      provider: "stripe",
+      reason: "invalid_raw_body",
+      signatureHeaderPresent: false,
+      statusCode: 400
+    }), {
+      action: "wallet.stripe_webhook.rejected",
+      entityId: "stripe-webhook-rejected",
+      entityType: "stripe_webhook",
+      metadata: {
+        error: "Webhook body must be raw JSON.",
+        eventId: null,
+        eventType: null,
+        idempotencyKey: null,
+        provider: "stripe",
+        reason: "invalid_raw_body",
+        requestId: null,
+        signatureHeaderPresent: false,
+        statusCode: 400,
+        transmissionId: null
+      }
+    });
+  });
+
+  it("normalizes payment client request idempotency keys", () => {
+    assert.equal(normalizePaymentClientRequestId(" wallet:abc-123 "), "wallet:abc-123");
+    assert.equal(normalizePaymentClientRequestId("short"), null);
+    assert.equal(normalizePaymentClientRequestId("bad key"), null);
+    assert.equal(normalizePaymentClientRequestId("x".repeat(129)), null);
+    assert.equal(normalizePaymentClientRequestId(null), null);
+  });
 });
 
 function ledgerEntry(input: {
@@ -403,14 +572,26 @@ function creatorWalletFixture(input: { datasetName?: string } = {}) {
     ],
     ledgerEntries: [
       {
+        approvedCredits: 0,
         amount: 7,
         createdAt: now.toISOString(),
         currency: "USD",
         datasetId: "dataset-1",
         datasetName: input.datasetName ?? "Training V1",
         description: "Worker credit released",
+        escrowCredits: 0,
+        escrowLedgerEntryId: "hold-1",
+        feeCredits: 0,
         id: "release-1",
+        isTopUpRefund: false,
+        originalPaymentProvider: null,
+        paymentIntentId: null,
+        platformFeeRate: 0,
+        providerRef: null,
         referenceId: "task-1",
+        refundCredits: 0,
+        refundKind: null,
+        reviewId: null,
         taskCount: 0,
         taskId: "task-1",
         type: LedgerEntryType.RELEASE

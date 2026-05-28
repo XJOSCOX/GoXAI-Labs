@@ -11,7 +11,7 @@ import { CreatorLedgerDetailModal } from "./CreatorLedgerDetailModal";
 import {
   type CreatorWalletLedger,
   type WalletQueryUpdate,
-  formatCreatorLedgerType,
+  formatCreatorLedgerEntryType,
   formatDate,
   formatMoney,
   shortId,
@@ -132,16 +132,24 @@ export function CreatorLedgerPanel({
               tabIndex={0}
             >
               <span>
-                <strong>{formatCreatorLedgerType(entry.type)}</strong>
+                <strong>{formatCreatorLedgerEntryType(entry)}</strong>
                 <small>{shortId(entry.id)}</small>
               </span>
               <span>
                 {entry.datasetId ? (
                   <Link onClick={(event) => event.stopPropagation()} to={`/datasets/${entry.datasetId}`}>{entry.datasetName ?? "Open dataset"}</Link>
+                ) : entry.isTopUpRefund ? (
+                  <strong>Payment refund</strong>
                 ) : (
                   <strong>{entry.datasetName ?? "Creator wallet"}</strong>
                 )}
-                <small>{entry.taskId ? `Task ${shortId(entry.taskId)}` : entry.description ?? "No task reference"}</small>
+                <small>
+                  {entry.taskId
+                    ? `Task ${shortId(entry.taskId)}`
+                    : entry.isTopUpRefund && entry.paymentIntentId
+                      ? `Payment ${shortId(entry.paymentIntentId)}`
+                      : entry.description ?? "No task reference"}
+                </small>
               </span>
               <time>{formatDate(entry.createdAt)}</time>
               <em>{formatMoney(entry.amount, entry.currency)}</em>
